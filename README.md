@@ -66,31 +66,6 @@ Echo finds the interview email, gets its timestamp, locates Chrome pages and You
 **Frontend:** React, TailwindCSS, Recharts, Chrome Extension (Manifest V3)
 
 **LLM:** Claude Haiku / Gemini Flash / Ollama — plug-and-play via config
-
----
-
-## Project Status
-
-> Final-Year Capstone Project · Deadline: August 2027
-
-| Phase | Scope | Status |
-|---|---|---|
-| 1 — Foundation | Infrastructure + Gmail capture | 🔲 Upcoming |
-| 2 — Chrome | Extension + intent filtering | 🔲 Upcoming |
-| 3 — YouTube | Detection + metadata | 🔲 Upcoming |
-| 4 — Search | LangGraph RSE + LLM | 🔲 Upcoming |
-| 5 — Wellbeing | Analytics + regret system | 🔲 Upcoming |
-| 6 — Dashboard | React UI + polish | 🔲 Upcoming |
-
----
-
-## Docs
-
-| Document | Description |
-|---|---|
-| [`Echo_Architecture_Design_v2.1.docx`](./Echo_Architecture_Design_v2.1.docx) | Complete architecture, all modules, DB schema, LangGraph RSE, implementation roadmap |
-| [`Echo_Scope_v2.docx`](./Echo_Scope_v2.docx) | Updated project scope, MoSCoW classification, module definitions, change log |
-
 ---
 
 ## Privacy First
