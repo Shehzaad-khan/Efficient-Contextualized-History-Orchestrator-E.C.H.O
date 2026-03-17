@@ -1,117 +1,105 @@
-# E.C.H.O — Efficient Contextualized History Orchestrator
+# Echo — Personal Memory System
 
-**E.C.H.O** is a **local-first personal memory engine** that turns scattered digital activity into a unified, searchable history — so any AI assistant (or you) can operate with real context about your work and learning journey.
-
-> Repo: `Shehzaad-khan/Efficient-Contextualized-History-Orchestrator-E.C.H.O`
+> *Your digital life, unified. Search across Gmail, Chrome, and YouTube in one natural language query.*
 
 ---
 
-## Why E.C.H.O?
-Most “second brain” systems help you store notes, but they don’t **orchestrate context** across:
-- projects and decisions
-- learning progress and references
-- recurring tasks and habits
-- conversations, docs, and artifacts
+## What is Echo?
 
-E.C.H.O’s goal: **make your personal context queryable and useful**—securely, locally, and in a way that can plug into modern LLM workflows.
+You read articles about OS concepts after an interview email. You watched YouTube tutorials the same week. A month later you can't find any of it — scattered across three platforms with no way to search them together.
+
+**Echo fixes this.** It captures your emails, browsing, and watch history locally on your laptop, unifies them into one searchable memory, and lets you query it conversationally.
 
 ---
 
-## Key ideas (conceptual)
-- **Local-first**: your data stays on your machine by default.
-- **Unified timeline**: normalize activity into a consistent event/history format.
-- **Context assembly**: build the *right* slice of history for a given question/task.
-- **Search + retrieval**: fast lookup by time, topic, entities, and projects.
-- **Privacy controls**: redact / exclude sensitive sources.
+## Core Features
+
+| Feature | What it does |
+|---|---|
+| **Unified Search** | One natural language query across Gmail, Chrome, and YouTube |
+| **Intent Filtering** | Only saves content you genuinely engaged with — no noise |
+| **Conversational Memory** | Multi-turn queries that remember context across turns |
+| **Digital Wellbeing** | Time patterns and regret-based reflection — no scoring, no blocking |
+| **Local-First Privacy** | All personal data stays on your laptop. Always. |
 
 ---
 
-## Repository structure
-This repository currently contains planning and design artifacts:
+## How It Works
 
-- `Phase1/`
-  - Capstone phase I report and supporting docs
-- `Phase II/`
-  - Architecture design, scope, roadmap and review materials
-
-If/when implementation code is added, consider evolving toward a structure like:
-
-```text
-.
-├─ apps/                # CLI / desktop / web apps
-├─ packages/            # core libraries (ingestion, storage, retrieval)
-├─ docs/                # architecture & design docs
-├─ scripts/             # utilities, exports, migrations
-└─ README.md
+```
+Your Gmail + Chrome + YouTube
+         ↓
+   Intent Filtering
+   (only saves what you actually read/watched)
+         ↓
+   PostgreSQL + FAISS + Redis
+   (local storage + semantic search)
+         ↓
+   LangGraph Retrieval Pipeline
+   (LLM parses query → deterministic search → LLM synthesizes answer)
+         ↓
+   You get a coherent answer citing sources with dates
 ```
 
----
+**Example query:** *"OS material I was reading after the TechCorp interview email"*
 
-## What E.C.H.O could look like (high-level)
-> These are suggested components based on the repository description.
-
-### 1) Ingestion
-Collect events from sources (opt-in):
-- files / folders / git commits
-- browser history / bookmarks
-- calendar and tasks
-- notes and docs
-
-### 2) Normalization
-Convert raw activity into a stable schema:
-- timestamp
-- source
-- entities (people, repos, topics)
-- summary + raw payload pointer
-
-### 3) Storage
-Local DB for reliability + speed:
-- SQLite / DuckDB / Postgres (local)
-- optional vector index (embeddings)
-
-### 4) Retrieval & context building
-- keyword + metadata search
-- semantic retrieval
-- context window budgeting (token-aware)
-- “what changed since X?” diffs
+Echo finds the interview email, gets its timestamp, locates Chrome pages and YouTube videos about OS after that date, and synthesizes a single answer — citing each source.
 
 ---
 
-## Getting started (project setup)
-There is no runnable implementation in the repository root yet.
+## Architecture at a Glance
 
-### If you’re just exploring
-1. Open the phase directories.
-2. Start with the architecture/scope documents in `Phase II/`.
-3. Use issues to track implementation milestones.
-
-### If you’re planning to implement next
-Suggested next steps:
-- [ ] Decide on the initial target: **CLI**, **local web app**, or **desktop app**.
-- [ ] Choose storage (SQLite is a strong default).
-- [ ] Define the first event schema (`event`, `source`, `project`, `entity`).
-- [ ] Implement a minimal ingestion path (e.g., filesystem + git).
-- [ ] Add retrieval: metadata search, then semantic.
+- **3 data sources** — Gmail (OAuth API), Chrome (custom MV3 extension), YouTube (Data API)
+- **3 storage layers** — PostgreSQL (permanent), FAISS (semantic search), Redis (temp cache)
+- **8 backend modules** — connectors, enrichment pipeline, LangGraph RSE, wellbeing analytics
+- **15-table schema** — single-user, locked, no cloud sync
+- **2 LLM calls per query** — parse intent + synthesize answer. Everything else is deterministic Python.
 
 ---
 
-## Roadmap (proposed)
-- **MVP**: local DB + ingestion (1-2 sources) + basic search
-- **Context packs**: task-based context generation (token-limited)
-- **Assistant integration**: export context to tools/agents
-- **Privacy tooling**: redaction, allow/deny lists, encryption at rest
+## Tech Stack
+
+**Backend:** Python 3.10+, FastAPI, SQLAlchemy, LangGraph, LangChain, sentence-transformers (all-MiniLM-L6-v2)
+
+**Storage:** PostgreSQL 15, FAISS, Redis 7
+
+**Frontend:** React, TailwindCSS, Recharts, Chrome Extension (Manifest V3)
+
+**LLM:** Claude Haiku / Gemini Flash / Ollama — plug-and-play via config
 
 ---
 
-## Contributing
-Contributions are welcome.
+## Project Status
 
-1. Fork the repo
-2. Create a feature branch
-3. Commit with clear messages
-4. Open a pull request
+> Final-Year Capstone Project · Deadline: August 2027
+
+| Phase | Scope | Status |
+|---|---|---|
+| 1 — Foundation | Infrastructure + Gmail capture | 🔲 Upcoming |
+| 2 — Chrome | Extension + intent filtering | 🔲 Upcoming |
+| 3 — YouTube | Detection + metadata | 🔲 Upcoming |
+| 4 — Search | LangGraph RSE + LLM | 🔲 Upcoming |
+| 5 — Wellbeing | Analytics + regret system | 🔲 Upcoming |
+| 6 — Dashboard | React UI + polish | 🔲 Upcoming |
 
 ---
 
-## License
-No license file is currently included. If you plan to accept external contributions or reuse code, consider adding a license (e.g., MIT, Apache-2.0, GPL-3.0).
+## Docs
+
+| Document | Description |
+|---|---|
+| [`Echo_Architecture_Design_v2.1.docx`](./Echo_Architecture_Design_v2.1.docx) | Complete architecture, all modules, DB schema, LangGraph RSE, implementation roadmap |
+| [`Echo_Scope_v2.docx`](./Echo_Scope_v2.docx) | Updated project scope, MoSCoW classification, module definitions, change log |
+
+---
+
+## Privacy First
+
+- All personal data lives on your laptop — never in the cloud
+- Incognito mode never tracked
+- No keylogging, no form inputs, no app content (Slack, Jira)
+- LLM API receives only your query and retrieved snippets — never your full database
+- Complete data deletion controls built in
+
+---
+
