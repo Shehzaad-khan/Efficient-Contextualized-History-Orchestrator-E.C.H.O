@@ -1,2 +1,8 @@
 .venv
 .env
+.agent
+.agents
+skills-lock.json
+credentials.json
+token_youtube.json
+token_gmail.json
