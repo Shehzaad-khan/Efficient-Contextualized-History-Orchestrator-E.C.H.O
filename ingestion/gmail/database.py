@@ -299,6 +299,120 @@ def store_attachments_metadata(attachments, memory_id):
 
 
 # ==============================
+# STORE IN MEMORY_ITEMS
+# ==============================
+
+def store_in_memory_items(data, memory_id):
+    """Store email in memory_items (universal memory storage)"""
+    try:
+        conn = psycopg2.connect(DATABASE_URL, connect_timeout=10)
+        cursor = conn.cursor()
+        
+        # Check if already exists
+        cursor.execute(
+            "SELECT memory_id FROM memory_items WHERE source_id = %s",
+            (data["source_item_id"],)
+        )
+        
+        if cursor.fetchone():
+            cursor.close()
+            conn.close()
+            return False
+        
+        # Insert into memory_items
+        insert_query = """
+        INSERT INTO memory_items (
+            memory_id, system_group_id, source_type, source_id, title,
+            raw_text, classified_by, created_at
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, NOW())
+        """
+        
+        cursor.execute(insert_query, (
+            memory_id,
+            1,  # system_group_id: 1 for Gmail group
+            'gmail',
+            data["source_item_id"],
+            data["title"],
+            data["content"]["primary_text"][:1000],  # Limit to 1000 chars
+            'pending'  # classified_by: pending classification
+        ))
+        
+        conn.commit()
+        cursor.close()
+        conn.close()
+        
+        print(f"   ✅ Stored in memory_items")
+        return True
+        
+    except Exception as e:
+        print(f"   ⚠️  memory_items storage error: {e}")
+        return False
+
+
+# ==============================
+# STORE IN GMAIL_METADATA
+# ==============================
+
+def store_in_gmail_metadata(data, memory_id):
+    """Store Gmail-specific metadata"""
+    try:
+        conn = psycopg2.connect(DATABASE_URL, connect_timeout=10)
+        cursor = conn.cursor()
+        
+        # Check if already exists
+        cursor.execute(
+            "SELECT memory_id FROM gmail_metadata WHERE email_id = %s",
+            (data["source_item_id"],)
+        )
+        
+        if cursor.fetchone():
+            cursor.close()
+            conn.close()
+            return False
+        
+        # Parse recipients to text array
+        to_emails = data["source_metadata"]["email"]["to"]
+        if isinstance(to_emails, str):
+            recipients = [to_emails]
+        elif isinstance(to_emails, list):
+            recipients = to_emails
+        else:
+            recipients = []
+        
+        # Insert into gmail_metadata
+        insert_query = """
+        INSERT INTO gmail_metadata (
+            memory_id, email_id, thread_id, sender, recipients,
+            subject, received_at, has_attachments, gmail_labels, is_sent
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """
+        
+        cursor.execute(insert_query, (
+            memory_id,
+            data["source_item_id"],
+            data["source_metadata"]["email"]["thread_id"],
+            data["source_metadata"]["email"]["from"],
+            recipients,  # text array
+            data["title"],
+            data["time"]["event_timestamp"],
+            data["source_metadata"]["email"]["has_attachments"],
+            data["source_metadata"]["email"]["labels"],
+            False  # is_sent: Gmail received emails
+        ))
+        
+        conn.commit()
+        cursor.close()
+        conn.close()
+        
+        print(f"   ✅ Stored in gmail_metadata")
+        return True
+        
+    except Exception as e:
+        print(f"   ⚠️  gmail_metadata storage error: {e}")
+        return False
+
+
+# ==============================
 # STORE IN POSTGRESQL
 # ==============================
 
@@ -370,7 +484,14 @@ def store_in_postgresql(data):
             except Exception as e:
                 print(f"⚠️  Failed to cache email in Redis: {e}")
         
-        print(f"   ✅ Stored in PostgreSQL (with {len(thread_history)} previous messages)")
+        print(f"   ✅ Stored in gmail_memory (with {len(thread_history)} previous messages)")
+        
+        # Store in memory_items table (universal storage)
+        store_in_memory_items(data, data["memory_id"])
+        
+        # Store in gmail_metadata table (Gmail-specific metadata)
+        store_in_gmail_metadata(data, data["memory_id"])
+        
         return True
 
     except psycopg2.OperationalError as e:
