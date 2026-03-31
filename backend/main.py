@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
 
-from ytc.youtube_connector import router as ytc_router, redis_client as ytc_redis
+from ingestion.youtube.youtube_connector import router as ytc_router, redis_client as ytc_redis 
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
@@ -23,7 +23,7 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup — connect Redis
-    import ytc.youtube_connector as ytc_module
+    import ingestion.youtube.youtube_connector as ytc_module
     try:
         ytc_module.redis_client = aioredis.from_url(REDIS_URL, decode_responses=True)
         await ytc_module.redis_client.ping()

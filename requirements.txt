@@ -4,7 +4,21 @@ httpx==0.27.2
 redis[asyncio]==5.0.8
 python-dotenv==1.0.1
 pydantic==2.8.2
+<<<<<<< HEAD
 google-api-python-client
 google-auth
 google-auth-oauthlib
 google-auth-httplib2
+=======
+
+# ======
+# Gmail
+# ======
+google-auth-oauthlib==1.2.0
+google-auth-httplib2==0.2.0
+google-api-python-client==2.105.0
+python-dotenv==1.0.0
+psycopg2-binary==2.9.9
+pandas==2.1.3
+openpyxl==3.1.5
+>>>>>>> 958791f143a5fc5620889fe317fe710fc4d9735e
