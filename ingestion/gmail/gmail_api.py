@@ -7,14 +7,19 @@ import base64
 import uuid
 import json
 from datetime import datetime
+from pathlib import Path
 
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 
-from config import SCOPES, get_redis_client
-from database import store_in_postgresql, store_attachments_metadata, store_in_excel
+from .config import SCOPES, get_redis_client
+from .database import store_in_postgresql, store_attachments_metadata, store_in_excel
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+TOKEN_PATH = PROJECT_ROOT / "token_gmail.json"
+CREDENTIALS_PATH = PROJECT_ROOT / "credentials.json"
 
 # ==============================
 # AUTHENTICATE GMAIL
@@ -37,13 +42,13 @@ def authenticate_gmail():
             print(f"⚠️  Failed to use cached token: {e}")
 
     # Try to load from token.json
-    if os.path.exists('token.json'):
+    if TOKEN_PATH.exists():
         try:
-            creds = Credentials.from_authorized_user_file('token.json', SCOPES)
+            creds = Credentials.from_authorized_user_file(str(TOKEN_PATH), SCOPES)
         except Exception as e:
-            print(f"⚠️  Invalid/expired token.json: {e}")
+            print(f"⚠️  Invalid/expired token_gmail.json: {e}")
             print("   Deleting old token and generating new one...")
-            os.remove('token.json')
+            TOKEN_PATH.unlink(missing_ok=True)
             creds = None
 
     if not creds or not creds.valid:
@@ -58,7 +63,7 @@ def authenticate_gmail():
         if not creds:
             try:
                 flow = InstalledAppFlow.from_client_secrets_file(
-                    'credentials.json', SCOPES)
+                    str(CREDENTIALS_PATH), SCOPES)
                 creds = flow.run_local_server(port=0)
             except FileNotFoundError:
                 print("❌ ERROR: credentials.json not found!")
@@ -69,7 +74,7 @@ def authenticate_gmail():
                 raise
 
         # Save to file
-        with open('token.json', 'w') as token:
+        with open(TOKEN_PATH, 'w') as token:
             token.write(creds.to_json())
         
         # Cache in Redis with 1 hour expiry

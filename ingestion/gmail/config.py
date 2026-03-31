@@ -4,16 +4,18 @@ Configuration module - Handles all settings, constants, and environment variable
 
 import os
 import redis
+from pathlib import Path
 from dotenv import load_dotenv
 
 # ==============================
 # LOAD ENVIRONMENT VARIABLES
 # ==============================
 
-load_dotenv()
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+load_dotenv(PROJECT_ROOT / ".env")
 
 DATABASE_URL = os.getenv('DATABASE_URL')
-REDIS_URL = os.getenv('REDIS_URL')
+REDIS_URL = os.getenv('REDIS_URL') or os.getenv('UPSTASH_REDIS_URL')
 
 # Constants
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']

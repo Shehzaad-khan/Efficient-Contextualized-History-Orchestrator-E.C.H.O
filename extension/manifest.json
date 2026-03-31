@@ -6,11 +6,14 @@
   "permissions": [
     "tabs",
     "storage",
-    "idle"
+    "idle",
+    "webNavigation",
+    "scripting"
   ],
   "host_permissions": [
     "https://www.youtube.com/*",
-    "http://localhost:8000/*"
+    "http://localhost:8000/*",
+    "<all_urls>"
   ],
   "background": {
     "service_worker": "background.js",
@@ -24,6 +27,19 @@
       ],
       "js": [
         "content/youtube_tracker.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "exclude_matches": [
+        "https://www.youtube.com/*",
+        "https://mail.google.com/*"
+      ],
+      "js": [
+        "content/chrome_tracker.js"
       ],
       "run_at": "document_idle"
     }

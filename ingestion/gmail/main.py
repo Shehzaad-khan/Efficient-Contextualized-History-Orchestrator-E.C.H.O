@@ -7,10 +7,18 @@ Run this file to start the email listener
 
 import time
 import psycopg2
+from pathlib import Path
+import sys
 
-from config import DATABASE_URL, CHECK_INTERVAL, get_redis_client
-from database import initialize_database
-from gmail_api import authenticate_gmail, fetch_and_store_new_emails
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from ingestion.gmail.config import DATABASE_URL, CHECK_INTERVAL, get_redis_client
+    from ingestion.gmail.database import initialize_database
+    from ingestion.gmail.gmail_api import authenticate_gmail, fetch_and_store_new_emails
+else:
+    from .config import DATABASE_URL, CHECK_INTERVAL, get_redis_client
+    from .database import initialize_database
+    from .gmail_api import authenticate_gmail, fetch_and_store_new_emails
 from datetime import datetime
 
 # ==============================
