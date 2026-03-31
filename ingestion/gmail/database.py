@@ -9,7 +9,7 @@ from psycopg2.extras import RealDictCursor
 import pandas as pd
 import os
 
-from config import DATABASE_URL, get_redis_client
+from .config import DATABASE_URL, get_redis_client
 
 # ==============================
 # DATABASE INITIALIZATION
