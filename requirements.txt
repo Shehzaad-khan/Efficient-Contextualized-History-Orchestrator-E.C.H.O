@@ -11,3 +11,6 @@ google-auth==2.40.3
 google-auth-oauthlib==1.2.0
 google-auth-httplib2==0.2.0
 google-api-python-client==2.105.0
+langchain==0.3.18
+langgraph==0.2.74
+faiss-cpu==1.10.0
