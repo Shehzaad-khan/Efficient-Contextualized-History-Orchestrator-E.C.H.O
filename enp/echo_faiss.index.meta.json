@@ -1,0 +1,33 @@
+{
+  "dimension": 384,
+  "embedding_version": "all-MiniLM-L6-v2-v1",
+  "memory_ids": [
+    "f0495ea5-e78d-42c4-9787-3e9999223776",
+    "05426449-3554-4809-b7a5-aae6ce41a1e8",
+    "d0063135-d91a-4e43-aa66-f6fceee79537",
+    "7ec11512-76ed-4122-8fb5-2141a6c6e4d5",
+    "d5fe3240-e98d-4fc6-8f0f-c729a75e1b69",
+    "c0c19902-131c-4fc1-b2fb-fe4226acbe4d",
+    "e8fa8c3e-18bc-4058-92eb-0b739febcb65",
+    "5168745b-1ad0-451b-8948-0c7d502c28c5",
+    "d998da84-0607-4bb5-8231-8b32d3f3f755",
+    "48c87a3a-ff4c-450a-a586-c2f46a32bf69",
+    "cc178c11-1fdf-4f1e-8231-0cd22f7ca10c",
+    "e63fc145-61c9-4e9c-9e84-558917bcdba1",
+    "26b4ae78-a6c2-486f-b8c9-00bdd782f8f2",
+    "a1820f00-0223-4df2-8aee-6ac5a89ca522",
+    "cd69f4a7-c56b-431f-b925-4c976be1dcb9",
+    "feb5fa7b-30f6-4905-a9b4-ede476698586",
+    "1e11eed7-2742-4621-81c3-135e0ba55984",
+    "e07b4977-3e5c-43c8-99c2-54e8c6ec199e",
+    "549f9d55-f821-426e-aece-a4b514a9cdc5",
+    "3b3f2686-d967-40e0-9dae-108f275316f8",
+    "a5a64b3d-fb2e-4821-a367-1029a124deb8",
+    "d349c9b9-1b39-4299-80f4-0f47614dbffb",
+    "6a69a64b-ddab-4ad2-b9bc-7da1c6ee3dfb",
+    "2c406b60-28b8-42d5-ba2a-3dd857c0ce28",
+    "7cfc7ed6-8dd0-4087-87f4-28df5a312c9b",
+    "f21c0583-1525-4caf-b321-2e0a460fd1e6",
+    "247cdb4a-afc2-4436-ab1a-ff4fd92c065b"
+  ]
+}
