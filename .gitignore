@@ -9,6 +9,7 @@ token_youtube.json
 token_gmail.json
 emails.xlsx
 gmail_run.log
+debug-*.log
 
 __pycache__/
 *.py[cod]
