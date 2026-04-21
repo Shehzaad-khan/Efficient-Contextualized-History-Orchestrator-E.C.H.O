@@ -4,10 +4,9 @@ import asyncio
 import logging
 import os
 
-import psycopg2
 from fastapi import APIRouter
 
-from .config import CHECK_INTERVAL, DATABASE_URL
+from .config import CHECK_INTERVAL
 from .database import initialize_database
 from .gmail_api import authenticate_gmail, fetch_and_store_new_emails
 
@@ -27,14 +26,8 @@ def _get_service():
 def poll_once() -> dict:
     initialize_database()
     service = _get_service()
-    conn = psycopg2.connect(DATABASE_URL, connect_timeout=10)
-    try:
-        cursor = conn.cursor()
-        processed = fetch_and_store_new_emails(service, conn, cursor)
-        cursor.close()
-        return {"status": "ok", "processed": processed}
-    finally:
-        conn.close()
+    processed = fetch_and_store_new_emails(service)
+    return {"status": "ok", "processed": processed}
 
 
 async def poll_forever() -> None:

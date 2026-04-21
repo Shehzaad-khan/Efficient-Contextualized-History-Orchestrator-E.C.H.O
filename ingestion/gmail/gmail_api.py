@@ -13,6 +13,7 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 
+from backend import postgresql_manager
 from .config import SCOPES, get_redis_client
 from .database import store_in_excel, store_in_postgresql
 
@@ -100,7 +101,7 @@ def extract_attachments(message, message_id):
     return attachments
 
 
-def fetch_and_store_new_emails(service, conn, cursor):
+def fetch_and_store_new_emails(service):
     try:
         processed_count = 0
         results = service.users().messages().list(userId="me", maxResults=10).execute()
@@ -112,11 +113,15 @@ def fetch_and_store_new_emails(service, conn, cursor):
 
         for message in messages:
             message_id = message["id"]
-            cursor.execute(
-                "SELECT memory_id FROM gmail_metadata WHERE email_id = %s",
-                (message_id,),
+            existing = postgresql_manager.fetchone(
+                """
+                SELECT memory_id
+                FROM gmail_metadata
+                WHERE email_id = :email_id
+                """,
+                {"email_id": message_id},
             )
-            if cursor.fetchone():
+            if existing:
                 continue
 
             msg = service.users().messages().get(userId="me", id=message_id, format="full").execute()

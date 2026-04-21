@@ -6,36 +6,33 @@ import json
 import os
 
 import pandas as pd
-import psycopg2
-from psycopg2.extras import RealDictCursor
 
+from backend import postgresql_manager
 from backend.storage_engine import store_gmail_message
-from .config import DATABASE_URL, get_redis_client
+from .config import get_redis_client
 
 
 def initialize_database():
     """Validate Gmail canonical tables are reachable."""
     try:
-        conn = psycopg2.connect(DATABASE_URL, connect_timeout=10)
-        cursor = conn.cursor()
-        cursor.execute("SELECT 1 FROM information_schema.tables WHERE table_name = 'gmail_metadata'")
-        cursor.close()
-        conn.close()
+        postgresql_manager.scalar(
+            """
+            SELECT 1
+            FROM information_schema.tables
+            WHERE table_name = 'gmail_metadata'
+            LIMIT 1
+            """
+        )
         print("PostgreSQL Database initialized")
         return True
-    except psycopg2.OperationalError as exc:
-        print(f"PostgreSQL connection error: {exc}")
-        return False
     except Exception as exc:
-        print(f"Database initialization error: {exc}")
+        print(f"PostgreSQL connection error: {exc}")
         return False
 
 
 def get_thread_history(thread_id):
     try:
-        conn = psycopg2.connect(DATABASE_URL, connect_timeout=10)
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
-        cursor.execute(
+        rows = postgresql_manager.fetchall(
             """
             SELECT
                 mi.memory_id,
@@ -49,14 +46,11 @@ def get_thread_history(thread_id):
                 gm.has_attachments AS email_has_attachments
             FROM memory_items mi
             JOIN gmail_metadata gm ON gm.memory_id = mi.memory_id
-            WHERE gm.thread_id = %s
+            WHERE gm.thread_id = :thread_id
             ORDER BY gm.received_at ASC
             """,
-            (thread_id,),
+            {"thread_id": thread_id},
         )
-        rows = cursor.fetchall()
-        cursor.close()
-        conn.close()
 
         result = []
         for row in rows:
@@ -81,13 +75,11 @@ def store_attachments_metadata(attachments, memory_id):
         return True
 
     try:
-        conn = psycopg2.connect(DATABASE_URL, connect_timeout=10)
-        cursor = conn.cursor()
         for attachment in attachments:
             filename = attachment.get("filename")
             if not filename:
                 continue
-            cursor.execute(
+            postgresql_manager.execute(
                 """
                 INSERT INTO gmail_attachments (
                     memory_id,
@@ -98,15 +90,23 @@ def store_attachments_metadata(attachments, memory_id):
                     last_extracted_at,
                     is_processed
                 )
-                VALUES (%s, %s, %s, %s, %s, NOW(), %s)
+                VALUES (
+                    :memory_id,
+                    :filename,
+                    :mime_type,
+                    :file_size,
+                    :lightweight_extract,
+                    NOW(),
+                    :is_processed
+                )
                 ON CONFLICT DO NOTHING
                 """,
-                (
-                    memory_id,
-                    filename,
-                    attachment.get("mime_type", "application/octet-stream"),
-                    int(attachment.get("size", 0)),
-                    " | ".join(
+                {
+                    "memory_id": memory_id,
+                    "filename": filename,
+                    "mime_type": attachment.get("mime_type", "application/octet-stream"),
+                    "file_size": int(attachment.get("size", 0)),
+                    "lightweight_extract": " | ".join(
                         part
                         for part in [
                             filename,
@@ -115,12 +115,9 @@ def store_attachments_metadata(attachments, memory_id):
                         ]
                         if part and part != "0"
                     ),
-                    True,
-                ),
+                    "is_processed": True,
+                },
             )
-        conn.commit()
-        cursor.close()
-        conn.close()
         return True
     except Exception as exc:
         print(f"Attachment storage error: {exc}")
@@ -151,9 +148,6 @@ def store_in_postgresql(data):
 
         print("Stored in canonical Gmail tables")
         return True
-    except psycopg2.OperationalError as exc:
-        print(f"PostgreSQL unavailable: {exc}")
-        return False
     except Exception as exc:
         print(f"PostgreSQL storage error: {exc}")
         return False

@@ -8,11 +8,11 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import Optional
 
-import redis.asyncio as aioredis
 from dotenv import load_dotenv
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from backend.redis_manager import REVISIT_TTL_SECONDS, check_and_record_revisit_async
 from backend.storage_engine import (
     store_youtube_detection,
     update_youtube_metadata,
@@ -26,9 +26,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/ytc", tags=["YouTube Connector"])
 
 executor = ThreadPoolExecutor(max_workers=4)
-
-redis_client: Optional[aioredis.Redis] = None
-REVISIT_TTL_SECONDS = 86400
+redis_client: Optional[object] = None
 
 
 class VideoDetectedEvent(BaseModel):
@@ -62,14 +60,8 @@ def passes_intent_gate(event: VideoDetectedEvent, is_revisit: bool) -> bool:
 
 
 async def check_revisit(video_id: str) -> bool:
-    if not redis_client:
-        logger.warning("Redis not connected - revisit check skipped")
-        return False
-    key = f"ytc:revisit:{video_id}"
     try:
-        exists = await redis_client.exists(key)
-        await redis_client.setex(key, REVISIT_TTL_SECONDS, "1")
-        return bool(exists)
+        return await check_and_record_revisit_async("youtube", video_id, ttl_seconds=REVISIT_TTL_SECONDS)
     except Exception as exc:
         logger.error("Redis error: %s", exc)
         return False
