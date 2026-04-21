@@ -18,13 +18,33 @@ Design:
 import json
 import logging
 import os
+from pathlib import Path
+import time
 from typing import Any, Dict, List
 
 from dotenv import load_dotenv
-from langchain.schema import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 
 load_dotenv()
 logger = logging.getLogger(__name__)
+_DEBUG_LOG_PATH = Path(__file__).resolve().parents[1] / "debug-20c712.log"
+
+
+def _debug_log(run_id: str, hypothesis_id: str, location: str, message: str, data: dict):
+    payload = {
+        "sessionId": "20c712",
+        "runId": run_id,
+        "hypothesisId": hypothesis_id,
+        "location": location,
+        "message": message,
+        "data": data,
+        "timestamp": int(time.time() * 1000),
+    }
+    try:
+        with _DEBUG_LOG_PATH.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(payload, ensure_ascii=True) + "\n")
+    except Exception:
+        pass
 
 # ── Few-shot examples embedded in the system prompt ──────────────────────────
 FEW_SHOT_EXAMPLES = """
@@ -178,6 +198,63 @@ def _get_llm():
         raise ValueError(f"Unsupported LLM_PROVIDER: {provider}. Use google_genai, anthropic, or openai.")
 
 
+def _invoke_parser_with_google_fallback(messages, run_id: str):
+    """
+    Invoke Google GenAI parser model with fallback candidates when a model name is unavailable.
+    """
+    from langchain_google_genai import ChatGoogleGenerativeAI
+
+    preferred = os.getenv("PARSER_MODEL", os.getenv("LLM_MODEL", "gemini-1.5-flash"))
+    candidates = [preferred, "gemini-2.0-flash", "gemini-1.5-flash-latest"]
+    seen = set()
+
+    for model in candidates:
+        if model in seen:
+            continue
+        seen.add(model)
+        try:
+            llm = ChatGoogleGenerativeAI(
+                model=model,
+                temperature=0,
+                google_api_key=os.getenv("GOOGLE_API_KEY"),
+            )
+            # #region agent log
+            _debug_log(
+                run_id=run_id,
+                hypothesis_id="H10",
+                location="rse/query_parser.py:_invoke_parser_with_google_fallback",
+                message="attempting google parser model",
+                data={"model": model},
+            )
+            # #endregion
+            response = llm.invoke(messages)
+            # #region agent log
+            _debug_log(
+                run_id=run_id,
+                hypothesis_id="H10",
+                location="rse/query_parser.py:_invoke_parser_with_google_fallback",
+                message="google parser model succeeded",
+                data={"model": model},
+            )
+            # #endregion
+            return response
+        except Exception as e:
+            err = str(e)
+            if "not found" in err.lower() or "not supported" in err.lower():
+                # #region agent log
+                _debug_log(
+                    run_id=run_id,
+                    hypothesis_id="H10",
+                    location="rse/query_parser.py:_invoke_parser_with_google_fallback",
+                    message="google parser model unavailable, trying next",
+                    data={"model": model, "error_type": type(e).__name__, "error": err[:200]},
+                )
+                # #endregion
+                continue
+            raise
+    raise RuntimeError("No available Google parser model from configured fallback list.")
+
+
 def _build_user_message(query: str, conversation_history: List[Dict[str, str]]) -> str:
     """Format the user message with conversation history context."""
     if not conversation_history:
@@ -230,6 +307,62 @@ def _fallback_intent(query: str) -> Dict[str, Any]:
     }
 
 
+def _heuristic_intent(query: str) -> Dict[str, Any]:
+    """
+    Deterministic parser fallback when LLM is unavailable/quota-limited.
+    """
+    q = (query or "").strip()
+    ql = q.lower()
+
+    sources = ["all"]
+    if "youtube" in ql or "video" in ql or "watch" in ql:
+        sources = ["youtube"]
+    elif "email" in ql or "gmail" in ql or "inbox" in ql:
+        sources = ["gmail"]
+    elif "chrome" in ql or "article" in ql or "website" in ql or "page" in ql:
+        sources = ["chrome"]
+
+    time_filter = None
+    if "today" in ql:
+        time_filter = "1_day"
+    elif "yesterday" in ql:
+        time_filter = "1_day"
+    elif "this week" in ql or "recent" in ql or "recently" in ql:
+        time_filter = "7_days"
+    elif "last month" in ql or "this month" in ql:
+        time_filter = "30_days"
+    elif "last 3 months" in ql or "past 3 months" in ql:
+        time_filter = "90_days"
+
+    cleaned = q
+    for phrase in [
+        "what youtube videos did i watch recently",
+        "what youtube videos did i watch",
+        "show me",
+        "find",
+        "what did i",
+        "can you",
+        "?",
+    ]:
+        cleaned = cleaned.replace(phrase, "").strip()
+        cleaned = cleaned.replace(phrase.title(), "").strip()
+    if not cleaned:
+        cleaned = "recent activity"
+
+    return {
+        "sources": sources,
+        "time_filter": time_filter,
+        "fetch_attachment": ("attachment" in ql or "pdf" in ql),
+        "fetch_api": False,
+        "query_clean": cleaned,
+        "scope_level": 0,
+        "is_ambiguous": False,
+        "original_query": q,
+        "skip_postgres_filter": False,
+        "full_faiss_scan": False,
+    }
+
+
 def parse_user_intent(
     query: str,
     conversation_history: List[Dict[str, str]] = None,
@@ -248,15 +381,37 @@ def parse_user_intent(
         return _fallback_intent(query or "")
 
     history = conversation_history or []
+    run_id = f"pre-fix-{int(time.time() * 1000)}"
+    # #region agent log
+    _debug_log(
+        run_id=run_id,
+        hypothesis_id="H6",
+        location="rse/query_parser.py:parse_user_intent",
+        message="parse_user_intent start",
+        data={"query_len": len(query), "history_count": len(history)},
+    )
+    # #endregion
 
     try:
-        llm = _get_llm()
+        provider = os.getenv("LLM_PROVIDER", "google_genai")
         messages = [
             SystemMessage(content=SYSTEM_PROMPT),
             HumanMessage(content=_build_user_message(query, history)),
         ]
-
-        response = llm.invoke(messages)
+        # #region agent log
+        _debug_log(
+            run_id=run_id,
+            hypothesis_id="H7",
+            location="rse/query_parser.py:parse_user_intent",
+            message="llm parse invoke started",
+            data={"provider": provider},
+        )
+        # #endregion
+        if provider == "google_genai":
+            response = _invoke_parser_with_google_fallback(messages, run_id=run_id)
+        else:
+            llm = _get_llm()
+            response = llm.invoke(messages)
         raw = response.content.strip()
 
         # Strip markdown code fences if the LLM wrapped the JSON
@@ -278,6 +433,15 @@ def parse_user_intent(
 
         if not _validate_intent(intent):
             logger.warning("ParsedIntent failed validation — using fallback")
+            # #region agent log
+            _debug_log(
+                run_id=run_id,
+                hypothesis_id="H8",
+                location="rse/query_parser.py:parse_user_intent",
+                message="intent validation failed, using fallback",
+                data={"intent_keys": sorted(list(intent.keys()))},
+            )
+            # #endregion
             return _fallback_intent(query)
 
         logger.info(
@@ -286,11 +450,63 @@ def parse_user_intent(
             f"query_clean='{intent['query_clean']}' "
             f"is_ambiguous={intent['is_ambiguous']}"
         )
+        # #region agent log
+        _debug_log(
+            run_id=run_id,
+            hypothesis_id="H6",
+            location="rse/query_parser.py:parse_user_intent",
+            message="intent parsed successfully",
+            data={
+                "sources": intent.get("sources"),
+                "time_filter": intent.get("time_filter"),
+                "is_ambiguous": intent.get("is_ambiguous"),
+                "query_clean": intent.get("query_clean", "")[:120],
+            },
+        )
+        # #endregion
         return intent
 
     except json.JSONDecodeError as e:
         logger.error(f"parse_intent JSON decode error: {e} — raw: {raw[:200]}")
-        return _fallback_intent(query)
+        # #region agent log
+        _debug_log(
+            run_id=run_id,
+            hypothesis_id="H8",
+            location="rse/query_parser.py:parse_user_intent",
+            message="json decode error fallback",
+            data={"error_type": type(e).__name__, "error": str(e)},
+        )
+        # #endregion
+        heuristic = _heuristic_intent(query)
+        # #region agent log
+        _debug_log(
+            run_id=run_id,
+            hypothesis_id="H11",
+            location="rse/query_parser.py:parse_user_intent",
+            message="using heuristic fallback after json decode error",
+            data={"sources": heuristic.get("sources"), "time_filter": heuristic.get("time_filter")},
+        )
+        # #endregion
+        return heuristic
     except Exception as e:
         logger.error(f"parse_intent LLM error: {e}")
-        return _fallback_intent(query)
+        # #region agent log
+        _debug_log(
+            run_id=run_id,
+            hypothesis_id="H7",
+            location="rse/query_parser.py:parse_user_intent",
+            message="llm exception fallback",
+            data={"error_type": type(e).__name__, "error": str(e)},
+        )
+        # #endregion
+        heuristic = _heuristic_intent(query)
+        # #region agent log
+        _debug_log(
+            run_id=run_id,
+            hypothesis_id="H11",
+            location="rse/query_parser.py:parse_user_intent",
+            message="using heuristic fallback after llm exception",
+            data={"sources": heuristic.get("sources"), "time_filter": heuristic.get("time_filter")},
+        )
+        # #endregion
+        return heuristic

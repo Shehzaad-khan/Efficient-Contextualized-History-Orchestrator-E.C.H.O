@@ -11,12 +11,33 @@ Endpoints:
 """
 
 import logging
+import json
+from pathlib import Path
+import time
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+_DEBUG_LOG_PATH = Path(__file__).resolve().parents[1] / "debug-20c712.log"
+
+
+def _debug_log(run_id: str, hypothesis_id: str, location: str, message: str, data: dict):
+    payload = {
+        "sessionId": "20c712",
+        "runId": run_id,
+        "hypothesisId": hypothesis_id,
+        "location": location,
+        "message": message,
+        "data": data,
+        "timestamp": int(time.time() * 1000),
+    }
+    try:
+        with _DEBUG_LOG_PATH.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(payload, ensure_ascii=True) + "\n")
+    except Exception:
+        pass
 
 router = APIRouter(prefix="/retrieval", tags=["Retrieval & Synthesis Engine"])
 
@@ -46,15 +67,69 @@ def query(request: QueryRequest):
     Multi-turn: pass the session_id from a previous response to continue
     the conversation with full context ("find Chrome pages about that topic").
     """
-    from rse.retrieval_engine import run_query
+    run_id = f"pre-fix-{int(time.time() * 1000)}"
+    # #region agent log
+    _debug_log(
+        run_id=run_id,
+        hypothesis_id="H0",
+        location="backend/retrieval.py:query",
+        message="received retrieval query request",
+        data={
+            "has_session_id": bool(request.session_id),
+            "query_len": len(request.query or ""),
+        },
+    )
+    # #endregion
 
     try:
+        # #region agent log
+        _debug_log(
+            run_id=run_id,
+            hypothesis_id="H1",
+            location="backend/retrieval.py:query",
+            message="importing run_query",
+            data={},
+        )
+        # #endregion
+        from rse.retrieval_engine import run_query
+        # #region agent log
+        _debug_log(
+            run_id=run_id,
+            hypothesis_id="H1",
+            location="backend/retrieval.py:query",
+            message="imported run_query successfully",
+            data={},
+        )
+        # #endregion
         result = run_query(
             user_query=request.query,
             session_id=request.session_id,
         )
+        # #region agent log
+        _debug_log(
+            run_id=run_id,
+            hypothesis_id="H4",
+            location="backend/retrieval.py:query",
+            message="run_query returned",
+            data={
+                "result_type": type(result).__name__,
+                "has_final_answer": isinstance(result, dict) and ("final_answer" in result),
+                "has_no_results": isinstance(result, dict) and ("no_results" in result),
+                "has_result_count": isinstance(result, dict) and ("result_count" in result),
+            },
+        )
+        # #endregion
         return QueryResponse(**result)
     except Exception as e:
+        # #region agent log
+        _debug_log(
+            run_id=run_id,
+            hypothesis_id="H5",
+            location="backend/retrieval.py:query",
+            message="retrieval endpoint exception",
+            data={"error_type": type(e).__name__, "error": str(e)},
+        )
+        # #endregion
         logger.error(f"retrieval /query error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 

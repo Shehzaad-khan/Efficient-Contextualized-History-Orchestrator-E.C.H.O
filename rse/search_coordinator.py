@@ -21,7 +21,10 @@ Time filter handling:
 
 import logging
 import os
+import json
 from datetime import datetime, timezone
+from pathlib import Path
+import time
 from typing import Any, Dict, List, Optional
 
 import psycopg2
@@ -32,6 +35,24 @@ from .config import DATABASE_URL, POSTGRES_SEARCH_LIMIT
 
 load_dotenv()
 logger = logging.getLogger(__name__)
+_DEBUG_LOG_PATH = Path(__file__).resolve().parents[1] / "debug-20c712.log"
+
+
+def _debug_log(run_id: str, hypothesis_id: str, location: str, message: str, data: dict):
+    payload = {
+        "sessionId": "20c712",
+        "runId": run_id,
+        "hypothesisId": hypothesis_id,
+        "location": location,
+        "message": message,
+        "data": data,
+        "timestamp": int(time.time() * 1000),
+    }
+    try:
+        with _DEBUG_LOG_PATH.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(payload, ensure_ascii=True) + "\n")
+    except Exception:
+        pass
 
 
 # ── Time filter helpers ───────────────────────────────────────────────────────
@@ -132,11 +153,22 @@ def run_postgres_search(
 
     Returns list of row dicts.
     """
+    run_id = f"pre-fix-{int(time.time() * 1000)}"
     if parsed_intent.get("skip_postgres_filter"):
         logger.info("postgres_search: skip_postgres_filter=True, running full scan")
-        sources = ["all"]
+        # Preserve user-requested source during widening to avoid cross-source noise.
+        sources = parsed_intent.get("sources", ["all"])
         query_clean = parsed_intent.get("query_clean", "")
         time_filter = None
+        # #region agent log
+        _debug_log(
+            run_id=run_id,
+            hypothesis_id="H13",
+            location="rse/search_coordinator.py:run_postgres_search",
+            message="skip_postgres_filter branch preserving sources",
+            data={"sources": sources, "query_clean": query_clean[:120]},
+        )
+        # #endregion
     else:
         sources = parsed_intent.get("sources", ["all"])
         query_clean = parsed_intent.get("query_clean", "")
@@ -223,6 +255,15 @@ def run_postgres_search(
         f"postgres_search: sources={sources} time_filter={time_filter} "
         f"query_clean='{query_clean}' limit={limit}"
     )
+    # #region agent log
+    _debug_log(
+        run_id=run_id,
+        hypothesis_id="H12",
+        location="rse/search_coordinator.py:run_postgres_search",
+        message="postgres search filters",
+        data={"sources": sources, "time_filter": time_filter, "query_clean": query_clean[:120]},
+    )
+    # #endregion
 
     db_url = DATABASE_URL or os.getenv("DATABASE_URL")
     if not db_url:
@@ -239,10 +280,28 @@ def run_postgres_search(
 
         results = [dict(row) for row in rows]
         logger.info(f"postgres_search: returned {len(results)} rows")
+        # #region agent log
+        _debug_log(
+            run_id=run_id,
+            hypothesis_id="H12",
+            location="rse/search_coordinator.py:run_postgres_search",
+            message="postgres search completed",
+            data={"result_count": len(results)},
+        )
+        # #endregion
         return results
 
     except Exception as e:
         logger.error(f"postgres_search DB error: {e}")
+        # #region agent log
+        _debug_log(
+            run_id=run_id,
+            hypothesis_id="H12",
+            location="rse/search_coordinator.py:run_postgres_search",
+            message="postgres search exception",
+            data={"error_type": type(e).__name__, "error": str(e)},
+        )
+        # #endregion
         if conn:
             conn.rollback()
         return []
