@@ -1,4 +1,5 @@
-.venv
+.venv/
+venv/
 .env
 .agent
 .agents
@@ -8,13 +9,7 @@ token_youtube.json
 token_gmail.json
 emails.xlsx
 gmail_run.log
-ingestion/chrome/__pycache__/__init__.cpython-314.pyc
-ingestion/chrome/__pycache__/chrome_connector.cpython-314.pyc
-ingestion/chrome/__pycache__/intent_filter.cpython-314.pyc
-ingestion/chrome/__pycache__/revisit_tracker.cpython-314.pyc
-ingestion/gmail/__pycache__/
-ingestion/youtube/__pycache__/__init__.cpython-314.pyc
-ingestion/youtube/__pycache__/video_classifier.cpython-314.pyc
-ingestion/youtube/__pycache__/youtube_api_client.cpython-314.pyc
-ingestion/youtube/__pycache__/youtube_connector.cpython-314.pyc
-backend/__pycache__/main.cpython-314.pyc
+debug-*.log
+
+__pycache__/
+*.py[cod]
