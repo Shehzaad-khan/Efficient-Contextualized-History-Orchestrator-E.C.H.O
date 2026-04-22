@@ -1,18 +1,24 @@
 """
-main.py — Echo Backend Entry Point
+main.py — Echo Backend Entry Point v0.2.0
 Mounts all module routers and starts the FastAPI app.
+
+Routers mounted:
+    /ytc        — YouTube Connector (YTC)
+    /chrome     — Chrome Connector (CHC)
+    /retrieval  — Retrieval & Synthesis Engine (RSE)
 """
 
 import logging
 import os
 
 import redis.asyncio as aioredis
+from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 from fastapi import FastAPI
-from contextlib import asynccontextmanager
 
-from ingestion.youtube.youtube_connector import router as ytc_router, redis_client as ytc_redis
+from ingestion.youtube.youtube_connector import router as ytc_router
 from ingestion.chrome.chrome_connector import router as chc_router
+from backend.retrieval import router as retrieval_router
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
@@ -42,15 +48,18 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Echo Backend",
-    version="0.1.0",
+    version="0.2.0",
+    description="E.C.H.O — Efficient Contextualized History Orchestrator",
     lifespan=lifespan,
 )
 
 # Mount routers
 app.include_router(ytc_router)
 app.include_router(chc_router)
+app.include_router(retrieval_router)
 
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "service": "echo-backend"}
+    return {"status": "ok", "service": "echo-backend", "version": "0.2.0"}
+
