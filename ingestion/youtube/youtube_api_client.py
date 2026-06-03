@@ -16,7 +16,7 @@ from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
-from backend.security import migrate_plaintext_file, write_encrypted_text
+from ste.security import migrate_plaintext_file, write_encrypted_text
 
 load_dotenv()
 logger = logging.getLogger(__name__)

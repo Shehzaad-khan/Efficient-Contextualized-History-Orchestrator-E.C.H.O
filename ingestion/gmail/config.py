@@ -7,7 +7,7 @@ import redis
 from pathlib import Path
 from dotenv import load_dotenv
 
-from backend.security import validate_redis_tls_url
+from ste.security import validate_redis_tls_url
 
 # ==============================
 # LOAD ENVIRONMENT VARIABLES

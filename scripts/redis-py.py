@@ -2,7 +2,7 @@ import redis
 import os
 from dotenv import load_dotenv
 
-from backend.security import validate_redis_tls_url
+from ste.security import validate_redis_tls_url
 
 load_dotenv(r"C:\E.C.H.O\.env")
 

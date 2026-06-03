@@ -2,6 +2,22 @@ if (!chrome.extension.inIncognitoContext) {
   let maxScrollDepth = 0;
   let interactionCount = 0;
   let intervalId = null;
+  const sensitivePathTerms = new Set([
+    "account",
+    "auth",
+    "billing",
+    "callback",
+    "checkout",
+    "login",
+    "logout",
+    "oauth",
+    "password",
+    "payment",
+    "profile",
+    "settings",
+    "signin",
+    "signup"
+  ]);
 
   function computeScrollDepth() {
     const documentHeight = Math.max(
@@ -36,8 +52,34 @@ if (!chrome.extension.inIncognitoContext) {
     return appDomains.some((domain) => host === domain || host.endsWith(`.${domain}`));
   }
 
+  function detectSensitivePage() {
+    const pathParts = window.location.pathname
+      .toLowerCase()
+      .split("/")
+      .filter(Boolean);
+    const target = `${window.location.pathname}?${window.location.search}`.toLowerCase();
+    return (
+      pathParts.some((part) => sensitivePathTerms.has(part)) ||
+      [...sensitivePathTerms].some((term) => target.includes(`/${term}`) || target.includes(`${term}=`))
+    );
+  }
+
+  function hasPrivateFormSurface() {
+    if (document.querySelector("input[type='password'], input[type='email'], input[type='tel'], input[type='number']")) {
+      return true;
+    }
+    const editableCount = document.querySelectorAll("input, textarea, select, [contenteditable=''], [contenteditable='true']").length;
+    return editableCount >= 5;
+  }
+
+  function visibleTextFrom(node) {
+    const clone = node.cloneNode(true);
+    clone.querySelectorAll("script, style, noscript, input, textarea, select, button, form, [contenteditable=''], [contenteditable='true']").forEach((child) => child.remove());
+    return (clone.innerText || clone.textContent || "").replace(/\s+/g, " ").trim();
+  }
+
   function extractReadableContent() {
-    if (detectApplicationPage()) {
+    if (detectApplicationPage() || detectSensitivePage() || hasPrivateFormSurface()) {
       return "";
     }
 
@@ -49,7 +91,7 @@ if (!chrome.extension.inIncognitoContext) {
     ].filter(Boolean);
 
     for (const node of candidates) {
-      const text = (node.innerText || "").replace(/\s+/g, " ").trim();
+      const text = visibleTextFrom(node);
       if (text.length >= 200) {
         return text.slice(0, 12000);
       }

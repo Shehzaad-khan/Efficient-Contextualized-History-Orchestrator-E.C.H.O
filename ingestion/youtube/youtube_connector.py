@@ -12,8 +12,8 @@ from dotenv import load_dotenv
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from backend.redis_manager import REVISIT_TTL_SECONDS, check_and_record_revisit_async
-from backend.storage_engine import (
+from ste.redis_manager import REVISIT_TTL_SECONDS, check_and_record_revisit_async
+from ste.storage_engine import (
     store_youtube_detection,
     update_youtube_metadata,
     update_youtube_watch_time,

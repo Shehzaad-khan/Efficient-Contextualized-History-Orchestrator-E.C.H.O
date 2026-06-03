@@ -6,9 +6,9 @@ from dotenv import load_dotenv
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
-from backend.storage_engine import store_chrome_page
+from ste.storage_engine import store_chrome_page
 from ingestion.chrome import intent_filter
-from ingestion.chrome.revisit_tracker import check_and_record_visit
+from ingestion.chrome.revisit_tracker import check_and_record_visit, record_visit
 
 load_dotenv()
 
@@ -31,6 +31,23 @@ IGNORED_QUERY_PARAMS = {
 APPLICATION_PATH_PREFIXES = (
     "github.com/issues",
     "github.com/pulls",
+)
+
+SENSITIVE_PATH_TERMS = (
+    "account",
+    "auth",
+    "billing",
+    "callback",
+    "checkout",
+    "login",
+    "logout",
+    "oauth",
+    "password",
+    "payment",
+    "profile",
+    "settings",
+    "signin",
+    "signup",
 )
 
 
@@ -64,18 +81,46 @@ def canonicalize_url(raw_url: str) -> str:
     return urlunparse(normalized)
 
 
+def extract_domain(raw_url: str) -> str:
+    parsed = urlparse(raw_url)
+    return (parsed.hostname or "").lower()
+
+
 def is_skipped_page(url: str) -> bool:
     normalized_url = (url or "").strip().lower()
     return any(prefix in normalized_url for prefix in APPLICATION_PATH_PREFIXES)
 
 
+def is_sensitive_page(url: str) -> bool:
+    parsed = urlparse(url or "")
+    target = f"{parsed.path}?{parsed.query}".lower()
+    path_parts = {part for part in parsed.path.lower().split("/") if part}
+    if any(term in path_parts for term in SENSITIVE_PATH_TERMS):
+        return True
+    return any(f"/{term}" in target or f"{term}=" in target for term in SENSITIVE_PATH_TERMS)
+
+
 @router.post("/ingest")
 def ingest_chrome_page(payload: ChromeIngestRequest):
     payload.canonical_url = payload.canonical_url or canonicalize_url(payload.url)
+    payload.domain = extract_domain(payload.canonical_url) or extract_domain(payload.url) or payload.domain.strip().lower()
     payload.is_app_page = payload.is_app_page or intent_filter.is_application_page(payload.domain)
 
     if is_skipped_page(payload.url):
         return {"status": "discarded", "reason": "application_path_excluded"}
+
+    if is_sensitive_page(payload.canonical_url):
+        return {"status": "discarded", "reason": "sensitive_page_excluded"}
+
+    if intent_filter.phase1_passes(payload.dwell_seconds):
+        try:
+            record_visit(payload.canonical_url)
+        except Exception:
+            pass
+
+    if payload.is_app_page:
+        payload.content_extract = ""
+        payload.word_count = None
 
     if not payload.is_app_page and not intent_filter.evaluate(
         dwell_seconds=payload.dwell_seconds,
@@ -83,7 +128,7 @@ def ingest_chrome_page(payload: ChromeIngestRequest):
         interaction_count=payload.interaction_count,
         revisit_count=payload.revisit_count,
     ):
-        return {"status": "discarded"}
+        return {"status": "discarded", "reason": "intent_not_confirmed"}
 
     saved = store_chrome_page(payload)
     return {

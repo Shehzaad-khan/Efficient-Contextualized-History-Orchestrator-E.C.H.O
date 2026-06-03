@@ -4,8 +4,8 @@ Database module - Handles Gmail PostgreSQL storage operations.
 
 import json
 
-from backend import postgresql_manager
-from backend.storage_engine import store_gmail_message
+from ste import postgresql_manager
+from ste.storage_engine import store_gmail_message
 from .config import get_redis_client
 
 

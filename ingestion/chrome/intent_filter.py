@@ -16,6 +16,7 @@ APPLICATION_DOMAINS = {
     "trello.com",
     "asana.com",
     "confluence.atlassian.net",
+    "mail.google.com",
 }
 
 

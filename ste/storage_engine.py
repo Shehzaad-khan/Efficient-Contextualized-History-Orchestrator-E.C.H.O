@@ -8,7 +8,7 @@ from uuid import uuid4
 
 from sqlalchemy import text
 
-from backend import postgresql_manager
+from ste import postgresql_manager
 
 SYSTEM_GROUP_IDS = {
     "work": 1,
@@ -234,7 +234,7 @@ def _store_source_metadata(connection, source_type: str, memory_id: str, source_
                     referrer = COALESCE(EXCLUDED.referrer, chrome_metadata.referrer),
                     scroll_depth = GREATEST(COALESCE(chrome_metadata.scroll_depth, 0.0), EXCLUDED.scroll_depth),
                     interaction_count = GREATEST(COALESCE(chrome_metadata.interaction_count, 0), EXCLUDED.interaction_count),
-                    revisit_count = GREATEST(COALESCE(chrome_metadata.revisit_count, 0), EXCLUDED.revisit_count),
+                    revisit_count = COALESCE(chrome_metadata.revisit_count, 0) + EXCLUDED.revisit_count,
                     word_count = COALESCE(EXCLUDED.word_count, chrome_metadata.word_count)
                 """
             ),

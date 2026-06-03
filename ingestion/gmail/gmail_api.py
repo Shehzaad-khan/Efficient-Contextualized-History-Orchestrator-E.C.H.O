@@ -13,8 +13,8 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 
-from backend import postgresql_manager
-from backend.security import decrypt_text, encrypt_text, migrate_plaintext_file, write_encrypted_text
+from ste import postgresql_manager
+from ste.security import decrypt_text, encrypt_text, migrate_plaintext_file, write_encrypted_text
 from .config import SCOPES, get_redis_client
 from .database import store_in_postgresql
 

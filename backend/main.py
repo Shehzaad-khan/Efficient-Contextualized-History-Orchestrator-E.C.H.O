@@ -21,7 +21,7 @@ from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 from fastapi import FastAPI
 
-from backend.security import validate_redis_tls_url
+from ste.security import validate_redis_tls_url
 from ingestion.youtube.youtube_connector import router as ytc_router
 from ingestion.chrome.chrome_connector import router as chc_router
 from ingestion.gmail.router import poll_forever as gmail_poll_forever

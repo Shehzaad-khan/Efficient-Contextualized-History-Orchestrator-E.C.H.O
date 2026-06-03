@@ -7,7 +7,7 @@ from typing import Optional
 import redis
 import redis.asyncio as aioredis
 
-from backend.security import validate_redis_tls_url
+from ste.security import validate_redis_tls_url
 
 REVISIT_TTL_SECONDS = 86400
 ATTACHMENT_CACHE_TTL_SECONDS = 3600

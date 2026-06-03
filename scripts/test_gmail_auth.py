@@ -3,7 +3,7 @@ from pathlib import Path
 from googleapiclient.discovery import build
 from google_auth_oauthlib.flow import InstalledAppFlow
 
-from backend.security import write_encrypted_text
+from ste.security import write_encrypted_text
 
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
 PROJECT_ROOT = Path(__file__).resolve().parents[1]

@@ -23,6 +23,22 @@ const CHROME_APPLICATION_DOMAINS = [
 ];
 
 const CHROME_APPLICATION_PATH_SNIPPETS = ["github.com/issues", "github.com/pulls"];
+const CHROME_SENSITIVE_PATH_TERMS = new Set([
+  "account",
+  "auth",
+  "billing",
+  "callback",
+  "checkout",
+  "login",
+  "logout",
+  "oauth",
+  "password",
+  "payment",
+  "profile",
+  "settings",
+  "signin",
+  "signup"
+]);
 const CHROME_IGNORED_QUERY_PARAMS = new Set([
   "utm_source",
   "utm_medium",
@@ -95,7 +111,7 @@ function shouldSkipChromeUrl(url, incognito = false) {
     return true;
   }
 
-  return CHROME_APPLICATION_PATH_SNIPPETS.some((snippet) => url.includes(snippet));
+  return CHROME_APPLICATION_PATH_SNIPPETS.some((snippet) => url.includes(snippet)) || isSensitiveChromeUrl(url);
 }
 
 function canonicalizeChromeUrl(rawUrl) {
@@ -115,6 +131,23 @@ function canonicalizeChromeUrl(rawUrl) {
 
 function isAppDomain(host) {
   return CHROME_APPLICATION_DOMAINS.some((domain) => host === domain || host.endsWith(`.${domain}`));
+}
+
+function isSensitiveChromeUrl(url) {
+  try {
+    const parsed = new URL(url);
+    const pathParts = parsed.pathname
+      .toLowerCase()
+      .split("/")
+      .filter(Boolean);
+    const target = `${parsed.pathname}?${parsed.searchParams.toString()}`.toLowerCase();
+    return (
+      pathParts.some((part) => CHROME_SENSITIVE_PATH_TERMS.has(part)) ||
+      [...CHROME_SENSITIVE_PATH_TERMS].some((term) => target.includes(`/${term}`) || target.includes(`${term}=`))
+    );
+  } catch (error) {
+    return true;
+  }
 }
 
 function ensureChromeTabState(tab) {
@@ -139,7 +172,8 @@ function ensureChromeTabState(tab) {
     contentExtract: "",
     wordCount: 0,
     referrer: "",
-    isAppPage: false
+    isAppPage: false,
+    isSensitivePage: false
   };
 
   try {
@@ -152,6 +186,7 @@ function ensureChromeTabState(tab) {
   existing.canonicalUrl = canonicalUrl;
   existing.title = tab.title || existing.title || canonicalUrl;
   existing.isAppPage = isAppDomain(existing.domain);
+  existing.isSensitivePage = isSensitiveChromeUrl(canonicalUrl);
   activeChromeTabs.set(tab.id, existing);
   return existing;
 }
@@ -178,8 +213,8 @@ async function sendChromePageToBackend(tabState) {
     scroll_depth: tabState.scrollDepth,
     interaction_count: tabState.interactionCount,
     revisit_count: tabState.revisitCount,
-    content_extract: tabState.isAppPage ? "" : tabState.contentExtract,
-    word_count: tabState.isAppPage ? null : tabState.wordCount,
+    content_extract: tabState.isAppPage || tabState.isSensitivePage ? "" : tabState.contentExtract,
+    word_count: tabState.isAppPage || tabState.isSensitivePage ? null : tabState.wordCount,
     referrer: tabState.referrer,
     is_app_page: tabState.isAppPage
   });
@@ -303,10 +338,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     tabState.url = message.url || tabState.url;
     tabState.canonicalUrl = canonicalizeChromeUrl(tabState.url);
     tabState.title = message.title || tabState.title;
+    tabState.isSensitivePage = isSensitiveChromeUrl(tabState.canonicalUrl);
     tabState.scrollDepth = Math.max(tabState.scrollDepth, Number(message.scrollDepth || 0));
     tabState.interactionCount = Math.max(tabState.interactionCount, Number(message.interactionCount || 0));
-    tabState.contentExtract = message.contentExtract || tabState.contentExtract;
-    tabState.wordCount = Math.max(tabState.wordCount, Number(message.wordCount || 0));
+    tabState.contentExtract = tabState.isSensitivePage ? "" : message.contentExtract || tabState.contentExtract;
+    tabState.wordCount = tabState.isSensitivePage ? 0 : Math.max(tabState.wordCount, Number(message.wordCount || 0));
     tabState.referrer = message.referrer || tabState.referrer;
     tabState.isAppPage = Boolean(message.isAppPage || tabState.isAppPage);
     sendResponse?.({ ok: true });
