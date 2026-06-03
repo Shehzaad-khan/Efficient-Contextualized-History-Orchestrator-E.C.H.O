@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
-
 from fastapi import APIRouter
 
 from .config import CHECK_INTERVAL
@@ -31,9 +29,6 @@ def poll_once() -> dict:
 
 
 async def poll_forever() -> None:
-    if os.getenv("ENABLE_GMAIL_POLLING", "true").lower() not in {"1", "true", "yes"}:
-        logger.info("Gmail background polling disabled")
-        return
     while True:
         try:
             result = await asyncio.to_thread(poll_once)

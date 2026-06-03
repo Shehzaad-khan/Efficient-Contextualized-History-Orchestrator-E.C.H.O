@@ -7,9 +7,11 @@ skills-lock.json
 credentials.json
 token_youtube.json
 token_gmail.json
+token_youtube.enc
+token_gmail.enc
 emails.xlsx
 gmail_run.log
 debug-*.log
-
+.vscode/
 __pycache__/
 *.py[cod]

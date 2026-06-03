@@ -7,6 +7,8 @@ import redis
 from pathlib import Path
 from dotenv import load_dotenv
 
+from backend.security import validate_redis_tls_url
+
 # ==============================
 # LOAD ENVIRONMENT VARIABLES
 # ==============================
@@ -32,7 +34,12 @@ def get_redis_client():
     global redis_client
     if redis_client is None:
         try:
-            redis_client = redis.from_url(REDIS_URL, decode_responses=True, socket_connect_timeout=5, socket_keepalive=True)
+            redis_client = redis.from_url(
+                validate_redis_tls_url(REDIS_URL),
+                decode_responses=True,
+                socket_connect_timeout=5,
+                socket_keepalive=True,
+            )
             redis_client.ping()  # Test connection
             print("Redis Connected ✅")
         except Exception as e:

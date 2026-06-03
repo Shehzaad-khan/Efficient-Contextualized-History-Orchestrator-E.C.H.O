@@ -1,7 +1,7 @@
 """
 RSE module configuration.
 To switch LLM provider, change 'provider' and update the model strings below.
-Supported providers: 'google' | 'anthropic' | 'ollama'
+Supported providers: 'google_genai' | 'anthropic' | 'ollama'
 """
 import os
 from pathlib import Path
@@ -11,7 +11,7 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 # ── Single change point to swap LLM provider ─────────────────────────────────
 LLM_CONFIG: dict = {
-    "provider": "google",
+    "provider": "google_genai",
     # gemini-2.5-flash-preview-04-17 is specified in the architecture doc but not
     # yet available via the v1beta API as of April 2026. Using the GA release.
     "parser_model": "gemini-2.5-flash",

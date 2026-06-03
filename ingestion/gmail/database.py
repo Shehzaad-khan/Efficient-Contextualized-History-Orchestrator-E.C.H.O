@@ -1,11 +1,8 @@
 """
-Database module - Handles PostgreSQL and Excel storage operations.
+Database module - Handles Gmail PostgreSQL storage operations.
 """
 
 import json
-import os
-
-import pandas as pd
 
 from backend import postgresql_manager
 from backend.storage_engine import store_gmail_message
@@ -151,24 +148,3 @@ def store_in_postgresql(data):
     except Exception as exc:
         print(f"PostgreSQL storage error: {exc}")
         return False
-
-
-def store_in_excel(data):
-    try:
-        row = {
-            "memory_id": data["memory_id"],
-            "subject": data["title"],
-            "sender": data["source_metadata"]["email"]["from"],
-            "received_time": data["time"]["event_timestamp"],
-            "labels": ",".join(data["source_metadata"]["email"]["labels"]),
-            "body": data["content"]["primary_text"][:500],
-        }
-
-        df = pd.DataFrame([row])
-        if os.path.exists("emails.xlsx"):
-            existing = pd.read_excel("emails.xlsx")
-            df = pd.concat([existing, df], ignore_index=True)
-
-        df.to_excel("emails.xlsx", index=False)
-    except Exception as exc:
-        print(f"Excel backup error: {exc}")

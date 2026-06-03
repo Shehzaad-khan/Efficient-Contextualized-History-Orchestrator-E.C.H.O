@@ -18,6 +18,7 @@ from backend.storage_engine import (
     update_youtube_metadata,
     update_youtube_watch_time,
 )
+from .youtube_api_client import is_valid_video_id
 from .video_classifier import classify_video_type
 
 load_dotenv()
@@ -72,6 +73,9 @@ async def handle_video_detected(event: VideoDetectedEvent):
     import asyncio
     from . import youtube_api_client
 
+    if not is_valid_video_id(event.video_id):
+        return {"status": "discarded", "reason": "invalid_video_id"}
+
     is_revisit = await check_revisit(event.video_id)
     if not passes_intent_gate(event, is_revisit):
         return {"status": "discarded", "reason": "intent_gate_failed"}
@@ -114,6 +118,9 @@ async def handle_video_detected(event: VideoDetectedEvent):
 async def handle_heartbeat(event: WatchTimeHeartbeat):
     import asyncio
 
+    if not is_valid_video_id(event.video_id):
+        return {"status": "discarded", "reason": "invalid_video_id"}
+
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(executor, update_youtube_watch_time, event.video_id, event.watch_time_seconds)
     return {"status": "ok"}
@@ -122,6 +129,9 @@ async def handle_heartbeat(event: WatchTimeHeartbeat):
 @router.post("/video-closed")
 async def handle_video_closed(event: VideoClosedEvent):
     import asyncio
+
+    if not is_valid_video_id(event.video_id):
+        return {"status": "discarded", "reason": "invalid_video_id"}
 
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(executor, update_youtube_watch_time, event.video_id, event.final_watch_time_seconds)

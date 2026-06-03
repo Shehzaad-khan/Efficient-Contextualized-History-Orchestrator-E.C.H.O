@@ -22,7 +22,7 @@ else:
 def run_listener():
     db_ok = initialize_database()
     if not db_ok:
-        print("PostgreSQL unavailable - running in offline mode (Excel only)")
+        print("PostgreSQL unavailable - Gmail polling will retry until database is reachable")
 
     service = authenticate_gmail()
     print("Gmail Service Ready")
@@ -37,6 +37,9 @@ def run_listener():
 
     while True:
         try:
+            if not db_ok:
+                db_ok = initialize_database()
+
             if db_ok:
                 fetch_and_store_new_emails(service)
             else:

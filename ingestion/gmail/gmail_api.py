@@ -14,12 +14,28 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 
 from backend import postgresql_manager
+from backend.security import decrypt_text, encrypt_text, migrate_plaintext_file, write_encrypted_text
 from .config import SCOPES, get_redis_client
-from .database import store_in_excel, store_in_postgresql
+from .database import store_in_postgresql
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-TOKEN_PATH = PROJECT_ROOT / "token_gmail.json"
+TOKEN_PATH = PROJECT_ROOT / "token_gmail.enc"
+LEGACY_TOKEN_PATH = PROJECT_ROOT / "token_gmail.json"
 CREDENTIALS_PATH = PROJECT_ROOT / "credentials.json"
+REDIS_TOKEN_KEY = "gmail_token"
+
+
+def _load_stored_token_json() -> str | None:
+    return migrate_plaintext_file(LEGACY_TOKEN_PATH, TOKEN_PATH)
+
+
+def _save_token_json(token_json: str) -> None:
+    write_encrypted_text(TOKEN_PATH, token_json)
+
+
+def _cache_token_json(redis_client, token_json: str) -> None:
+    if redis_client:
+        redis_client.setex(REDIS_TOKEN_KEY, 3600, encrypt_text(token_json))
 
 
 def authenticate_gmail():
@@ -27,19 +43,26 @@ def authenticate_gmail():
     rc = get_redis_client()
     if rc:
         try:
-            cached_token = rc.get("gmail_token")
+            cached_token = rc.get(REDIS_TOKEN_KEY)
             if cached_token:
-                creds = Credentials.from_authorized_user_info(json.loads(cached_token), SCOPES)
+                token_json = decrypt_text(cached_token)
+                creds = Credentials.from_authorized_user_info(json.loads(token_json), SCOPES)
                 if creds.valid:
                     return build("gmail", "v1", credentials=creds)
         except Exception as exc:
             print(f"Failed to use cached token: {exc}")
 
-    if TOKEN_PATH.exists():
+    token_json = _load_stored_token_json()
+    if token_json:
         try:
-            creds = Credentials.from_authorized_user_file(str(TOKEN_PATH), SCOPES)
+            creds = Credentials.from_authorized_user_info(json.loads(token_json), SCOPES)
+            if creds.valid and rc:
+                try:
+                    _cache_token_json(rc, token_json)
+                except Exception as exc:
+                    print(f"Failed to refresh encrypted token cache: {exc}")
         except Exception as exc:
-            print(f"Invalid token_gmail.json: {exc}")
+            print(f"Invalid encrypted Gmail token: {exc}")
             TOKEN_PATH.unlink(missing_ok=True)
             creds = None
 
@@ -54,10 +77,10 @@ def authenticate_gmail():
             flow = InstalledAppFlow.from_client_secrets_file(str(CREDENTIALS_PATH), SCOPES)
             creds = flow.run_local_server(port=0)
 
-        TOKEN_PATH.write_text(creds.to_json(), encoding="utf-8")
+        _save_token_json(creds.to_json())
         if rc:
             try:
-                rc.setex("gmail_token", 3600, creds.to_json())
+                _cache_token_json(rc, creds.to_json())
             except Exception as exc:
                 print(f"Failed to cache token in Redis: {exc}")
 
@@ -104,14 +127,29 @@ def extract_attachments(message, message_id):
 def fetch_and_store_new_emails(service):
     try:
         processed_count = 0
-        results = service.users().messages().list(userId="me", maxResults=10).execute()
-        messages = results.get("messages", [])
+        all_messages = []
+        page_token = None
 
-        if not messages:
+        # Fetch all messages with pagination
+        while True:
+            results = service.users().messages().list(userId="me", maxResults=100, pageToken=page_token).execute()
+            messages = results.get("messages", [])
+
+            if not messages:
+                break
+
+            all_messages.extend(messages)
+            page_token = results.get("nextPageToken")
+            if not page_token:
+                break
+
+        if not all_messages:
             print("No new emails found")
             return 0
 
-        for message in messages:
+        # Fetch full message data and collect unprocessed emails with timestamps
+        unprocessed_emails = []
+        for message in all_messages:
             message_id = message["id"]
             existing = postgresql_manager.fetchone(
                 """
@@ -141,6 +179,31 @@ def fetch_and_store_new_emails(service):
                     to = header["value"]
                 elif header["name"] == "Date":
                     date = header["value"]
+
+            unprocessed_emails.append({
+                "message_id": message_id,
+                "msg": msg,
+                "subject": subject,
+                "sender": sender,
+                "to": to,
+                "date": date,
+            })
+
+        # Sort by date (oldest first)
+        try:
+            from email.utils import parsedate_to_datetime
+            unprocessed_emails.sort(key=lambda e: parsedate_to_datetime(e["date"]))
+        except Exception:
+            print("Warning: Could not sort by date, processing in fetched order")
+
+        # Process emails in chronological order
+        for email_info in unprocessed_emails:
+            message_id = email_info["message_id"]
+            msg = email_info["msg"]
+            subject = email_info["subject"]
+            sender = email_info["sender"]
+            to = email_info["to"]
+            date = email_info["date"]
 
             attachments = extract_attachments(msg, message_id)
             email_data = {
@@ -176,7 +239,6 @@ def fetch_and_store_new_emails(service):
 
             if store_in_postgresql(email_data):
                 processed_count += 1
-                store_in_excel(email_data)
 
         return processed_count
     except Exception as exc:

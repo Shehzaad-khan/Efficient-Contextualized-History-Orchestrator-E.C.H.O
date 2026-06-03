@@ -164,13 +164,20 @@ def run_query(
     if answer:
         save_turn(session_id, user_query, answer)
 
+    result_count = len(final_state.get("postgres_results", [])) + len(final_state.get("faiss_results", []))
+
     logger.info(
-        "run_query: complete — no_results=%s answer_length=%d",
+        "run_query: complete — no_results=%s answer_length=%d result_count=%d",
         final_state.get("no_results"),
         len(answer),
+        result_count,
     )
 
-    return final_state
+    return {
+        **final_state,
+        "session_id": session_id,
+        "result_count": result_count,
+    }
 
 
 # ── Module-level smoke test ───────────────────────────────────────────────────

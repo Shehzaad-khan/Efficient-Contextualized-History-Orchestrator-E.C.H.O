@@ -1,0 +1,17 @@
+{
+  "dimension": 384,
+  "embedding_version": "all-MiniLM-L6-v2-v1",
+  "memory_ids": [
+    "462fd5cc-185b-4830-9764-e731155ccb33",
+    "885c4edb-f7bd-4a1b-bf44-a303f50db20e",
+    "8a1877fa-3346-4761-90cd-e7bc916f3d69",
+    "471c0e24-79c6-4d5f-8312-e55cb4421625",
+    "be001a8c-2a5d-4c14-8a44-8aaaf24838cd",
+    "d3c1f795-596a-400f-9477-f51f6922763f",
+    "3df49992-27e1-4425-8eaa-a0b4f17b54b4",
+    "a19970de-9508-4442-a2b9-f910cad120bc",
+    "848bf878-db53-4a20-8a35-df4f9934b65f",
+    "e3b8801f-efb6-432c-8be2-839eabbca765",
+    "915a7e6e-2d80-410e-80dc-1ace51762534"
+  ]
+}

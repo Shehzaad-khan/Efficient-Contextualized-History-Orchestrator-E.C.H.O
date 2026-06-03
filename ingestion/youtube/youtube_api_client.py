@@ -3,6 +3,7 @@ youtube_api_client.py - YTC Module
 """
 
 import logging
+import json
 import re
 from html import unescape
 from pathlib import Path
@@ -15,25 +16,34 @@ from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
+from backend.security import migrate_plaintext_file, write_encrypted_text
+
 load_dotenv()
 logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
-TOKEN_PATH = PROJECT_ROOT / "token_youtube.json"
+TOKEN_PATH = PROJECT_ROOT / "token_youtube.enc"
+LEGACY_TOKEN_PATH = PROJECT_ROOT / "token_youtube.json"
 CREDENTIALS_PATH = PROJECT_ROOT / "credentials.json"
 
 SCOPES = ["https://www.googleapis.com/auth/youtube.readonly"]
+YOUTUBE_VIDEO_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
+
+
+def is_valid_video_id(video_id: str) -> bool:
+    return bool(YOUTUBE_VIDEO_ID_RE.fullmatch(video_id or ""))
 
 
 def get_youtube_client():
     creds = None
-    if TOKEN_PATH.exists():
-        creds = Credentials.from_authorized_user_file(str(TOKEN_PATH), SCOPES)
+    token_json = migrate_plaintext_file(LEGACY_TOKEN_PATH, TOKEN_PATH)
+    if token_json:
+        creds = Credentials.from_authorized_user_info(json.loads(token_json), SCOPES)
 
     if creds and creds.expired and creds.refresh_token:
         try:
             creds.refresh(Request())
-            TOKEN_PATH.write_text(creds.to_json(), encoding="utf-8")
+            write_encrypted_text(TOKEN_PATH, creds.to_json())
         except Exception as exc:
             logger.error("Token refresh failed: %s", exc)
             creds = None
@@ -45,7 +55,7 @@ def get_youtube_client():
 
         flow = InstalledAppFlow.from_client_secrets_file(str(CREDENTIALS_PATH), SCOPES)
         creds = flow.run_local_server(port=0)
-        TOKEN_PATH.write_text(creds.to_json(), encoding="utf-8")
+        write_encrypted_text(TOKEN_PATH, creds.to_json())
 
     return build("youtube", "v3", credentials=creds)
 
@@ -60,6 +70,10 @@ def parse_iso8601_duration(duration: str) -> int:
 
 
 async def fetch_video_transcript(video_id: str) -> str:
+    if not is_valid_video_id(video_id):
+        logger.warning("Skipping transcript fetch for invalid YouTube video_id")
+        return ""
+
     transcript_urls = [
         f"https://www.youtube.com/api/timedtext?v={video_id}&lang=en&fmt=json3",
         f"https://www.youtube.com/api/timedtext?v={video_id}&lang=en",
@@ -93,6 +107,10 @@ async def fetch_video_transcript(video_id: str) -> str:
 
 
 async def fetch_video_metadata(video_id: str) -> Optional[dict]:
+    if not is_valid_video_id(video_id):
+        logger.warning("Skipping metadata fetch for invalid YouTube video_id")
+        return None
+
     try:
         youtube = get_youtube_client()
         response = youtube.videos().list(part="snippet,contentDetails", id=video_id).execute()
@@ -120,8 +138,8 @@ async def fetch_video_metadata(video_id: str) -> Optional[dict]:
         }
 
     except FileNotFoundError as exc:
-        logger.error("Auth setup incomplete: %s", exc)
-        return _stub_metadata(video_id)
+        logger.error("YouTube auth setup incomplete: %s", exc)
+        return None
     except HttpError as exc:
         if exc.resp.status == 403:
             logger.error("YouTube API quota exceeded or OAuth scope insufficient")
@@ -131,19 +149,5 @@ async def fetch_video_metadata(video_id: str) -> Optional[dict]:
             logger.error("YouTube API HTTP error %s: %s", exc.resp.status, exc)
         return None
     except Exception as exc:
-        logger.error("Unexpected error for video_id=%s: %s", video_id, exc)
-        return _stub_metadata(video_id)
-
-
-def _stub_metadata(video_id: str) -> dict:
-    return {
-        "title": f"[STUB] Video {video_id}",
-        "description": "[STUB] OAuth not configured",
-        "channel_name": "[STUB] Channel",
-        "channel_id": "STUB_CHANNEL_ID",
-        "published_at": "2026-01-01T00:00:00Z",
-        "duration_seconds": 0,
-        "category_id": "",
-        "tags": [],
-        "transcript_text": "",
-    }
+        logger.error("YouTube metadata fetch failed for video_id=%s: %s", video_id, type(exc).__name__)
+        return None

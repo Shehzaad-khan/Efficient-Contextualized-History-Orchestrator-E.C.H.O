@@ -7,6 +7,8 @@ from typing import Optional
 import redis
 import redis.asyncio as aioredis
 
+from backend.security import validate_redis_tls_url
+
 REVISIT_TTL_SECONDS = 86400
 ATTACHMENT_CACHE_TTL_SECONDS = 3600
 
@@ -18,7 +20,7 @@ def get_redis_url() -> str:
     redis_url = os.environ.get("UPSTASH_REDIS_URL") or os.environ.get("REDIS_URL")
     if not redis_url:
         raise ValueError("No Redis URL configured")
-    return redis_url
+    return validate_redis_tls_url(redis_url)
 
 
 def get_sync_client() -> redis.Redis:

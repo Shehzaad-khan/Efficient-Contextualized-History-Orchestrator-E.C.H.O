@@ -1,8 +1,11 @@
 print("Starting script...")
 
+from pathlib import Path
+
 from googleapiclient.discovery import build
 from google_auth_oauthlib.flow import InstalledAppFlow
-from pathlib import Path
+
+from backend.security import write_encrypted_text
 
 SCOPES = ['https://www.googleapis.com/auth/youtube.readonly']
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -14,8 +17,7 @@ print("Starting auth flow...")
 creds = flow.run_local_server(host='localhost', port=8080, open_browser=True)
 
 print("Saving token...")
-with open(PROJECT_ROOT / 'token_youtube.json', 'w') as f:
-    f.write(creds.to_json())
+write_encrypted_text(PROJECT_ROOT / 'token_youtube.enc', creds.to_json())
 
 print("Building YouTube client...")
 youtube = build('youtube', 'v3', credentials=creds)
