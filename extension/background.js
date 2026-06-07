@@ -69,7 +69,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const routes = {
     YTC_VIDEO_DETECTED: "/ytc/video-detected",
     YTC_HEARTBEAT: "/ytc/heartbeat",
-    YTC_VIDEO_CLOSED: "/ytc/video-closed"
+    YTC_VIDEO_CLOSED: "/ytc/video-closed",
+    GMC_ENGAGEMENT: "/gmail/engagement"
   };
 
   const endpoint = routes[type];

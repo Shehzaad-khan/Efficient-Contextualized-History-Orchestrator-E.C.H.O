@@ -31,6 +31,15 @@
     },
     {
       "matches": [
+        "https://mail.google.com/*"
+      ],
+      "js": [
+        "content/gmail_tracker.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
         "<all_urls>"
       ],
       "exclude_matches": [
