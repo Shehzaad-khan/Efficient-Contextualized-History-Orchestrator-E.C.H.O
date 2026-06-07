@@ -359,6 +359,7 @@ def store_gmail_message(data: dict[str, Any]) -> tuple[str, bool]:
 
     attachments = data.get("content", {}).get("attachments") or []
     if attachments:
+        lightweight = (body[:500] or None) if body else None
         with postgresql_manager.transaction() as connection:
             for attachment in attachments:
                 filename = attachment.get("filename")
@@ -393,13 +394,8 @@ def store_gmail_message(data: dict[str, Any]) -> tuple[str, bool]:
                         "filename": filename,
                         "mime_type": attachment.get("mime_type", "application/octet-stream"),
                         "file_size": int(attachment.get("size", 0) or 0),
-                        "lightweight_extract": " | ".join(
-                            str(part)
-                            for part in [filename, attachment.get("mime_type"), attachment.get("size")]
-                            if part not in (None, "", 0, "0")
-                        )
-                        or None,
-                        "is_processed": True,
+                        "lightweight_extract": lightweight,
+                        "is_processed": lightweight is not None,
                     },
                 )
 
@@ -517,6 +513,35 @@ def update_youtube_metadata(memory_id: str, metadata: dict[str, Any]) -> None:
         )
 
 
+def update_gmail_engagement(email_id: str, dwell_time_seconds: int) -> bool:
+    """Record that the user opened a Gmail message.
+
+    Accumulates foreground reading time, stamps first_opened_at on the first
+    open only, and bumps the session counter. Returns False if no memory item
+    matches the email_id (e.g. email not yet ingested).
+    """
+    with postgresql_manager.transaction() as connection:
+        result = connection.execute(
+            text(
+                """
+                UPDATE memory_engagement me
+                SET dwell_time_seconds = COALESCE(me.dwell_time_seconds, 0) + :dwell_time_seconds,
+                    first_opened_at = COALESCE(me.first_opened_at, NOW()),
+                    last_accessed_at = NOW(),
+                    play_sessions_count = COALESCE(me.play_sessions_count, 0) + 1
+                FROM gmail_metadata gm
+                WHERE me.memory_id = gm.memory_id
+                  AND gm.email_id = :email_id
+                """
+            ),
+            {
+                "dwell_time_seconds": int(dwell_time_seconds or 0),
+                "email_id": email_id,
+            },
+        )
+        return result.rowcount > 0
+
+
 def _resolve_video_id(connection, memory_id: str) -> str:
     row = connection.execute(
         text("SELECT source_id FROM memory_items WHERE memory_id = :memory_id"),
@@ -541,23 +566,34 @@ def fetch_retrieval_candidates(query: str, *, limit: int = 5) -> list[dict[str, 
             mi.source_id,
             mi.title,
             mi.raw_text,
+            mi.system_group_id,
+            mi.auto_keywords,
             COALESCE(ei.embeddable_text, mi.raw_text, '') AS embeddable_text,
             me.dwell_time_seconds,
             me.watch_time_seconds,
-            me.last_accessed_at
+            me.last_accessed_at,
+            cm.url,
+            cm.domain,
+            cm.scroll_depth,
+            cm.revisit_count,
+            gm.sender,
+            gm.subject,
+            gm.has_attachments,
+            ym.video_id,
+            ym.channel_name,
+            ym.is_short
         FROM memory_items mi
-        LEFT JOIN embedding_index ei ON ei.memory_id = mi.memory_id AND ei.is_active = TRUE
+        LEFT JOIN embedding_index ei  ON ei.memory_id  = mi.memory_id AND ei.is_active = TRUE
         LEFT JOIN memory_engagement me ON me.memory_id = mi.memory_id
+        LEFT JOIN chrome_metadata   cm ON cm.memory_id = mi.memory_id
+        LEFT JOIN gmail_metadata    gm ON gm.memory_id = mi.memory_id
+        LEFT JOIN youtube_metadata  ym ON ym.memory_id = mi.memory_id
         WHERE mi.is_deleted = FALSE
           AND (
-            mi.title ILIKE :like_query
+            mi.title    ILIKE :like_query
             OR mi.raw_text ILIKE :like_query
-            OR EXISTS (
-                SELECT 1
-                FROM gmail_metadata gm
-                WHERE gm.memory_id = mi.memory_id
-                  AND (gm.subject ILIKE :like_query OR gm.sender ILIKE :like_query)
-            )
+            OR gm.subject  ILIKE :like_query
+            OR gm.sender   ILIKE :like_query
           )
         ORDER BY me.last_accessed_at DESC NULLS LAST, mi.created_at DESC
         LIMIT :limit
@@ -585,30 +621,3 @@ def append_message_store(session_id: str, role: str, content: str) -> None:
     )
 
 
-def upsert_embedding_record(memory_id: str, embeddable_text: str, *, version: str = "placeholder-v1") -> None:
-    vector_dimension = max(1, min(1536, len(embeddable_text.split())))
-    postgresql_manager.execute(
-        """
-        INSERT INTO embedding_index (
-            memory_id,
-            embedding_version,
-            vector_dimension,
-            indexed_at,
-            is_active,
-            embeddable_text
-        )
-        VALUES (:memory_id, :version, :vector_dimension, NOW(), TRUE, :embeddable_text)
-        ON CONFLICT (memory_id) DO UPDATE
-        SET embedding_version = EXCLUDED.embedding_version,
-            vector_dimension = EXCLUDED.vector_dimension,
-            indexed_at = NOW(),
-            is_active = TRUE,
-            embeddable_text = EXCLUDED.embeddable_text
-        """,
-        {
-            "memory_id": memory_id,
-            "version": version,
-            "vector_dimension": vector_dimension,
-            "embeddable_text": embeddable_text,
-        },
-    )
