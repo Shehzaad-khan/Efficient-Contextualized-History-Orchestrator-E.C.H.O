@@ -17,9 +17,10 @@
  *   4. User not idle > 30 seconds (no mouse/keyboard activity)
  *
  * Intent gate (ANY ONE must pass — enforced on backend too as safety net):
- *   Option A: watch_time_seconds >= 20
- *   Option B: manual interaction detected (pause/seek/speed)
+ *   Option A: watch_time_seconds >= 60 (regular) or >= 15 (Shorts)
+ *   Option B: completion_rate >= 0.5 (watch_time / duration)
  *   Option C: revisit (checked by backend via Redis)
+ *   Extra:    manual interaction detected (pause/seek/speed)
  */
 
 (function () {
@@ -41,11 +42,14 @@
     idleCheckInterval: null,
     manualInteractionDetected: false,
     interactionType: null,
+    durationSeconds: 0,          // total video length, from the <video> element
   };
 
-  const IDLE_THRESHOLD_MS = 30000;    // 30 seconds
-  const HEARTBEAT_INTERVAL_MS = 5000; // send heartbeat every 5 seconds
-  const INTENT_WATCH_THRESHOLD = 20;  // seconds — Option A threshold
+  const IDLE_THRESHOLD_MS = 30000;          // 30 seconds
+  const HEARTBEAT_INTERVAL_MS = 5000;       // send heartbeat every 5 seconds
+  const INTENT_WATCH_SHORT = 15;            // Option A — Shorts threshold (seconds)
+  const INTENT_WATCH_REGULAR = 60;          // Option A — regular video threshold (seconds)
+  const INTENT_COMPLETION_THRESHOLD = 0.5;  // Option B — completion ratio
 
 
   // ---------------------------------------------------------------------------
@@ -94,9 +98,21 @@
       if (isCountingActive()) {
         state.watchTimeSeconds += 1;
 
-        // Check Option A threshold — fire intent if not already fired
-        if (!state.intentFired && state.watchTimeSeconds >= INTENT_WATCH_THRESHOLD) {
+        if (state.intentFired) return;
+
+        // Option A — watch time (Shorts have a lower bar than regular videos)
+        const watchThreshold = state.isShort ? INTENT_WATCH_SHORT : INTENT_WATCH_REGULAR;
+        if (state.watchTimeSeconds >= watchThreshold) {
           fireVideoDetected("watch_time");
+          return;
+        }
+
+        // Option B — completion rate (watched at least half the video)
+        if (state.durationSeconds > 0) {
+          const completionRate = state.watchTimeSeconds / state.durationSeconds;
+          if (completionRate >= INTENT_COMPLETION_THRESHOLD) {
+            fireVideoDetected("completion_rate");
+          }
         }
       }
     }, 1000);
@@ -157,6 +173,7 @@
         watch_time_seconds: state.watchTimeSeconds,
         triggered_by: triggeredBy,
         interaction_type: interactionType,
+        duration_seconds: state.durationSeconds || null,
         timestamp: new Date().toISOString(),
       },
     });
@@ -185,6 +202,22 @@
   // Video element event listeners
   // ---------------------------------------------------------------------------
   function attachVideoListeners(video) {
+    // Capture total duration — needed for Option B (completion rate).
+    // YouTube populates this once metadata loads, so read it now and on update.
+    if (video.duration && isFinite(video.duration)) {
+      state.durationSeconds = Math.round(video.duration);
+    }
+    video.addEventListener("loadedmetadata", () => {
+      if (video.duration && isFinite(video.duration)) {
+        state.durationSeconds = Math.round(video.duration);
+      }
+    });
+    video.addEventListener("durationchange", () => {
+      if (video.duration && isFinite(video.duration)) {
+        state.durationSeconds = Math.round(video.duration);
+      }
+    });
+
     video.addEventListener("play", () => {
       state.isPlaying = true;
       startWatchTimer();
@@ -283,6 +316,7 @@
     state.intentFired = false;
     state.manualInteractionDetected = false;
     state.interactionType = null;
+    state.durationSeconds = 0;
     state.lastActivityTime = Date.now();
   }
 

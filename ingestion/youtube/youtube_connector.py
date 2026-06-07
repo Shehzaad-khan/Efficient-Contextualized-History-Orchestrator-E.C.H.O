@@ -37,6 +37,7 @@ class VideoDetectedEvent(BaseModel):
     watch_time_seconds: int
     triggered_by: str
     interaction_type: Optional[str] = None
+    duration_seconds: Optional[int] = None
     timestamp: datetime
 
 
@@ -52,12 +53,28 @@ class VideoClosedEvent(BaseModel):
     timestamp: datetime
 
 
+SHORT_MIN_WATCH_SECONDS = 15
+REGULAR_MIN_WATCH_SECONDS = 60
+COMPLETION_RATE_THRESHOLD = 0.5
+
+
 def passes_intent_gate(event: VideoDetectedEvent, is_revisit: bool) -> bool:
-    if event.watch_time_seconds >= 20:
+    # Option A — watch time (Shorts have a lower bar than regular videos)
+    min_watch = SHORT_MIN_WATCH_SECONDS if event.is_short else REGULAR_MIN_WATCH_SECONDS
+    if event.watch_time_seconds >= min_watch:
         return True
+    # Option B — completion rate (only computable when client reports duration)
+    if event.duration_seconds and event.duration_seconds > 0:
+        completion_rate = event.watch_time_seconds / event.duration_seconds
+        if completion_rate >= COMPLETION_RATE_THRESHOLD:
+            return True
+    # Option C — revisit signal (same video earlier today, via Redis)
+    if is_revisit:
+        return True
+    # Extra (beyond arch spec) — explicit manual interaction
     if event.triggered_by == "manual_interaction" and event.interaction_type:
         return True
-    return is_revisit
+    return False
 
 
 async def check_revisit(video_id: str) -> bool:
