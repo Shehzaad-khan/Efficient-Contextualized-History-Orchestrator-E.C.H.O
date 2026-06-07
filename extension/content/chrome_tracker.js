@@ -14,12 +14,57 @@ if (!chrome.extension.inIncognitoContext) {
     maxScrollDepth = Math.max(maxScrollDepth, depth);
   }
 
+  function countWords(text) {
+    return (text || "").trim().split(/\s+/).filter(Boolean).length;
+  }
+
+  function detectApplicationPage() {
+    const host = window.location.hostname.toLowerCase();
+    const appDomains = [
+      "slack.com",
+      "app.slack.com",
+      "jira.com",
+      "atlassian.net",
+      "notion.so",
+      "figma.com",
+      "linear.app",
+      "trello.com",
+      "asana.com",
+      "confluence.atlassian.net",
+      "mail.google.com"
+    ];
+    return appDomains.some((domain) => host === domain || host.endsWith(`.${domain}`));
+  }
+
+  function extractReadableContent() {
+    if (detectApplicationPage()) {
+      return "";
+    }
+
+    const candidates = [
+      document.querySelector("article"),
+      document.querySelector("main"),
+      document.querySelector("[role='main']"),
+      document.body
+    ].filter(Boolean);
+
+    for (const node of candidates) {
+      const text = (node.innerText || "").replace(/\s+/g, " ").trim();
+      if (text.length >= 200) {
+        return text.slice(0, 12000);
+      }
+    }
+
+    return "";
+  }
+
   function sendSignal(type) {
     try {
       if (!chrome.runtime?.id) {
         return;
       }
 
+      const contentExtract = extractReadableContent();
       chrome.runtime.sendMessage(
         {
           type,
@@ -27,6 +72,10 @@ if (!chrome.extension.inIncognitoContext) {
           title: document.title,
           scrollDepth: Number(maxScrollDepth.toFixed(3)),
           interactionCount,
+          contentExtract,
+          wordCount: countWords(contentExtract),
+          referrer: document.referrer || "",
+          isAppPage: detectApplicationPage(),
           timestamp: Date.now()
         },
         () => {

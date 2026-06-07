@@ -1,4 +1,5 @@
 """
+<<<<<<< HEAD
 search_coordinator.py — RSE Module
 Echo Personal Memory System
 
@@ -21,10 +22,7 @@ Time filter handling:
 
 import logging
 import os
-import json
 from datetime import datetime, timezone
-from pathlib import Path
-import time
 from typing import Any, Dict, List, Optional
 
 import psycopg2
@@ -35,24 +33,6 @@ from .config import DATABASE_URL, POSTGRES_SEARCH_LIMIT
 
 load_dotenv()
 logger = logging.getLogger(__name__)
-_DEBUG_LOG_PATH = Path(__file__).resolve().parents[1] / "debug-20c712.log"
-
-
-def _debug_log(run_id: str, hypothesis_id: str, location: str, message: str, data: dict):
-    payload = {
-        "sessionId": "20c712",
-        "runId": run_id,
-        "hypothesisId": hypothesis_id,
-        "location": location,
-        "message": message,
-        "data": data,
-        "timestamp": int(time.time() * 1000),
-    }
-    try:
-        with _DEBUG_LOG_PATH.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(payload, ensure_ascii=True) + "\n")
-    except Exception:
-        pass
 
 
 # ── Time filter helpers ───────────────────────────────────────────────────────
@@ -153,22 +133,12 @@ def run_postgres_search(
 
     Returns list of row dicts.
     """
-    run_id = f"pre-fix-{int(time.time() * 1000)}"
     if parsed_intent.get("skip_postgres_filter"):
         logger.info("postgres_search: skip_postgres_filter=True, running full scan")
         # Preserve user-requested source during widening to avoid cross-source noise.
         sources = parsed_intent.get("sources", ["all"])
         query_clean = parsed_intent.get("query_clean", "")
         time_filter = None
-        # #region agent log
-        _debug_log(
-            run_id=run_id,
-            hypothesis_id="H13",
-            location="rse/search_coordinator.py:run_postgres_search",
-            message="skip_postgres_filter branch preserving sources",
-            data={"sources": sources, "query_clean": query_clean[:120]},
-        )
-        # #endregion
     else:
         sources = parsed_intent.get("sources", ["all"])
         query_clean = parsed_intent.get("query_clean", "")
@@ -255,15 +225,6 @@ def run_postgres_search(
         f"postgres_search: sources={sources} time_filter={time_filter} "
         f"query_clean='{query_clean}' limit={limit}"
     )
-    # #region agent log
-    _debug_log(
-        run_id=run_id,
-        hypothesis_id="H12",
-        location="rse/search_coordinator.py:run_postgres_search",
-        message="postgres search filters",
-        data={"sources": sources, "time_filter": time_filter, "query_clean": query_clean[:120]},
-    )
-    # #endregion
 
     db_url = DATABASE_URL or os.getenv("DATABASE_URL")
     if not db_url:
@@ -280,28 +241,10 @@ def run_postgres_search(
 
         results = [dict(row) for row in rows]
         logger.info(f"postgres_search: returned {len(results)} rows")
-        # #region agent log
-        _debug_log(
-            run_id=run_id,
-            hypothesis_id="H12",
-            location="rse/search_coordinator.py:run_postgres_search",
-            message="postgres search completed",
-            data={"result_count": len(results)},
-        )
-        # #endregion
         return results
 
     except Exception as e:
         logger.error(f"postgres_search DB error: {e}")
-        # #region agent log
-        _debug_log(
-            run_id=run_id,
-            hypothesis_id="H12",
-            location="rse/search_coordinator.py:run_postgres_search",
-            message="postgres search exception",
-            data={"error_type": type(e).__name__, "error": str(e)},
-        )
-        # #endregion
         if conn:
             conn.rollback()
         return []
@@ -334,3 +277,202 @@ def run_faiss_search(
         f"candidates={len(candidate_ids)} full_scan={full_scan}"
     )
     return []
+=======
+postgres_search and faiss_search node implementations.
+
+postgres_search: builds a dynamic SQL query from parsed_intent, executes it
+against Neon PostgreSQL, and returns structured result dicts.
+
+faiss_search: stub for this phase — returns empty list. Real implementation
+requires Mir's FAISS manager and pre-built embeddings from the ENP.
+"""
+import logging
+from typing import Any
+
+import psycopg2
+import psycopg2.extras
+
+from rse.config import DATABASE_URL, POSTGRES_RESULT_LIMIT, FAISS_TOP_K
+from rse.state import EchoState, ParsedIntent
+
+logger = logging.getLogger(__name__)
+
+
+# ── postgres_search ───────────────────────────────────────────────────────────
+
+_BASE_SELECT = """
+SELECT
+    m.memory_id,
+    m.source_type,
+    m.title,
+    m.created_at,
+    m.auto_keywords,
+    m.system_group_id,
+    m.is_deleted,
+    m.preprocessed,
+    me.dwell_time_seconds,
+    me.watch_time_seconds,
+    me.last_accessed_at,
+    me.first_opened_at,
+    me.play_sessions_count,
+    me.completion_rate,
+    cm.url,
+    cm.canonical_url,
+    cm.domain,
+    cm.scroll_depth,
+    cm.revisit_count,
+    cm.interaction_count,
+    gm.sender,
+    gm.subject,
+    gm.has_attachments,
+    gm.thread_id,
+    gm.recipients,
+    gm.gmail_labels,
+    ym.channel_name,
+    ym.video_id,
+    ym.is_short,
+    ym.duration_seconds,
+    ym.youtube_category_id
+FROM memory_items m
+JOIN memory_engagement me  ON m.memory_id = me.memory_id
+LEFT JOIN chrome_metadata  cm ON m.memory_id = cm.memory_id
+LEFT JOIN gmail_metadata   gm ON m.memory_id = gm.memory_id
+LEFT JOIN youtube_metadata ym ON m.memory_id = ym.memory_id
+"""
+
+_BASE_WHERE = """
+WHERE m.is_deleted = FALSE
+  AND m.preprocessed = TRUE
+"""
+
+_ORDER_LIMIT = """
+ORDER BY me.last_accessed_at DESC NULLS LAST
+LIMIT %s
+"""
+
+
+def _build_dynamic_filters(
+    intent: ParsedIntent,
+) -> tuple[list[str], list[Any]]:
+    """
+    Assemble dynamic WHERE clauses and their parameterised values from
+    parsed_intent. Each filter is only added when the relevant field is set.
+
+    Args:
+        intent: Parsed intent dict from parse_intent node.
+
+    Returns:
+        Tuple of (list_of_sql_clauses, list_of_param_values).
+    """
+    clauses: list[str] = []
+    params: list[Any] = []
+
+    # Source filter — skip if sources=['all'] or contains all three
+    sources = intent.get("sources", ["gmail", "chrome", "youtube"])
+    all_sources = {"gmail", "chrome", "youtube"}
+    if sources and set(sources) != all_sources and "all" not in sources:
+        placeholders = ", ".join(["%s"] * len(sources))
+        clauses.append(f"m.source_type IN ({placeholders})")
+        params.extend(sources)
+
+    # Time filter — only added when a date string is present
+    time_filter = intent.get("time_filter")
+    if time_filter:
+        clauses.append("m.created_at >= %s::timestamptz")
+        params.append(time_filter)
+
+    # Keyword filter — search title and raw keywords array
+    query_clean = intent.get("query_clean", "").strip()
+    if query_clean:
+        # Use ILIKE against title; also check if any keyword matches
+        clauses.append(
+            "(m.title ILIKE %s OR EXISTS ("
+            "  SELECT 1 FROM unnest(m.auto_keywords) kw WHERE kw ILIKE %s"
+            "))"
+        )
+        pattern = f"%{query_clean}%"
+        params.extend([pattern, pattern])
+
+    return clauses, params
+
+
+def postgres_search(state: EchoState) -> dict:
+    """
+    Execute a parameterised SQL query against Neon PostgreSQL and return
+    candidate memory item rows.
+
+    Dynamically adds source, time, and keyword filters from parsed_intent.
+    When skip_postgres_filter is True, runs with base conditions only so the
+    widen_scope Attempt 3 path can retrieve all preprocessed items.
+
+    Args:
+        state: Current EchoState. Reads parsed_intent.
+
+    Returns:
+        Partial state dict with updated postgres_results key (list of dicts).
+        Returns empty list on any database error.
+    """
+    intent: ParsedIntent = state.get("parsed_intent", {})
+    skip_filter: bool = intent.get("skip_postgres_filter", False)
+
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        conn.autocommit = False
+
+        with conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                if skip_filter:
+                    sql = _BASE_SELECT + _BASE_WHERE + _ORDER_LIMIT
+                    params: list[Any] = [POSTGRES_RESULT_LIMIT]
+                    logger.info("postgres_search: running base-only query (skip_postgres_filter=True)")
+                else:
+                    dynamic_clauses, dynamic_params = _build_dynamic_filters(intent)
+                    where_block = _BASE_WHERE
+                    if dynamic_clauses:
+                        where_block += "  AND " + "\n  AND ".join(dynamic_clauses)
+                    sql = _BASE_SELECT + where_block + _ORDER_LIMIT
+                    params = dynamic_params + [POSTGRES_RESULT_LIMIT]
+                    logger.info(
+                        "postgres_search: query with %d dynamic filters, sources=%s",
+                        len(dynamic_clauses),
+                        intent.get("sources"),
+                    )
+
+                cur.execute(sql, params)
+                rows = cur.fetchall()
+
+        conn.close()
+
+        results = [dict(row) for row in rows]
+        logger.info("postgres_search: returned %d rows", len(results))
+        return {"postgres_results": results}
+
+    except Exception as exc:
+        logger.error("postgres_search: database error — %s", exc)
+        return {"postgres_results": []}
+
+
+# ── faiss_search ──────────────────────────────────────────────────────────────
+
+def faiss_search(state: EchoState) -> dict:
+    """
+    Semantic similarity search over FAISS for the top-K most relevant items
+    among the PostgreSQL candidate set.
+
+    STUB for this phase: returns empty faiss_results. Real implementation
+    requires Mir's FAISS manager (faiss_manager.search) and pre-built
+    embeddings from the Enrichment Pipeline.
+
+    Interface contract with Mir's FAISS manager (do not change signature):
+        faiss_manager.search(query_vector, candidate_ids, k=20)
+        Returns: list[tuple[str, float]]  — [(memory_id, cosine_score), ...]
+
+    Args:
+        state: Current EchoState. Reads parsed_intent and postgres_results.
+
+    Returns:
+        Partial state dict with updated faiss_results key (empty list this phase).
+    """
+    logger.info("faiss_search: stub — returning empty results (FAISS not yet integrated)")
+    return {"faiss_results": []}
+>>>>>>> 4842d1a3060d3dea11ed107e06e4212e96c74fb4

@@ -1,16 +1,5 @@
 /**
- * background.js — Echo Chrome Extension
- * Shared service worker for all Echo modules (YTC, CHC, GMC).
- *
- * Responsibilities:
- *   - Route messages from content scripts to the correct backend endpoint
- *   - Handle tab visibility changes (foreground/background detection)
- *   - No module-specific logic lives here — kept intentionally thin
- *
- * Message routing:
- *   { type: 'YTC_VIDEO_DETECTED', payload: {...} }  → /ytc/video-detected
- *   { type: 'YTC_HEARTBEAT',      payload: {...} }  → /ytc/heartbeat
- *   { type: 'YTC_VIDEO_CLOSED',   payload: {...} }  → /ytc/video-closed
+ * background.js - Echo Chrome Extension
  */
 
 const BACKEND_URL = "http://localhost:8000";
@@ -50,9 +39,6 @@ const CHROME_IGNORED_QUERY_PARAMS = new Set([
 
 chrome.idle.setDetectionInterval(30);
 
-// ---------------------------------------------------------------------------
-// Message listener — routes messages from content scripts to backend
-// ---------------------------------------------------------------------------
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const { type, payload } = message;
 
@@ -61,45 +47,32 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (!type || !payload) {
-    console.warn("[Echo background] Received malformed message", message);
     return;
   }
 
-  // Route to correct endpoint
   const routes = {
     YTC_VIDEO_DETECTED: "/ytc/video-detected",
-    YTC_HEARTBEAT:      "/ytc/heartbeat",
-    YTC_VIDEO_CLOSED:   "/ytc/video-closed",
-    // GMC routes added here when Gmail module is merged
+    YTC_HEARTBEAT: "/ytc/heartbeat",
+    YTC_VIDEO_CLOSED: "/ytc/video-closed"
   };
 
   const endpoint = routes[type];
   if (!endpoint) {
-    console.warn(`[Echo background] Unknown message type: ${type}`);
     return;
   }
 
-  // Send to backend — fire and forget for heartbeats, await for detections
   postToBackend(endpoint, payload)
     .then((response) => sendResponse({ ok: true, data: response }))
-    .catch((err) => {
-      console.error(`[Echo background] Backend post failed (${type}):`, err);
-      sendResponse({ ok: false, error: err.message });
-    });
+    .catch((err) => sendResponse({ ok: false, error: err.message }));
 
-  // Return true to keep the message channel open for async sendResponse
   return true;
 });
 
-
-// ---------------------------------------------------------------------------
-// Backend HTTP helper
-// ---------------------------------------------------------------------------
 async function postToBackend(endpoint, payload) {
   const response = await fetch(`${BACKEND_URL}${endpoint}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
+    body: JSON.stringify(payload)
   });
 
   if (!response.ok) {
@@ -117,19 +90,8 @@ function shouldSkipChromeUrl(url, incognito = false) {
   if (
     url.startsWith("chrome://") ||
     url.startsWith("chrome-extension://") ||
-    url.startsWith("https://www.youtube.com/") ||
-    url.startsWith("https://mail.google.com/")
+    url.startsWith("https://www.youtube.com/")
   ) {
-    return true;
-  }
-
-  try {
-    const parsed = new URL(url);
-    const host = parsed.hostname.toLowerCase();
-    if (CHROME_APPLICATION_DOMAINS.some((domain) => host === domain || host.endsWith(`.${domain}`))) {
-      return true;
-    }
-  } catch (error) {
     return true;
   }
 
@@ -151,6 +113,10 @@ function canonicalizeChromeUrl(rawUrl) {
   }
 }
 
+function isAppDomain(host) {
+  return CHROME_APPLICATION_DOMAINS.some((domain) => host === domain || host.endsWith(`.${domain}`));
+}
+
 function ensureChromeTabState(tab) {
   if (!tab || !tab.id || shouldSkipChromeUrl(tab.url, tab.incognito)) {
     return null;
@@ -169,7 +135,11 @@ function ensureChromeTabState(tab) {
     phase2Passed: false,
     revisitSignal: false,
     revisitCount: 0,
-    sentToBackend: false
+    sentToBackend: false,
+    contentExtract: "",
+    wordCount: 0,
+    referrer: "",
+    isAppPage: false
   };
 
   try {
@@ -181,6 +151,7 @@ function ensureChromeTabState(tab) {
   existing.url = tab.url;
   existing.canonicalUrl = canonicalUrl;
   existing.title = tab.title || existing.title || canonicalUrl;
+  existing.isAppPage = isAppDomain(existing.domain);
   activeChromeTabs.set(tab.id, existing);
   return existing;
 }
@@ -206,7 +177,11 @@ async function sendChromePageToBackend(tabState) {
     dwell_seconds: tabState.dwellSeconds,
     scroll_depth: tabState.scrollDepth,
     interaction_count: tabState.interactionCount,
-    revisit_count: tabState.revisitCount
+    revisit_count: tabState.revisitCount,
+    content_extract: tabState.isAppPage ? "" : tabState.contentExtract,
+    word_count: tabState.isAppPage ? null : tabState.wordCount,
+    referrer: tabState.referrer,
+    is_app_page: tabState.isAppPage
   });
 
   tabState.sentToBackend = true;
@@ -227,7 +202,9 @@ async function evaluateChromeIntent(tabId) {
     }
   }
 
-  if (tabState.phase1Passed && !tabState.phase2Passed) {
+  if (tabState.isAppPage) {
+    tabState.phase2Passed = tabState.dwellSeconds >= 5 || tabState.interactionCount >= 1;
+  } else if (tabState.phase1Passed && !tabState.phase2Passed) {
     const phase2 =
       tabState.dwellSeconds >= 10 ||
       tabState.scrollDepth >= 0.25 ||
@@ -236,11 +213,14 @@ async function evaluateChromeIntent(tabId) {
 
     if (phase2) {
       tabState.phase2Passed = true;
-      try {
-        await sendChromePageToBackend(tabState);
-      } catch (error) {
-        console.error("[Echo background] Chrome ingest failed:", error);
-      }
+    }
+  }
+
+  if (tabState.phase2Passed) {
+    try {
+      await sendChromePageToBackend(tabState);
+    } catch (error) {
+      console.error("[Echo background] Chrome ingest failed:", error);
     }
   }
 }
@@ -325,6 +305,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     tabState.title = message.title || tabState.title;
     tabState.scrollDepth = Math.max(tabState.scrollDepth, Number(message.scrollDepth || 0));
     tabState.interactionCount = Math.max(tabState.interactionCount, Number(message.interactionCount || 0));
+    tabState.contentExtract = message.contentExtract || tabState.contentExtract;
+    tabState.wordCount = Math.max(tabState.wordCount, Number(message.wordCount || 0));
+    tabState.referrer = message.referrer || tabState.referrer;
+    tabState.isAppPage = Boolean(message.isAppPage || tabState.isAppPage);
     sendResponse?.({ ok: true });
   }
 

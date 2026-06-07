@@ -6,6 +6,16 @@ Routers mounted:
     /ytc        — YouTube Connector (YTC)
     /chrome     — Chrome Connector (CHC)
     /retrieval  — Retrieval & Synthesis Engine (RSE)
+<<<<<<< HEAD
+=======
+
+TODO (next implementation task):
+    - Mount Gmail router: from ingestion.gmail.router import router as gmail_router
+    - Start gmail_poll_forever() as background task in lifespan
+    - Start enp/enrichment_pipeline.run_pipeline() as background task (NOT
+      backend/enrichment_worker — that one has no embeddings)
+    - Fix Redis startup: redis_manager now owns the client, not ytc_module.redis_client
+>>>>>>> 4842d1a3060d3dea11ed107e06e4212e96c74fb4
 """
 
 import logging

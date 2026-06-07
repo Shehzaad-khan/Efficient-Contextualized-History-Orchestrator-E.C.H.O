@@ -1,0 +1,62 @@
+Compared against the Phase II sources you pointed to:
+
+Echo_Architecture_Design.docx
+Echo_DB_Design.docx
+ECHO_Implementation_Notes.pdf
+I found these implementation discrepancies.
+
+High Impact
+
+Unified Retrieval module (LangGraph RSE) is not implemented in runtime code.
+Expected: parse → postgres search → faiss search → quality eval → widen loop → synthesize (2 LLM calls).
+Actual: backend only mounts ingestion routers and health endpoint in main.py:50, main.py:51, main.py:54.
+Supporting sign: retrieval-related schema exists but runtime flow is missing in setup_db.py:352, setup_db.py:255.
+Enrichment Pipeline is not present as an executable background worker.
+Expected: background clean/classify/embed pipeline.
+Actual: only connectors plus backend entrypoint exist; no enrichment worker module in the Python runtime set, and no embedding flow wiring from ingestion to index creation.
+Schema placeholders exist in setup_db.py:255, but no corresponding processing pipeline code.
+Storage Engine centralization is not implemented (connectors write directly).
+Expected: connectors hand data to central storage engine.
+Actual: direct DB writes inside connectors:
+Gmail in database.py:441, database.py:324
+Chrome in chrome_connector.py:120
+YouTube in youtube_connector.py:110
+This is explicitly acknowledged as a current gap in ECHO_Implementation_Notes.pdf.
+Medium Impact
+4. Gmail is not integrated into FastAPI router flow.
+
+Expected: integrated module behavior across the backend architecture.
+Actual: backend includes only YouTube and Chrome routers in main.py:50, main.py:51, while Gmail runs as separate listener script in main.py:28, main.py:65.
+Gmail engagement tracking via extension is effectively disabled.
+Expected: opened Gmail tab engagement contributes to analytics.
+Actual: Gmail URLs are excluded in extension config and skip logic:
+manifest.json:39
+background.js:121
+Gmail data model is split between legacy and canonical paths.
+Expected (DB design): canonical subtype model around memory_items/gmail_metadata.
+Actual: legacy gmail_memory path is still active alongside canonical inserts:
+Legacy table/create/insert in database.py:26, database.py:441
+Canonical writes also present in database.py:324, database.py:384
+This creates dual write paths and potential drift.
+Chrome application pages are discarded, not tracked for session-duration-only behavior.
+Expected: app pages tracked for session timing but no content extraction.
+Actual: immediately discarded as application_page in chrome_connector.py:204.
+Chrome content extraction via Readability is not implemented.
+Expected: main article extraction signal in module definition.
+Actual: tracker sends interaction telemetry only in chrome_tracker.js, and connector inserts chrome memory row with null raw_text path in chrome_connector.py:126.
+YouTube transcript best-effort retrieval is not implemented.
+Expected: transcript retrieval where available.
+Actual: metadata fetch uses videos.list only in youtube_api_client.py:120, and transcript_text is inserted null in youtube_connector.py:136 with no transcript fill step.
+Lower Impact / Consistency Gaps
+10. Attachment two-tier full extraction behavior is incomplete.
+
+Expected: lightweight always + full extract on demand, with top-3 behavior and 1h cache.
+Actual: metadata storage exists in database.py:217, but no implemented full-text extraction pipeline for attachments in runtime code; related fields are schema-only in setup_db.py:121.
+Redis cache behavior differs from the specified attachment-cache semantics.
+Expected: attachment full-text cache at 1 hour.
+Actual: observed Gmail cache entry for email payload at 1800s in database.py:483, while 24h revisit TTL is correctly present for Chrome/YouTube:
+revisit_tracker.py:8
+youtube_connector.py:44
+Retrieval/LLM stack dependencies are missing from installed requirements.
+Expected architecture stack includes LangGraph/LangChain/FAISS-related runtime.
+Actual requirements list does not include those libs in requirements.txt.
