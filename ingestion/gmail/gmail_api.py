@@ -4,6 +4,7 @@ Gmail API module - Handles Gmail authentication and email extraction.
 
 import base64
 import json
+import time
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -61,8 +62,8 @@ def authenticate_gmail():
                     _cache_token_json(rc, token_json)
                 except Exception as exc:
                     print(f"Failed to refresh encrypted token cache: {exc}")
-        except Exception as exc:
-            print(f"Invalid encrypted Gmail token: {exc}")
+        except Exception:
+            print("Invalid encrypted Gmail token; re-authenticating")
             TOKEN_PATH.unlink(missing_ok=True)
             creds = None
 
@@ -94,13 +95,19 @@ def extract_body(message):
     if parts:
         for part in parts:
             if part.get("mimeType") == "text/plain":
-                data = part["body"].get("data")
+                data = part.get("body", {}).get("data")
                 if data:
-                    return base64.urlsafe_b64decode(data).decode("utf-8")
+                    try:
+                        return base64.urlsafe_b64decode(data).decode("utf-8")
+                    except Exception:
+                        pass
     else:
-        data = payload["body"].get("data")
+        data = payload.get("body", {}).get("data")
         if data:
-            return base64.urlsafe_b64decode(data).decode("utf-8")
+            try:
+                return base64.urlsafe_b64decode(data).decode("utf-8")
+            except Exception:
+                pass
 
     return ""
 
@@ -124,6 +131,18 @@ def extract_attachments(message, message_id):
     return attachments
 
 
+def _call_with_backoff(fn, max_retries: int = 4):
+    delay = 2
+    for attempt in range(max_retries):
+        try:
+            return fn()
+        except Exception:
+            if attempt == max_retries - 1:
+                raise
+            time.sleep(delay)
+            delay *= 2
+
+
 def fetch_and_store_new_emails(service):
     try:
         processed_count = 0
@@ -132,7 +151,9 @@ def fetch_and_store_new_emails(service):
 
         # Fetch all messages with pagination
         while True:
-            results = service.users().messages().list(userId="me", maxResults=100, pageToken=page_token).execute()
+            results = _call_with_backoff(
+                lambda: service.users().messages().list(userId="me", maxResults=100, pageToken=page_token).execute()
+            )
             messages = results.get("messages", [])
 
             if not messages:
@@ -162,7 +183,9 @@ def fetch_and_store_new_emails(service):
             if existing:
                 continue
 
-            msg = service.users().messages().get(userId="me", id=message_id, format="full").execute()
+            msg = _call_with_backoff(
+                lambda: service.users().messages().get(userId="me", id=message_id, format="full").execute()
+            )
             headers = msg["payload"]["headers"]
 
             subject = ""
