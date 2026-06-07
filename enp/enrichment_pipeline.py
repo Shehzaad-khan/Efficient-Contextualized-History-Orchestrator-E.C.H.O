@@ -13,16 +13,16 @@ from dotenv import load_dotenv
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from enp.embedding_generator import generate_embedding, generate_embeddings
-    from enp.faiss_manager import EMBEDDING_VERSION, VECTOR_DIMENSION, FAISSManager
     from enp.system_group_classifier import classify_system_group, initialize_centroids
     from enp.text_cleaner import clean_item_text
     from enp.topic_extractor import build_embeddable_text, parse_message_history, sender_domain_hint
+    from ste.faiss_manager import EMBEDDING_VERSION, VECTOR_DIMENSION, FAISSManager
 else:
     from .embedding_generator import generate_embedding, generate_embeddings
-    from .faiss_manager import EMBEDDING_VERSION, VECTOR_DIMENSION, FAISSManager
     from .system_group_classifier import classify_system_group, initialize_centroids
     from .text_cleaner import clean_item_text
     from .topic_extractor import build_embeddable_text, parse_message_history, sender_domain_hint
+    from ste.faiss_manager import EMBEDDING_VERSION, VECTOR_DIMENSION, FAISSManager
 
 load_dotenv()
 
@@ -31,6 +31,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 
 DEFAULT_BATCH_SIZE = 10
 DEFAULT_POLL_INTERVAL = 10
+FAILED_CLASSIFIED_BY = "failed"
+RETRY_FAILED_ENV = "ENP_RETRY_FAILED"
 
 SYSTEM_GROUP_IDS = {
     "work": 1,
@@ -52,17 +54,33 @@ def get_connection():
     return psycopg2.connect(get_database_url())
 
 
-def fetch_unprocessed_items(conn, batch_size: int) -> list[dict[str, Any]]:
+def fetch_unprocessed_items(
+    conn,
+    batch_size: int,
+    *,
+    include_failed: bool | None = None,
+) -> list[dict[str, Any]]:
+    if include_failed is None:
+        include_failed = os.getenv(RETRY_FAILED_ENV, "").lower() in {"1", "true", "yes"}
+
+    failed_clause = "" if include_failed else "AND COALESCE(classified_by, 'pending') <> %s"
+    params: list[Any] = []
+    if not include_failed:
+        params.append(FAILED_CLASSIFIED_BY)
+    params.append(batch_size)
+
     with conn.cursor() as cursor:
         cursor.execute(
-            """
+            f"""
             SELECT memory_id, source_type, source_id, title, raw_text, created_at
             FROM memory_items
             WHERE preprocessed = FALSE
+              AND is_deleted = FALSE
+              {failed_clause}
             ORDER BY first_ingested_at ASC
             LIMIT %s
             """,
-            (batch_size,),
+            params,
         )
         rows = cursor.fetchall()
 
@@ -123,7 +141,9 @@ def _fetch_gmail_context(conn, item: dict[str, Any]) -> dict[str, Any]:
         if legacy:
             item["content_primary_text"] = legacy[0] or item.get("raw_text", "")
             item["message_history"] = parse_message_history(legacy[1])
-    except psycopg2.Error:
+    except psycopg2.Error as exc:
+        conn.rollback()
+        logger.debug("Legacy gmail_memory lookup unavailable for memory_id=%s: %s", item["memory_id"], exc)
         item["content_primary_text"] = item.get("raw_text", "")
         item["message_history"] = None
 
@@ -196,6 +216,10 @@ def load_item_context(conn, base_item: dict[str, Any]) -> dict[str, Any]:
     return item
 
 
+def _word_count(text: str) -> int:
+    return len(text.split()) if text else 0
+
+
 def prepare_item_for_embedding(conn, base_item: dict[str, Any]) -> dict[str, Any]:
     item = load_item_context(conn, base_item)
     cleaned = clean_item_text(item)
@@ -206,6 +230,18 @@ def prepare_item_for_embedding(conn, base_item: dict[str, Any]) -> dict[str, Any
     )
 
     if not embeddable_text.strip():
+        # Title/domain-only rows (e.g. Chrome telemetry without HTML) still index for retrieval.
+        embeddable_text = " ".join(
+            part.strip()
+            for part in (
+                item.get("title", ""),
+                item.get("domain", ""),
+                item.get("subject", ""),
+                item.get("channel_name", ""),
+            )
+            if part and str(part).strip()
+        )
+    if not embeddable_text.strip():
         raise ValueError(f"No embeddable text constructed for memory_id={item['memory_id']}")
 
     item["clean_text"] = cleaned.clean_text
@@ -213,6 +249,8 @@ def prepare_item_for_embedding(conn, base_item: dict[str, Any]) -> dict[str, Any
     item["content_snippet"] = cleaned.snippet
     item["embeddable_text"] = embeddable_text
     item["auto_keywords"] = auto_keywords
+    if item.get("source") == "chrome":
+        item["word_count"] = _word_count(cleaned.clean_text)
     return item
 
 
@@ -227,6 +265,9 @@ def mark_item_processed(
     method: str,
     confidence: float,
     auto_keywords: list[str],
+    *,
+    source: str | None = None,
+    word_count: int | None = None,
 ) -> None:
     conn = get_connection()
     try:
@@ -251,6 +292,37 @@ def mark_item_processed(
                         memory_id,
                     ),
                 )
+                if source == "chrome" and word_count is not None:
+                    cursor.execute(
+                        """
+                        UPDATE chrome_metadata
+                        SET word_count = %s
+                        WHERE memory_id = %s
+                        """,
+                        (word_count, memory_id),
+                    )
+    finally:
+        conn.close()
+
+
+def mark_item_failed(memory_id: str, reason: str) -> None:
+    reason_text = str(reason or "unknown failure")[:500]
+    conn = get_connection()
+    try:
+        with conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE memory_items
+                    SET classified_by = %s,
+                        classification_confidence = NULL,
+                        preprocessed = FALSE,
+                        auto_keywords = ARRAY[%s],
+                        last_updated_at = NOW()
+                    WHERE memory_id = %s
+                    """,
+                    (FAILED_CLASSIFIED_BY, reason_text, memory_id),
+                )
     finally:
         conn.close()
 
@@ -269,6 +341,7 @@ def process_batch(manager: FAISSManager, batch_size: int) -> tuple[int, int]:
                 prepared_items.append(prepare_item_for_embedding(conn, base_item))
             except Exception as exc:
                 logger.exception("Preparation failed for memory_id=%s: %s", base_item["memory_id"], exc)
+                mark_item_failed(base_item["memory_id"], f"prepare: {exc}")
                 failures += 1
 
         if not prepared_items:
@@ -295,18 +368,23 @@ def process_batch(manager: FAISSManager, batch_size: int) -> tuple[int, int]:
                     embedding,
                     embeddable_text=item["embeddable_text"],
                 )
-                manager.save_index()
                 mark_item_processed(
                     item["memory_id"],
                     category,
                     method,
                     confidence,
                     item["auto_keywords"],
+                    source=item.get("source"),
+                    word_count=item.get("word_count"),
                 )
                 processed += 1
             except Exception as exc:
                 logger.exception("Failed processing memory_id=%s: %s", item["memory_id"], exc)
+                mark_item_failed(item["memory_id"], f"process: {exc}")
                 failures += 1
+
+        if processed:
+            manager.save_index()
 
         return processed, failures
     finally:

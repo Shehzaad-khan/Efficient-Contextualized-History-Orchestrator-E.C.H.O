@@ -1,5 +1,6 @@
-import numpy as np
-from typing import Dict, Any
+from typing import Any, Dict
+from urllib.parse import urlparse
+
 from sklearn.metrics.pairwise import cosine_similarity
 
 # -------------------------
@@ -179,7 +180,7 @@ DOMAIN_CATEGORY_MAP = {
     "intercom.com": "work",
     "zendesk.com": "work",
     "freshdesk.com": "work",
-    "serviceNow.com": "work",
+    "servicenow.com": "work",
     "atlassian.net": "work",
     "bitbucket.io": "work",
     # ENTERTAINMENT DOMAINS
@@ -257,11 +258,52 @@ SEED_TEXTS = {
 
 CENTROIDS = {}
 
+
+def _normalize_domain(value: Any) -> str:
+    raw = str(value or "").strip().lower()
+    if not raw:
+        return ""
+    if "@" in raw and "://" not in raw:
+        raw = raw.rsplit("@", 1)[1]
+    if "://" in raw:
+        raw = urlparse(raw).netloc.lower()
+    raw = raw.split("/", 1)[0].split(":", 1)[0].strip(".")
+    if raw.startswith("www."):
+        raw = raw[4:]
+    return raw
+
+
+def _domain_matches(domain: str, candidates) -> bool:
+    normalized = _normalize_domain(domain)
+    return any(normalized == candidate or normalized.endswith(f".{candidate}") for candidate in candidates)
+
+
+def _domain_category(domain: str) -> str | None:
+    normalized = _normalize_domain(domain)
+    if not normalized:
+        return None
+    parts = normalized.split(".")
+    variants = [".".join(parts[index:]) for index in range(len(parts))]
+    for variant in variants:
+        category = DOMAIN_CATEGORY_MAP.get(variant)
+        if category:
+            return category
+    return None
+
+
+def _coerce_category_id(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
 # -------------------------
 # INIT CENTROIDS
 # -------------------------
 def initialize_centroids(generate_embedding):
     global CENTROIDS
+    if CENTROIDS:
+        return
     for category, text in SEED_TEXTS.items():
         CENTROIDS[category] = generate_embedding(text)
 
@@ -274,7 +316,7 @@ def stage1_structural(item: Dict[str, Any]):
 
     if source == "gmail":
         labels = item.get("gmail_labels", [])
-        sender = item.get("sender_domain", "")
+        sender = _normalize_domain(item.get("sender_domain") or item.get("sender"))
 
         if labels and "CATEGORY_PERSONAL" in labels:
             return "personal", "structural", 1.0
@@ -285,11 +327,11 @@ def stage1_structural(item: Dict[str, Any]):
         if sender.endswith((".edu", ".ac.in", ".ac.uk")):
             return "study", "structural", 1.0
 
-        if sender in WORK_DOMAINS:
+        if _domain_matches(sender, WORK_DOMAINS):
             return "work", "structural", 1.0
 
     elif source == "youtube":
-        category = item.get("youtube_category_id")
+        category = _coerce_category_id(item.get("youtube_category_id"))
         is_short = item.get("is_short", False)
 
         if is_short:
@@ -302,15 +344,15 @@ def stage1_structural(item: Dict[str, Any]):
             return "entertainment", "structural", 1.0
 
     elif source == "chrome":
-        domain = item.get("domain", "")
+        domain = _normalize_domain(item.get("domain") or item.get("canonical_url") or item.get("url"))
 
         if domain.endswith((".edu", ".ac.in")):
             return "study", "structural", 1.0
 
-        if domain in WORK_DOMAINS:
+        if _domain_matches(domain, WORK_DOMAINS):
             return "work", "structural", 1.0
 
-        if domain in ENTERTAINMENT_DOMAINS:
+        if _domain_matches(domain, ENTERTAINMENT_DOMAINS):
             return "entertainment", "structural", 1.0
 
     return None
@@ -323,8 +365,8 @@ def stage2_domain_lookup(item: Dict[str, Any]):
     if item.get("source") != "chrome":
         return None
 
-    domain = item.get("domain", "")
-    category = DOMAIN_CATEGORY_MAP.get(domain)
+    domain = item.get("domain") or item.get("canonical_url") or item.get("url") or ""
+    category = _domain_category(domain)
 
     if category:
         return category, "domain", 0.95
@@ -335,6 +377,8 @@ def stage2_domain_lookup(item: Dict[str, Any]):
 # STAGE 3
 # -------------------------
 def stage3_centroid(embedding):
+    if embedding is None or len(CENTROIDS) < 2:
+        return None
 
     scores = {}
 
@@ -356,12 +400,14 @@ def stage3_centroid(embedding):
 # STAGE 4
 # -------------------------
 def stage4_llm_fallback(item):
-    return "misc", "llm", 0.90
+    return "misc", "fallback", 0.40
 
 # -------------------------
 # MAIN FUNCTION
 # -------------------------
 def classify_system_group(item: Dict[str, Any], embedding=None):
+    if item.get("source") == "youtube" and item.get("is_short"):
+        return "entertainment", "structural", 1.0
 
     result = stage1_structural(item)
     if result:
