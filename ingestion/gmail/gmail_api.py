@@ -50,8 +50,8 @@ def authenticate_gmail():
                 creds = Credentials.from_authorized_user_info(json.loads(token_json), SCOPES)
                 if creds.valid:
                     return build("gmail", "v1", credentials=creds)
-        except Exception as exc:
-            print(f"Failed to use cached token: {exc}")
+        except Exception:
+            print("Failed to use cached token; falling back to stored token")
 
     token_json = _load_stored_token_json()
     if token_json:
@@ -60,8 +60,8 @@ def authenticate_gmail():
             if creds.valid and rc:
                 try:
                     _cache_token_json(rc, token_json)
-                except Exception as exc:
-                    print(f"Failed to refresh encrypted token cache: {exc}")
+                except Exception:
+                    print("Failed to refresh encrypted token cache")
         except Exception:
             print("Invalid encrypted Gmail token; re-authenticating")
             TOKEN_PATH.unlink(missing_ok=True)
@@ -82,8 +82,8 @@ def authenticate_gmail():
         if rc:
             try:
                 _cache_token_json(rc, creds.to_json())
-            except Exception as exc:
-                print(f"Failed to cache token in Redis: {exc}")
+            except Exception:
+                print("Failed to cache token in Redis")
 
     return build("gmail", "v1", credentials=creds)
 
