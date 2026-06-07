@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from dotenv import load_dotenv
 from fastapi import APIRouter
+
+logger = logging.getLogger(__name__)
 from pydantic import BaseModel, Field
 
 from ste.storage_engine import store_chrome_page
@@ -116,7 +119,7 @@ def ingest_chrome_page(payload: ChromeIngestRequest):
         try:
             record_visit(payload.canonical_url)
         except Exception:
-            pass
+            logger.warning("Failed to record visit for %s", payload.canonical_url)
 
     if payload.is_app_page:
         payload.content_extract = ""

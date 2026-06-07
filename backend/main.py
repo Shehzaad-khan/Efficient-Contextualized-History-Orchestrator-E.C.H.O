@@ -20,6 +20,7 @@ import redis.asyncio as aioredis
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from ste.security import validate_redis_tls_url
 from ingestion.youtube.youtube_connector import router as ytc_router
@@ -81,6 +82,23 @@ app = FastAPI(
     version="0.2.0",
     description="E.C.H.O — Efficient Contextualized History Orchestrator",
     lifespan=lifespan,
+)
+
+_ALLOWED_ORIGINS = [
+    o.strip()
+    for o in os.getenv(
+        "ECHO_ALLOWED_ORIGINS",
+        "http://localhost:3000,http://localhost:8000,http://127.0.0.1:3000,http://127.0.0.1:8000",
+    ).split(",")
+    if o.strip()
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_ALLOWED_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "DELETE"],
+    allow_headers=["*"],
 )
 
 # Mount routers

@@ -12,20 +12,22 @@ Endpoints:
 
 import logging
 import json
+import os
+import re
 from pathlib import Path
 import time
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Security
+from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, Field
 from typing import Optional
 
 logger = logging.getLogger(__name__)
-_DEBUG_LOG_PATH = Path(__file__).resolve().parents[1] / "debug-20c712.log"
+_DEBUG_LOG_PATH = Path(__file__).resolve().parents[1] / "debug.log"
 
 
 def _debug_log(run_id: str, hypothesis_id: str, location: str, message: str, data: dict):
     payload = {
-        "sessionId": "20c712",
         "runId": run_id,
         "hypothesisId": hypothesis_id,
         "location": location,
@@ -41,10 +43,22 @@ def _debug_log(run_id: str, hypothesis_id: str, location: str, message: str, dat
 
 router = APIRouter(prefix="/retrieval", tags=["Retrieval & Synthesis Engine"])
 
+_SESSION_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{1,128}$")
+
+_api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+
+def _require_api_key(api_key: str = Security(_api_key_header)) -> None:
+    expected = os.getenv("ECHO_API_KEY")
+    if not expected:
+        raise HTTPException(status_code=503, detail="Session management unavailable")
+    if api_key != expected:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
 
 class QueryRequest(BaseModel):
     query: str = Field(..., min_length=1, max_length=2000, description="Natural language query")
-    session_id: Optional[str] = Field(None, description="Session ID for multi-turn context. Leave null for new session.")
+    session_id: Optional[str] = Field(None, max_length=128, description="Session ID for multi-turn context. Leave null for new session.")
 
 
 class QueryResponse(BaseModel):
@@ -131,15 +145,17 @@ def query(request: QueryRequest):
         )
         # #endregion
         logger.error(f"retrieval /query error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@router.get("/session/{session_id}")
+@router.get("/session/{session_id}", dependencies=[Depends(_require_api_key)])
 def get_session_info(session_id: str):
     """
     Return diagnostic info about a conversation session.
     Useful for debugging multi-turn context issues.
     """
+    if not _SESSION_ID_RE.match(session_id):
+        raise HTTPException(status_code=400, detail="Invalid session_id")
     from rse.conversation_memory import load_conversation_history
 
     history = load_conversation_history(session_id)
@@ -150,18 +166,19 @@ def get_session_info(session_id: str):
     }
 
 
-@router.delete("/session/{session_id}")
+@router.delete("/session/{session_id}", dependencies=[Depends(_require_api_key)])
 def clear_session(session_id: str):
     """
     Delete all messages for a session from message_store.
     Use this to start a fresh conversation context.
     """
+    if not _SESSION_ID_RE.match(session_id):
+        raise HTTPException(status_code=400, detail="Invalid session_id")
     import psycopg2
-    import os
 
     db_url = os.getenv("DATABASE_URL")
     if not db_url:
-        raise HTTPException(status_code=500, detail="DATABASE_URL not configured")
+        raise HTTPException(status_code=500, detail="Database not configured")
 
     conn = None
     try:
@@ -174,7 +191,8 @@ def clear_session(session_id: str):
     except Exception as e:
         if conn:
             conn.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"clear_session error for session {session_id!r}: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
     finally:
         if conn:
             conn.close()
