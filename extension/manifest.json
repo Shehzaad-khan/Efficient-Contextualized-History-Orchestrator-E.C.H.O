@@ -25,7 +25,7 @@
         "https://www.youtube.com/shorts/*"
       ],
       "js": [
-        "../../ingestion/youtube/youtube_tracker.js"
+        "content/youtube_tracker.js"
       ],
       "run_at": "document_idle"
     },
