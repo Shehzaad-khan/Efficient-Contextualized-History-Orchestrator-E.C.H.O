@@ -28,6 +28,7 @@ from ingestion.chrome.chrome_connector import router as chc_router
 from ingestion.gmail.router import poll_forever as gmail_poll_forever
 from ingestion.gmail.router import router as gmail_router
 from backend.retrieval import router as retrieval_router
+from backend.auth_routes import router as auth_router
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
@@ -102,6 +103,7 @@ app.add_middleware(
 )
 
 # Mount routers
+app.include_router(auth_router)
 app.include_router(ytc_router)
 app.include_router(chc_router)
 app.include_router(gmail_router)
