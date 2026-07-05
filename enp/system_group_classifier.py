@@ -1,7 +1,10 @@
+import logging
 from typing import Any, Dict
 from urllib.parse import urlparse
 
 from sklearn.metrics.pairwise import cosine_similarity
+
+logger = logging.getLogger(__name__)
 
 # -------------------------
 # CONSTANTS
@@ -397,9 +400,66 @@ def stage3_centroid(embedding):
     return None
 
 # -------------------------
-# STAGE 4
+# STAGE 4 — LLM fallback (architecture §9.4)
 # -------------------------
+_VALID_CATEGORIES = {"work", "study", "entertainment", "personal", "misc"}
+_llm_client = None
+_llm_unavailable = False
+
+_STAGE4_PROMPT = """Classify the following content into exactly one category:
+  work | study | entertainment | personal | misc
+
+Source: {source}
+Title:  "{title}"
+Snippet:"{snippet}"
+
+Reply with exactly one word. Nothing else."""
+
+
+def _get_stage4_llm():
+    """
+    Lazily build the fallback classifier LLM from the shared plug-and-play
+    LLM_CONFIG (rse.config — single provider change point for the whole app).
+    Returns None when no provider/API key is configured; Stage 4 then degrades
+    to the deterministic 'misc' fallback so enrichment never blocks on the LLM.
+    """
+    global _llm_client, _llm_unavailable
+    if _llm_client is not None or _llm_unavailable:
+        return _llm_client
+    try:
+        from langchain.chat_models import init_chat_model
+        from rse.config import LLM_CONFIG
+
+        _llm_client = init_chat_model(
+            model=LLM_CONFIG["parser_model"],
+            model_provider=LLM_CONFIG["provider"],
+            temperature=0.0,
+        )
+    except Exception as exc:
+        logger.warning("Stage 4 LLM unavailable, falling back to 'misc': %s", exc)
+        _llm_unavailable = True
+        _llm_client = None
+    return _llm_client
+
+
 def stage4_llm_fallback(item):
+    llm = _get_stage4_llm()
+    if llm is None:
+        return "misc", "fallback", 0.40
+
+    prompt = _STAGE4_PROMPT.format(
+        source=item.get("source") or item.get("source_type") or "unknown",
+        title=(item.get("title") or "")[:200],
+        snippet=(item.get("clean_text") or item.get("raw_text") or "")[:300],
+    )
+    try:
+        response = llm.invoke(prompt)
+        category = str(response.content).strip().lower().split()[0]
+        if category in _VALID_CATEGORIES:
+            return category, "llm", 0.90
+        logger.warning("Stage 4 LLM returned invalid category %r; using 'misc'", category)
+    except Exception as exc:
+        logger.warning("Stage 4 LLM classification failed: %s", exc)
     return "misc", "fallback", 0.40
 
 # -------------------------

@@ -97,6 +97,43 @@ def fetch_unprocessed_items(
     ]
 
 
+def _fetch_thread_history(conn, item: dict[str, Any]) -> list[str]:
+    """
+    Thread Context Enrichment (architecture §5.3): fetch prior emails in the
+    same thread from the CANONICAL tables so a bare "Re:" reply inherits its
+    thread's topics in embeddable_text. Returns subject + keyword strings of
+    earlier thread messages (empty when the item opens the thread).
+    """
+    thread_id = item.get("thread_id")
+    if not thread_id:
+        return []
+
+    with conn.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT mi.title, mi.auto_keywords, LEFT(COALESCE(mi.raw_text, ''), 300)
+            FROM memory_items mi
+            JOIN gmail_metadata gm ON gm.memory_id = mi.memory_id
+            WHERE gm.thread_id = %s
+              AND mi.memory_id != %s
+              AND mi.is_deleted = FALSE
+              AND mi.created_at <= %s
+            ORDER BY mi.created_at ASC
+            LIMIT 5
+            """,
+            (thread_id, item["memory_id"], item.get("created_at")),
+        )
+        rows = cursor.fetchall()
+
+    history: list[str] = []
+    for title, keywords, snippet in rows:
+        parts = [title or "", " ".join(keywords or []), snippet or ""]
+        text = " ".join(p for p in parts if p).strip()
+        if text:
+            history.append(text)
+    return history
+
+
 def _fetch_gmail_context(conn, item: dict[str, Any]) -> dict[str, Any]:
     with conn.cursor() as cursor:
         cursor.execute(
@@ -123,6 +160,13 @@ def _fetch_gmail_context(conn, item: dict[str, Any]) -> dict[str, Any]:
                 "has_attachments": row[6],
             }
         )
+
+    # Thread context from canonical tables — primary source (architecture §5.3).
+    thread_history = _fetch_thread_history(conn, item)
+    if thread_history:
+        item["content_primary_text"] = item.get("raw_text", "")
+        item["message_history"] = thread_history
+        return item
 
     # Legacy fallback for thread context and full body until Gmail is fully unified.
     try:
