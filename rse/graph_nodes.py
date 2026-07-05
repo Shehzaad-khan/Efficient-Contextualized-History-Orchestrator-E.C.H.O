@@ -1,133 +1,156 @@
 """
-All 9 LangGraph node implementations for the RSE pipeline.
+All LangGraph node implementations for the hybrid RSE pipeline.
 
 This module is the single import point for the graph assembly in
-retrieval_engine.py. Nodes that are fully implemented this phase:
-  - parse_intent    (LLM Call 1 — query_parser.py)
-  - postgres_search (SQL — search_coordinator.py)
-  - faiss_search    (stub — search_coordinator.py)
-  - evaluate_quality (unconditionally returns 'strong' this phase)
-  - widen_scope     (full logic from architecture Section 10.3 Node 5)
-  - check_attachments (routing signal logic)
-  - fetch_attachment (stub)
-  - synthesize      (stub)
-  - no_results_found (structured message)
+retrieval_engine.py. Node inventory:
+
+  parse_intent            LLM Call 1 — query_parser.py (query expansion + anchor fields)
+  resolve_time_anchor     deterministic anchor lookup — time_anchor.py
+  postgres_keyword_search FTS/ILIKE branch — search_coordinator.py   (parallel A)
+  faiss_semantic_search   multi-variant vector branch — search_coordinator.py (parallel B)
+  merge_and_rrf           Reciprocal Rank Fusion — fusion.py
+  evaluate_quality        deterministic 5-check gate (no LLM)
+  widen_scope             self-correcting loop, 3 attempts max
+  rerank_cross_encoder    local cross-encoder + effort score — reranker.py
+  extend_neighborhood     thread/session context — neighborhood.py
+  check_attachments       routing point for on-demand attachment fetch
+  fetch_attachment        stub (Phase: Gmail API + Redis cache)
+  synthesize              LLM Call 2 — llm_synthesizer.py
+  no_results_found        structured no-results message
+
+Total LLM calls per query: exactly 2 (parse_intent + synthesize), regardless
+of widen_scope loop iterations.
 """
 import logging
 from datetime import datetime, timedelta
 
+from rse.config import MIN_RESULT_COUNT, MIN_TOP_SIMILARITY
 from rse.state import EchoState
 from rse.query_parser import parse_intent
-from rse.search_coordinator import postgres_search, faiss_search
+from rse.search_coordinator import postgres_keyword_search, faiss_semantic_search
+from rse.fusion import merge_and_rrf
+from rse.time_anchor import resolve_time_anchor
+from rse.reranker import rerank_cross_encoder
+from rse.neighborhood import extend_neighborhood
+from rse.llm_synthesizer import synthesize
 
 logger = logging.getLogger(__name__)
 
+_ALL_SOURCES = ["gmail", "chrome", "youtube"]
 
-# ── Re-export real implementations ──────────────────────────────────────────
-# parse_intent and the two search nodes live in their own modules and are
-# imported here so retrieval_engine.py only needs to import from graph_nodes.
 
 def node_parse_intent(state: EchoState) -> dict:
-    """
-    Node 1 — parse_intent.
-
-    LLM Call 1: parses the user query and conversation history into a
-    structured ParsedIntent JSON object. Calls Gemini 2.5 Flash (or the
-    configured provider). Falls back gracefully on parse failure.
-
-    Args:
-        state: EchoState carrying user_query and conversation_history.
-
-    Returns:
-        Partial state dict with parsed_intent.
-    """
+    """Node 1 — parse_intent (LLM Call 1). See query_parser.parse_intent."""
     logger.info("NODE: parse_intent")
     return parse_intent(state)
 
 
-def node_postgres_search(state: EchoState) -> dict:
-    """
-    Node 2 — postgres_search.
-
-    Executes parameterised SQL against Neon PostgreSQL. Dynamically applies
-    source, time, and keyword filters from parsed_intent.
-
-    Args:
-        state: EchoState carrying parsed_intent.
-
-    Returns:
-        Partial state dict with postgres_results.
-    """
-    logger.info("NODE: postgres_search")
-    return postgres_search(state)
+def node_resolve_time_anchor(state: EchoState) -> dict:
+    """Node 1b — resolve_time_anchor. No-op when the intent has no anchor."""
+    logger.info("NODE: resolve_time_anchor")
+    return resolve_time_anchor(state)
 
 
-def node_faiss_search(state: EchoState) -> dict:
-    """
-    Node 3 — faiss_search.
+def node_postgres_keyword_search(state: EchoState) -> dict:
+    """Node 2a — keyword branch (runs in parallel with 2b)."""
+    logger.info("NODE: postgres_keyword_search")
+    return postgres_keyword_search(state)
 
-    Semantic similarity search stub. Returns empty faiss_results this phase.
-    Real implementation requires Mir's faiss_manager and ENP embeddings.
 
-    Args:
-        state: EchoState carrying parsed_intent and postgres_results.
+def node_faiss_semantic_search(state: EchoState) -> dict:
+    """Node 2b — semantic branch with query expansion (parallel with 2a)."""
+    logger.info("NODE: faiss_semantic_search")
+    return faiss_semantic_search(state)
 
-    Returns:
-        Partial state dict with faiss_results (empty list this phase).
-    """
-    logger.info("NODE: faiss_search")
-    return faiss_search(state)
+
+def node_merge_and_rrf(state: EchoState) -> dict:
+    """Node 3 — Reciprocal Rank Fusion of both branches."""
+    logger.info("NODE: merge_and_rrf")
+    return merge_and_rrf(state)
 
 
 def node_evaluate_quality(state: EchoState) -> dict:
     """
-    Node 4 — evaluate_quality.
+    Node 4 — evaluate_quality. Deterministic, five sequential checks, no LLM.
 
-    Deterministic quality check with five sequential checks. This phase stub
-    unconditionally sets result_quality='strong' so the graph can be tested
-    end-to-end before real embeddings exist.
-
-    Real logic (Phase 3):
-      1. Empty check: len(merged_results) == 0 → 'empty'
-      2. Source match: requested source not in results → 'empty'
-      3. Time window: no results within the requested window → 'weak'
-      4. Minimum count: fewer than 2 results → 'weak'
-      5. Top result similarity: results[0].similarity_score < 0.35 → 'weak'
-      Otherwise → 'strong'
-
-    Args:
-        state: EchoState carrying postgres_results and faiss_results.
-
-    Returns:
-        Partial state dict with result_quality='strong'.
+    Operates on the fused candidate pool:
+      1. Empty pool                              → 'empty'
+      2. Requested source absent from pool       → 'empty'
+      3. No candidate inside the time window     → 'weak'
+      4. Fewer than MIN_RESULT_COUNT candidates  → 'weak'
+      5. Best cosine similarity in the pool below
+         MIN_TOP_SIMILARITY (skipped when the semantic
+         branch returned nothing to measure)     → 'weak'
+      Otherwise                                  → 'strong'
     """
-    logger.info("NODE: evaluate_quality (stub — unconditionally strong)")
+    logger.info("NODE: evaluate_quality")
+    candidates = state.get("merged_candidates", [])
+    intent = state.get("parsed_intent", {})
+
+    # Check 1 — any results at all?
+    if not candidates:
+        logger.info("evaluate_quality: empty pool")
+        return {"result_quality": "empty"}
+
+    # Check 2 — source match when a specific source was requested.
+    sources = intent.get("sources", _ALL_SOURCES)
+    if sources and set(sources) != set(_ALL_SOURCES) and "all" not in sources:
+        if not any(c.get("source_type") in sources for c in candidates):
+            logger.info("evaluate_quality: no candidate from requested sources %s", sources)
+            return {"result_quality": "empty"}
+
+    # Check 3 — time window match when a time filter is set.
+    time_filter = intent.get("time_filter")
+    if time_filter:
+        try:
+            filter_dt = datetime.fromisoformat(time_filter)
+            in_window = [
+                c for c in candidates
+                if isinstance(c.get("created_at"), datetime) and c["created_at"] >= filter_dt
+            ]
+            if not in_window:
+                logger.info("evaluate_quality: nothing within time window %s", time_filter)
+                return {"result_quality": "weak"}
+        except ValueError:
+            logger.warning("evaluate_quality: unparseable time_filter %r — check skipped", time_filter)
+
+    # Check 4 — minimum candidate count.
+    if len(candidates) < MIN_RESULT_COUNT:
+        logger.info("evaluate_quality: only %d candidate(s)", len(candidates))
+        return {"result_quality": "weak"}
+
+    # Check 5 — semantic strength of the pool (best cosine among candidates).
+    similarities = [
+        c["similarity_score"] for c in candidates if c.get("similarity_score") is not None
+    ]
+    if similarities and max(similarities) < MIN_TOP_SIMILARITY:
+        logger.info("evaluate_quality: best similarity %.3f < %.2f",
+                    max(similarities), MIN_TOP_SIMILARITY)
+        return {"result_quality": "weak"}
+
+    logger.info("evaluate_quality: strong (%d candidates)", len(candidates))
     return {"result_quality": "strong"}
 
 
 def node_widen_scope(state: EchoState) -> dict:
     """
-    Node 5 — widen_scope.
+    Node 5 — widen_scope. Called on weak/empty quality while attempts remain.
+    Each attempt widens one dimension, then the graph loops back to BOTH
+    search branches.
 
-    Called when evaluate_quality returns weak/empty and attempt_count < 3.
-    Each attempt widens one parameter and the graph loops back to postgres_search.
-
-    Attempt 1: widen time window by 4 days, or open all sources if no time filter.
-    Attempt 2: remove time filter, open all sources, keep only first keyword.
-    Attempt 3: set skip_postgres_filter=True and full_faiss_scan=True.
-
-    Args:
-        state: EchoState carrying parsed_intent and attempt_count.
-
-    Returns:
-        Partial state dict with updated parsed_intent and incremented attempt_count.
+      Attempt 1: extend time window by 4 days, or open all sources,
+                 or trim query to its first keyword.
+      Attempt 2: drop time filter AND time-anchor constraint, all sources,
+                 core keyword only (variants collapse to it too).
+      Attempt 3: skip the Postgres dynamic filters entirely and widen the
+                 FAISS k per variant (full_faiss_scan).
     """
     logger.info("NODE: widen_scope")
     attempt = state.get("attempt_count", 0)
     intent = dict(state.get("parsed_intent", {}))
+    updates: dict = {}
 
     if attempt == 0:
-        # Attempt 1: widen time window or open sources
         if intent.get("time_filter"):
             try:
                 original_dt = datetime.fromisoformat(intent["time_filter"])
@@ -136,48 +159,58 @@ def node_widen_scope(state: EchoState) -> dict:
             except ValueError:
                 intent["time_filter"] = None
                 logger.info("widen_scope attempt 1: invalid time_filter cleared")
-        elif intent.get("sources") not in [["gmail", "chrome", "youtube"], ["all"]]:
-            intent["sources"] = ["gmail", "chrome", "youtube"]
+        elif intent.get("sources") not in [_ALL_SOURCES, ["all"]]:
+            intent["sources"] = list(_ALL_SOURCES)
             logger.info("widen_scope attempt 1: sources opened to all")
         else:
-            # Sources already open, trim query to first keyword
             query_clean = intent.get("query_clean", "")
-            intent["query_clean"] = query_clean.split()[0] if query_clean else query_clean
+            core = query_clean.split()[0] if query_clean else query_clean
+            intent["query_clean"] = core
             logger.info("widen_scope attempt 1: query trimmed to first keyword")
 
     elif attempt == 1:
-        # Attempt 2: remove all filters, core keyword only
         intent["time_filter"] = None
-        intent["sources"] = ["gmail", "chrome", "youtube"]
+        intent["sources"] = list(_ALL_SOURCES)
         query_clean = intent.get("query_clean", "")
-        intent["query_clean"] = query_clean.split()[0] if query_clean else query_clean
-        logger.info("widen_scope attempt 2: all filters removed, core keyword only")
+        core = query_clean.split()[0] if query_clean else query_clean
+        intent["query_clean"] = core
+        if core:
+            intent["query_variants"] = [core]
+        # Drop the anchor constraint — it may be the reason nothing matched.
+        intent["time_anchor_query"] = None
+        intent["time_relation"] = None
+        updates["anchor_time"] = None
+        updates["anchor_item"] = None
+        logger.info("widen_scope attempt 2: all filters and anchor removed, core keyword only")
 
     elif attempt >= 2:
-        # Attempt 3: bypass postgres filter, full FAISS scan
         intent["skip_postgres_filter"] = True
         intent["full_faiss_scan"] = True
         logger.info("widen_scope attempt 3: skip_postgres_filter and full_faiss_scan enabled")
 
-    return {
-        "parsed_intent": intent,
-        "attempt_count": attempt + 1,
-    }
+    updates["parsed_intent"] = intent
+    updates["attempt_count"] = attempt + 1
+    return updates
+
+
+def node_rerank_cross_encoder(state: EchoState) -> dict:
+    """Node 6 — cross-encoder re-ranking. See reranker.rerank_cross_encoder."""
+    logger.info("NODE: rerank_cross_encoder")
+    return rerank_cross_encoder(state)
+
+
+def node_extend_neighborhood(state: EchoState) -> dict:
+    """Node 7 — neighborhood extension. See neighborhood.extend_neighborhood."""
+    logger.info("NODE: extend_neighborhood")
+    return extend_neighborhood(state)
 
 
 def node_check_attachments(state: EchoState) -> dict:
     """
-    Node 6 — check_attachments.
+    Node 8 — check_attachments.
 
-    Inspects top-3 results for attachment presence. Routing is handled by
-    route_after_check_attachments in graph_routing.py. This node itself is a
-    pure pass-through — its only role is to be a named routing point.
-
-    Args:
-        state: EchoState carrying postgres_results and parsed_intent.
-
-    Returns:
-        Unchanged state (empty dict — no fields to update).
+    Pure pass-through routing point; route_after_check_attachments in
+    graph_routing.py inspects the top-3 ranked results for attachments.
     """
     logger.info("NODE: check_attachments")
     return {}
@@ -185,79 +218,50 @@ def node_check_attachments(state: EchoState) -> dict:
 
 def node_fetch_attachment(state: EchoState) -> dict:
     """
-    Node 7 — fetch_attachment.
+    Node 9 — fetch_attachment.
 
-    STUB for this phase.
-
-    Real implementation (Phase 3): calls Gmail API to fetch attachment binary,
-    extracts text using PyPDF2/pdfplumber, caches result in Redis (1-hour TTL).
-    Binary file is never stored permanently.
-
-    Args:
-        state: EchoState carrying postgres_results and parsed_intent.
-
-    Returns:
-        Partial state dict with attachment_content=None (stub).
+    STUB — the on-demand Gmail attachment pipeline (fetch binary, extract text
+    with PyPDF2/pdfplumber, cache in Redis with 1-hour TTL) is integrated in a
+    later session together with the GMC module rework.
     """
     logger.info("NODE: fetch_attachment (stub)")
     return {"attachment_content": None}
 
 
 def node_synthesize(state: EchoState) -> dict:
-    """
-    Node 8 — synthesize.
-
-    STUB for this phase.
-
-    Real implementation (Phase 3, LLM Call 2): assembles context from top-10
-    re-ranked results, attachment_content, and conversation history. Calls the
-    configured synthesizer LLM to generate a readable answer with source
-    citations and temporal context.
-
-    Args:
-        state: EchoState carrying postgres_results, faiss_results,
-               attachment_content, and conversation_history.
-
-    Returns:
-        Partial state dict with final_answer placeholder.
-    """
-    logger.info("NODE: synthesize (stub)")
-    postgres_results = state.get("postgres_results", [])
-    count = len(postgres_results)
-    query = state.get("user_query", "")
-    final_answer = (
-        f"[STUB] Retrieved {count} candidate(s) for query: '{query}'. "
-        "Synthesis will be implemented in Phase 3."
-    )
-    return {"final_answer": final_answer, "no_results": False}
+    """Node 10 — synthesize (LLM Call 2). See llm_synthesizer.synthesize."""
+    logger.info("NODE: synthesize")
+    return synthesize(state)
 
 
 def node_no_results_found(state: EchoState) -> dict:
     """
-    Node 9 — no_results_found.
+    Node 11 — no_results_found.
 
     Triggered after 3 failed widen_scope attempts. Returns a structured
     descriptive message explaining what was searched and suggesting alternatives.
-
-    Args:
-        state: EchoState carrying parsed_intent and attempt_count.
-
-    Returns:
-        Partial state dict with final_answer and no_results=True.
     """
     logger.info("NODE: no_results_found")
     intent = state.get("parsed_intent", {})
     query = intent.get("original_query", state.get("user_query", ""))
     sources = intent.get("sources", [])
     time_filter = intent.get("time_filter")
+    anchor = state.get("anchor_item")
 
     sources_str = ", ".join(sources) if sources else "all sources"
     time_str = f" from around {time_filter}" if time_filter else ""
+    anchor_str = ""
+    if anchor:
+        anchor_str = (
+            f" (anchored {intent.get('time_relation', '')} "
+            f"'{anchor.get('title', 'the anchor item')}')"
+        )
 
     message = (
-        f"No results found for '{query}'{time_str} across {sources_str}. "
-        "Echo searched progressively broader filters across 3 attempts. "
-        "Suggestions: try a shorter keyword, remove the time constraint, "
-        "or check that the relevant content has been ingested and processed."
+        f"No results found for '{query}'{time_str}{anchor_str} across {sources_str}. "
+        "Echo searched progressively broader filters across 3 attempts, combining "
+        "keyword and semantic retrieval. Suggestions: try a shorter keyword, remove "
+        "the time constraint, or check that the relevant content has been ingested "
+        "and processed."
     )
     return {"final_answer": message, "no_results": True}
