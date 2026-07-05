@@ -255,6 +255,10 @@ def fetch_and_store_new_emails(service):
                         "labels": msg.get("labelIds", []),
                         "thread_id": msg.get("threadId"),
                         "has_attachments": bool(attachments),
+                        # Sent-mail flag (gmail_metadata.is_sent) — distinguishes
+                        # writing time from reading time in wellbeing analytics
+                        # and enables "emails I sent to X" queries.
+                        "is_sent": "SENT" in msg.get("labelIds", []),
                     }
                 },
                 "source_link": f"https://mail.google.com/mail/u/0/#inbox/{message_id}",
