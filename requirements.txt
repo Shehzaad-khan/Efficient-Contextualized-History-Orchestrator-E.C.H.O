@@ -25,3 +25,7 @@ langchain-community==0.4.1
 # Authentication & Security
 passlib[bcrypt]==1.7.4
 pyjwt==2.8.1
+# RSE hybrid retrieval — local models (versions pinned to match enp/requirements_enrichment.txt)
+numpy==1.26.4
+sentence-transformers==5.4.1
+faiss-cpu==1.8.0
