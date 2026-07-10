@@ -303,12 +303,41 @@ def _coerce_category_id(value: Any) -> int | None:
 # -------------------------
 # INIT CENTROIDS
 # -------------------------
+def _centroids_path():
+    from pathlib import Path
+    from ste.faiss_manager import DEFAULT_INDEX_PATH
+
+    return Path(DEFAULT_INDEX_PATH).parent / "centroids.npz"
+
+
+def _load_persisted_centroids() -> bool:
+    """Load centroids saved by a previous recompute_centroids() run.
+    Returns True when at least one category was loaded."""
+    import numpy as np
+
+    path = _centroids_path()
+    if not path.exists():
+        return False
+    try:
+        with np.load(path) as stored:
+            for category in stored.files:
+                if category in SEED_TEXTS:
+                    CENTROIDS[category] = stored[category]
+        return bool(CENTROIDS)
+    except Exception as exc:
+        logger.warning("Failed to load persisted centroids from %s: %s", path, exc)
+        return False
+
+
 def initialize_centroids(generate_embedding):
     global CENTROIDS
     if CENTROIDS:
         return
+    # Seed every category first, then let persisted (recomputed) centroids
+    # override — categories below the recompute threshold keep their seeds.
     for category, text in SEED_TEXTS.items():
         CENTROIDS[category] = generate_embedding(text)
+    _load_persisted_centroids()
 
 # -------------------------
 # STAGE 1
@@ -461,6 +490,70 @@ def stage4_llm_fallback(item):
     except Exception as exc:
         logger.warning("Stage 4 LLM classification failed: %s", exc)
     return "misc", "fallback", 0.40
+
+# -------------------------
+# CENTROID RECOMPUTATION (architecture §9.3 — "How Centroids Improve Over Time")
+# -------------------------
+_MIN_CONFIRMED_FOR_RECOMPUTE = 10
+
+
+def recompute_centroids() -> Dict[str, int]:
+    """
+    Recompute each category centroid as the mean embedding of confirmed items
+    (classified_by IN structural/user_override — plus llm results, which the
+    architecture also feeds back into the monthly recomputation).
+
+    A category keeps its current centroid until it has at least 10 confirmed
+    items. Intended to run monthly via scripts/enp_recompute_centroids.py —
+    passive learning, no retraining.
+
+    Returns:
+        {category: confirmed_item_count} for every category that was updated.
+    """
+    import numpy as np
+
+    from ste import postgresql_manager
+    from enp.faiss_manager import get_manager
+
+    rows = postgresql_manager.fetchall(
+        """
+        SELECT sg.group_name, m.memory_id
+        FROM memory_items m
+        JOIN system_groups sg ON m.system_group_id = sg.system_group_id
+        WHERE m.is_deleted = FALSE
+          AND m.preprocessed = TRUE
+          AND m.classified_by IN ('structural', 'user_override', 'llm')
+        """
+    )
+
+    manager = get_manager()
+    by_category: Dict[str, list] = {}
+    for row in rows:
+        offset = manager.memory_id_to_offset.get(str(row["memory_id"]))
+        if offset is not None:
+            by_category.setdefault(row["group_name"], []).append(manager.vectors[offset])
+
+    updated: Dict[str, int] = {}
+    for category, vectors in by_category.items():
+        if category not in _VALID_CATEGORIES or len(vectors) < _MIN_CONFIRMED_FOR_RECOMPUTE:
+            continue
+        CENTROIDS[category] = np.mean(np.asarray(vectors, dtype=np.float32), axis=0)
+        updated[category] = len(vectors)
+        logger.info("recompute_centroids: %s updated from %d confirmed items", category, len(vectors))
+
+    if updated:
+        # Persist so the ENP worker (a different process) picks the new
+        # centroids up on its next start via initialize_centroids().
+        path = _centroids_path()
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            np.savez(path, **{c: CENTROIDS[c] for c in updated})
+            logger.info("recompute_centroids: persisted %d centroids to %s", len(updated), path)
+        except Exception as exc:
+            logger.error("recompute_centroids: failed to persist centroids — %s", exc)
+
+    return updated
+
 
 # -------------------------
 # MAIN FUNCTION

@@ -24,6 +24,10 @@ def _get_service():
 
 
 def poll_once() -> dict:
+    from ste import settings_store
+
+    if not settings_store.is_source_enabled("gmail"):
+        return {"status": "skipped", "reason": "gmail_capture_disabled", "processed": 0}
     initialize_database()
     service = _get_service()
     processed = fetch_and_store_new_emails(service)

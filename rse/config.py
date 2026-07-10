@@ -11,14 +11,25 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 # ── Single change point to swap LLM provider ─────────────────────────────────
 LLM_CONFIG: dict = {
-    "provider": "google_genai",
-    # gemini-2.5-flash-preview-04-17 is specified in the architecture doc but not
-    # yet available via the v1beta API as of April 2026. Using the GA release.
-    "parser_model": "gemini-2.5-flash",
-    "synthesizer_model": "gemini-2.5-flash",
+    # 2026-07-09: switched google_genai → openai. The Google key's free tier
+    # allows only 20 requests/day PER MODEL (each query = 2 calls, each ENP
+    # item classification = 1 more), which made the system unusable within
+    # minutes of real use. The OpenAI key is a funded paid account;
+    # gpt-4.1-mini costs ~$0.003/query at Echo's token sizes, handles strict
+    # JSON (Call 1) and grounded prose (Call 2) well, and accepts the
+    # temperature overrides below (reasoning models don't).
+    # GOOGLE_API_KEY stays in .env — switch back by flipping these 3 strings.
+    "provider": "openai",
+    "parser_model": "gpt-4.1-mini",
+    "synthesizer_model": "gpt-4.1-mini",
     # temperature overrides (optional — init_chat_model accepts these as kwargs)
     "parser_temperature": 0.0,
     "synthesizer_temperature": 0.3,
+    # Quota errors (429 RESOURCE_EXHAUSTED on a DAILY limit) are not transient:
+    # langchain's default ~6 exponential-backoff retries burned ~70s per LLM
+    # call before failing. Fail fast instead — the graph has deterministic
+    # fallbacks for both calls.
+    "max_retries": 2,
 }
 # ─────────────────────────────────────────────────────────────────────────────
 

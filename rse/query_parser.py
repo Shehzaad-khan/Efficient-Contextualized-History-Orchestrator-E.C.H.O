@@ -118,6 +118,7 @@ def _build_provider_llm() -> Any:
         model=LLM_CONFIG["parser_model"],
         model_provider=LLM_CONFIG["provider"],
         temperature=LLM_CONFIG.get("parser_temperature", 0.0),
+        max_retries=LLM_CONFIG.get("max_retries", 2),
     )
 
 

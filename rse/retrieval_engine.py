@@ -49,6 +49,7 @@ from rse.graph_nodes import (
     node_extend_neighborhood,
     node_check_attachments,
     node_fetch_attachment,
+    node_fetch_api,
     node_synthesize,
     node_no_results_found,
 )
@@ -82,6 +83,7 @@ def _build_graph() -> Any:
     graph.add_node("extend_neighborhood",     node_extend_neighborhood)
     graph.add_node("check_attachments",       node_check_attachments)
     graph.add_node("fetch_attachment",        node_fetch_attachment)
+    graph.add_node("fetch_api",               node_fetch_api)
     graph.add_node("synthesize",              node_synthesize)
     graph.add_node("no_results_found",        node_no_results_found)
 
@@ -119,16 +121,18 @@ def _build_graph() -> Any:
     graph.add_edge("rerank_cross_encoder", "extend_neighborhood")
     graph.add_edge("extend_neighborhood",  "check_attachments")
 
-    # ── Conditional: check_attachments → fetch_attachment or synthesize ───────
+    # ── Conditional: check_attachments → fetch_attachment / fetch_api / synth ─
     graph.add_conditional_edges(
         "check_attachments",
         route_after_check_attachments,
         {
             "fetch_attachment": "fetch_attachment",
+            "fetch_api":        "fetch_api",
             "synthesize":       "synthesize",
         },
     )
     graph.add_edge("fetch_attachment", "synthesize")
+    graph.add_edge("fetch_api",        "synthesize")
 
     # ── Terminal edges ────────────────────────────────────────────────────────
     graph.add_edge("synthesize",       END)

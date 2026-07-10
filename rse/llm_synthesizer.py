@@ -62,6 +62,7 @@ def build_synthesizer_llm() -> Any:
         model=LLM_CONFIG["synthesizer_model"],
         model_provider=LLM_CONFIG["provider"],
         temperature=LLM_CONFIG.get("synthesizer_temperature", 0.3),
+        max_retries=LLM_CONFIG.get("max_retries", 2),
     )
 
 
@@ -166,6 +167,16 @@ def synthesize(state: EchoState) -> dict:
     attachment_block = ""
     if attachment_content:
         attachment_block = f"\nATTACHMENT CONTENT (top result):\n{attachment_content}\n"
+
+    # Live-freshness items from the fetch_api node ("today", "just received").
+    api_results: list[dict[str, Any]] = state.get("api_results", []) or []
+    if api_results:
+        fresh_lines = [
+            f"- [{item.get('source_type')}] {item.get('title') or '(untitled)'} "
+            f"{_format_timestamp(item.get('created_at'))}"
+            for item in api_results[:10]
+        ]
+        attachment_block += "\nFRESH ITEMS FROM TODAY (live check):\n" + "\n".join(fresh_lines) + "\n"
 
     prompt = _SYNTHESIS_PROMPT.format(
         query=query,

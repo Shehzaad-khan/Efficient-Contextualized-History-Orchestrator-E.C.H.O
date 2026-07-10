@@ -258,6 +258,19 @@ def groups_rules_create(group_id: str, request: RuleCreateRequest):
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
+@router.get("/groups/{group_id}/rule-suggestions")
+def groups_rule_suggestions(group_id: str):
+    """Step 9 of the 9-step flow: patterns shared by 5+ accepted members,
+    offered as candidate rules. User approves via POST .../rules."""
+    from wba.group_manager import suggest_rules_for_group
+
+    try:
+        return {"group_id": group_id, "suggestions": suggest_rules_for_group(group_id)}
+    except Exception as e:
+        logger.error(f"groups_rule_suggestions error: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
 @router.post("/suggestions/{suggestion_id}/decision")
 def suggestion_decision(suggestion_id: str, request: SuggestionDecisionRequest):
     from wba.group_manager import decide_suggestion

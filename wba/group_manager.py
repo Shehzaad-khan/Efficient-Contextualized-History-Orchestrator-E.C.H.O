@@ -130,6 +130,64 @@ def set_rule_active(rule_id: str, active: bool) -> bool:
     return result.rowcount > 0
 
 
+RULE_SUGGESTION_MIN_MATCHES = 5
+
+
+def suggest_rules_for_group(group_id: str) -> list[dict[str, Any]]:
+    """
+    Step 9 of the 9-step classification flow (DB design §15.3): when 5+
+    accepted members of a group share the same pattern, surface a rule
+    suggestion. Nothing is written here — the user approves by calling
+    add_rule, keeping the rule engine human-in-the-loop.
+
+    Patterns checked: shared Chrome domain, shared Gmail sender domain,
+    shared YouTube channel. Existing active rules are excluded.
+    """
+    candidates = postgresql_manager.fetchall(
+        """
+        WITH members AS (
+            SELECT m.memory_id, m.source_type,
+                   cm.domain,
+                   gm.sender,
+                   ym.channel_name
+            FROM memory_user_groups mug
+            JOIN memory_items m       ON m.memory_id = mug.memory_id
+            LEFT JOIN chrome_metadata  cm ON cm.memory_id = m.memory_id
+            LEFT JOIN gmail_metadata   gm ON gm.memory_id = m.memory_id
+            LEFT JOIN youtube_metadata ym ON ym.memory_id = m.memory_id
+            WHERE mug.group_id = :group_id AND m.is_deleted = FALSE
+        )
+        SELECT 'domain' AS rule_type, LOWER(domain) AS rule_value, COUNT(*) AS match_count
+        FROM members WHERE domain IS NOT NULL AND domain <> ''
+        GROUP BY LOWER(domain) HAVING COUNT(*) >= :min_matches
+        UNION ALL
+        SELECT 'sender', LOWER(SPLIT_PART(sender, '@', 2)), COUNT(*)
+        FROM members WHERE sender LIKE '%@%'
+        GROUP BY LOWER(SPLIT_PART(sender, '@', 2)) HAVING COUNT(*) >= :min_matches
+        UNION ALL
+        SELECT 'channel', LOWER(channel_name), COUNT(*)
+        FROM members WHERE channel_name IS NOT NULL AND channel_name <> ''
+        GROUP BY LOWER(channel_name) HAVING COUNT(*) >= :min_matches
+        ORDER BY match_count DESC
+        """,
+        {"group_id": group_id, "min_matches": RULE_SUGGESTION_MIN_MATCHES},
+    )
+
+    existing = {
+        (rule["rule_type"], rule["rule_value"])
+        for rule in list_rules(group_id, include_inactive=True)
+    }
+    return [
+        {
+            "rule_type": row["rule_type"],
+            "rule_value": row["rule_value"],
+            "match_count": row["match_count"],
+        }
+        for row in candidates
+        if row["rule_value"] and (row["rule_type"], row["rule_value"]) not in existing
+    ]
+
+
 def _rule_matches(rule: dict[str, Any], item: dict[str, Any]) -> bool:
     """Evaluate one rule against one item (DB design Table 14 semantics)."""
     rule_type = rule["rule_type"]

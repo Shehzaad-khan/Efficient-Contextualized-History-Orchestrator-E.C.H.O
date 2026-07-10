@@ -2,12 +2,15 @@
 Configuration module - Handles all settings, constants, and environment variables
 """
 
+import logging
 import os
 import redis
 from pathlib import Path
 from dotenv import load_dotenv
 
 from ste.security import validate_redis_tls_url
+
+logger = logging.getLogger(__name__)
 
 # ==============================
 # LOAD ENVIRONMENT VARIABLES
@@ -41,9 +44,8 @@ def get_redis_client():
                 socket_keepalive=True,
             )
             redis_client.ping()  # Test connection
-            print("Redis Connected ✅")
+            logger.info("Redis connected")
         except Exception as e:
-            print(f"⚠️  Redis connection failed: {e}")
-            print("Continuing without Redis caching...")
+            logger.warning("Redis connection failed: %s. Continuing without Redis caching.", e)
             redis_client = None
     return redis_client

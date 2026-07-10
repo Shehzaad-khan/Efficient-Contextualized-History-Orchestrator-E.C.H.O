@@ -14,7 +14,7 @@ retrieval_engine.py. Node inventory:
   rerank_cross_encoder    local cross-encoder + effort score — reranker.py
   extend_neighborhood     thread/session context — neighborhood.py
   check_attachments       routing point for on-demand attachment fetch
-  fetch_attachment        stub (Phase: Gmail API + Redis cache)
+  fetch_attachment        on-demand Tier-2 extraction — enp/attachment_processor.py
   synthesize              LLM Call 2 — llm_synthesizer.py
   no_results_found        structured no-results message
 
@@ -37,6 +37,27 @@ from rse.llm_synthesizer import synthesize
 logger = logging.getLogger(__name__)
 
 _ALL_SOURCES = ["gmail", "chrome", "youtube"]
+
+# When parse_intent falls back (LLM unavailable), query_clean is the verbatim
+# user question — so "trim to the first keyword" must skip question/filler
+# words or the whole widen loop ends up searching for "What".
+_TRIM_STOPWORDS = frozenset({
+    "a", "an", "the", "any", "all", "some", "my", "me", "i", "you", "it",
+    "what", "which", "who", "whom", "whose", "when", "where", "why", "how",
+    "did", "do", "does", "was", "were", "is", "are", "am", "be", "been",
+    "have", "has", "had", "get", "got", "find", "show", "search", "give",
+    "about", "for", "from", "to", "of", "on", "in", "at", "with", "and",
+    "or", "that", "this", "those", "these", "there",
+})
+
+
+def _core_keyword(query_clean: str) -> str:
+    """First informative token of query_clean (first token if all are filler)."""
+    tokens = query_clean.split()
+    for token in tokens:
+        if token.strip("?!.,\"'").lower() not in _TRIM_STOPWORDS:
+            return token.strip("?!.,\"'")
+    return tokens[0] if tokens else query_clean
 
 
 def node_parse_intent(state: EchoState) -> dict:
@@ -164,15 +185,15 @@ def node_widen_scope(state: EchoState) -> dict:
             logger.info("widen_scope attempt 1: sources opened to all")
         else:
             query_clean = intent.get("query_clean", "")
-            core = query_clean.split()[0] if query_clean else query_clean
+            core = _core_keyword(query_clean) if query_clean else query_clean
             intent["query_clean"] = core
-            logger.info("widen_scope attempt 1: query trimmed to first keyword")
+            logger.info("widen_scope attempt 1: query trimmed to core keyword %r", core)
 
     elif attempt == 1:
         intent["time_filter"] = None
         intent["sources"] = list(_ALL_SOURCES)
         query_clean = intent.get("query_clean", "")
-        core = query_clean.split()[0] if query_clean else query_clean
+        core = _core_keyword(query_clean) if query_clean else query_clean
         intent["query_clean"] = core
         if core:
             intent["query_variants"] = [core]
@@ -220,12 +241,61 @@ def node_fetch_attachment(state: EchoState) -> dict:
     """
     Node 9 — fetch_attachment.
 
-    STUB — the on-demand Gmail attachment pipeline (fetch binary, extract text
-    with PyPDF2/pdfplumber, cache in Redis with 1-hour TTL) is integrated in a
-    later session together with the GMC module rework.
+    On-demand Tier-2 extraction (architecture §8.3): for the highest-ranked
+    Gmail result carrying attachments, fetch the binary from the Gmail API,
+    extract text (PDF/DOCX/TXT/OCR), and cache it in Redis for 1 hour. The
+    routing gate (route_after_check_attachments) has already confirmed both
+    the intent flag and a top-3 result with attachments.
     """
-    logger.info("NODE: fetch_attachment (stub)")
+    logger.info("NODE: fetch_attachment")
+    from enp.attachment_processor import fetch_attachment_text_for_memory
+
+    query_clean = state.get("parsed_intent", {}).get("query_clean", "")
+    for result in state.get("ranked_results", [])[:3]:
+        if result.get("source_type") == "gmail" and result.get("has_attachments"):
+            content = fetch_attachment_text_for_memory(
+                str(result["memory_id"]), query_clean=query_clean
+            )
+            if content:
+                logger.info(
+                    "NODE: fetch_attachment — extracted %d chars for %s",
+                    len(content), result["memory_id"],
+                )
+                return {"attachment_content": content}
+
+    logger.info("NODE: fetch_attachment — no extractable attachment in top 3")
     return {"attachment_content": None}
+
+
+def node_fetch_api(state: EchoState) -> dict:
+    """
+    Node 9b — fetch_api (architecture §10.3 Node 6 routing target).
+
+    Triggered when parse_intent set fetch_api=True ("latest", "today", "just
+    received"). Polls Gmail live so anything that arrived since the last
+    background poll is ingested, then loads today's freshest items into
+    api_results for the synthesizer. Chrome/YouTube have no pollable API —
+    their events are pushed by the extension — so the fresh-item query is
+    the live component for those sources.
+    """
+    logger.info("NODE: fetch_api")
+    from rse.search_coordinator import fetch_recent_items
+
+    sources = state.get("parsed_intent", {}).get("sources") or _ALL_SOURCES
+
+    if "gmail" in sources:
+        try:
+            from ingestion.gmail.router import poll_once
+
+            result = poll_once()
+            logger.info("NODE: fetch_api — gmail poll: %s", result)
+        except Exception as exc:
+            # Live poll is best-effort; today's already-ingested items still flow.
+            logger.error("NODE: fetch_api — gmail poll failed: %s", exc)
+
+    api_results = fetch_recent_items(sources, limit=10)
+    logger.info("NODE: fetch_api — %d fresh items loaded", len(api_results))
+    return {"api_results": api_results}
 
 
 def node_synthesize(state: EchoState) -> dict:

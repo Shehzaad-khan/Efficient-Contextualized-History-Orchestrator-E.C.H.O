@@ -88,12 +88,17 @@ WHERE m.is_deleted = FALSE
 # Searchable document for FTS — computed on the fly. raw_text is capped so the
 # tsvector stays cheap; with the current dataset size no stored column or GIN
 # index is needed yet (add one when the table crosses ~50k rows).
+# gm.sender is included so "emails from Neon" matches by WHO sent it, not only
+# by whether the sender's name happens to appear in the subject or body.
 _FTS_DOCUMENT = (
     "to_tsvector('english', "
     "COALESCE(m.title, '') || ' ' || "
     "LEFT(COALESCE(m.raw_text, ''), 5000) || ' ' || "
     "array_to_string(m.auto_keywords, ' ') || ' ' || "
-    "COALESCE(gm.subject, ''))"
+    "COALESCE(gm.subject, '') || ' ' || "
+    "COALESCE(gm.sender, '') || ' ' || "
+    "COALESCE(cm.domain, '') || ' ' || "
+    "COALESCE(ym.channel_name, ''))"
 )
 
 
@@ -200,6 +205,9 @@ def postgres_keyword_search(state: EchoState) -> dict:
                                 {_FTS_DOCUMENT} @@ websearch_to_tsquery('english', %s)
                                 OR m.title ILIKE %s
                                 OR COALESCE(gm.subject, '') ILIKE %s
+                                OR COALESCE(gm.sender, '') ILIKE %s
+                                OR COALESCE(cm.domain, '') ILIKE %s
+                                OR COALESCE(ym.channel_name, '') ILIKE %s
                                 OR EXISTS (SELECT 1 FROM unnest(m.auto_keywords) kw WHERE kw ILIKE %s)
                           )
                         ORDER BY keyword_rank DESC, me.last_accessed_at DESC NULLS LAST
@@ -208,7 +216,7 @@ def postgres_keyword_search(state: EchoState) -> dict:
                         params = (
                             [query_clean]
                             + filter_params
-                            + [query_clean, ilike_pattern, ilike_pattern, ilike_pattern]
+                            + [query_clean] + [ilike_pattern] * 6
                             + [PG_KEYWORD_LIMIT]
                         )
                         logger.info(
@@ -361,4 +369,39 @@ def hydrate_memory_items(memory_ids: Sequence[str]) -> list[dict[str, Any]]:
         return [normalise_row(row) for row in rows]
     except Exception as exc:
         logger.error("hydrate_memory_items: database error — %s", exc)
+        return []
+
+
+def fetch_recent_items(sources: Sequence[str], limit: int = 10) -> list[dict[str, Any]]:
+    """
+    Freshest items from today for the fetch_api node (architecture §10.3):
+    after a live source poll, surface what just arrived so the synthesizer
+    can answer "did I get any emails from Google today" from current data.
+
+    Args:
+        sources: source_type values to include (e.g. ['gmail']).
+        limit: maximum rows returned.
+
+    Returns:
+        Normalized result dicts, newest first; empty on error.
+    """
+    wanted = [s for s in sources if s in ("gmail", "chrome", "youtube")] or ["gmail", "chrome", "youtube"]
+    sql = (
+        f"SELECT {RESULT_COLUMNS} {RESULT_JOINS} {BASE_CONDITIONS}"
+        "  AND m.source_type = ANY(%s)"
+        "  AND m.created_at >= CURRENT_DATE"
+        "ORDER BY m.created_at DESC LIMIT %s"
+    )
+    try:
+        conn = get_connection()
+        try:
+            with conn:
+                with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                    cur.execute(sql, (wanted, limit))
+                    rows = cur.fetchall()
+        finally:
+            conn.close()
+        return [normalise_row(row) for row in rows]
+    except Exception as exc:
+        logger.error("fetch_recent_items: database error — %s", exc)
         return []

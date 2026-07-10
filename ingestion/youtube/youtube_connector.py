@@ -89,6 +89,10 @@ async def check_revisit(video_id: str) -> bool:
 async def handle_video_detected(event: VideoDetectedEvent):
     import asyncio
     from . import youtube_api_client
+    from ste import settings_store
+
+    if not settings_store.is_source_enabled("youtube"):
+        return {"status": "discarded", "reason": "youtube_capture_disabled"}
 
     if not is_valid_video_id(event.video_id):
         return {"status": "discarded", "reason": "invalid_video_id"}

@@ -55,6 +55,20 @@ const CHROME_IGNORED_QUERY_PARAMS = new Set([
 
 chrome.idle.setDetectionInterval(30);
 
+// Pause/resume tracking (popup toggle). While paused, no event leaves the
+// extension — every backend call funnels through postToBackend below.
+let trackingPaused = false;
+
+chrome.storage.local.get({ echo_tracking_paused: false }, (stored) => {
+  trackingPaused = Boolean(stored.echo_tracking_paused);
+});
+
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "local" && changes.echo_tracking_paused) {
+    trackingPaused = Boolean(changes.echo_tracking_paused.newValue);
+  }
+});
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const { type, payload } = message;
 
@@ -86,6 +100,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 async function postToBackend(endpoint, payload) {
+  if (trackingPaused) {
+    return { paused: true };
+  }
+
   const response = await fetch(`${BACKEND_URL}${endpoint}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

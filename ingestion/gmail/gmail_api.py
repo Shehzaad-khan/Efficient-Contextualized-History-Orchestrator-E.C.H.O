@@ -228,6 +228,12 @@ def fetch_and_store_new_emails(service):
             to = email_info["to"]
             date = email_info["date"]
 
+            # User-configured sender exclusion (settings — §13.3 control point)
+            from ste import settings_store
+            if settings_store.is_sender_excluded(sender):
+                print(f"Skipping excluded sender: {sender}")
+                continue
+
             attachments = extract_attachments(msg, message_id)
             email_data = {
                 "memory_id": str(uuid.uuid4()),

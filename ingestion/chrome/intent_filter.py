@@ -1,9 +1,13 @@
 from __future__ import annotations
 
-PHASE1_MIN_SECONDS = 30
-PHASE2_MIN_FOREGROUND = 120
-PHASE2_MIN_SCROLL = 0.5
-PHASE2_MIN_INTERACTIONS = 3
+# Architecture §6.2 two-phase intent gate. These MUST match the extension's
+# thresholds in extension/background.js (evaluateChromeIntent): the extension
+# sends /chrome/ingest exactly once when ITS gate passes, so a stricter server
+# gate silently discards the page with no retry ever happening.
+PHASE1_MIN_SECONDS = 5
+PHASE2_MIN_FOREGROUND = 10
+PHASE2_MIN_SCROLL = 0.25
+PHASE2_MIN_INTERACTIONS = 1
 
 APPLICATION_DOMAINS = {
     "slack.com",

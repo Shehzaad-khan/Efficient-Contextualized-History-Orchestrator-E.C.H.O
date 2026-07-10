@@ -15,12 +15,18 @@ Background workers:
 import asyncio
 import logging
 import os
+import sys
+from pathlib import Path
 
 import redis.asyncio as aioredis
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from ste.security import validate_redis_tls_url
 from ingestion.youtube.youtube_connector import router as ytc_router
@@ -30,6 +36,7 @@ from ingestion.gmail.router import router as gmail_router
 from backend.retrieval import router as retrieval_router
 from backend.wellbeing import router as wellbeing_router
 from backend.auth_routes import router as auth_router
+from backend.items import router as items_router
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
@@ -110,6 +117,7 @@ app.include_router(chc_router)
 app.include_router(gmail_router)
 app.include_router(retrieval_router)
 app.include_router(wellbeing_router)
+app.include_router(items_router)
 
 
 @app.get("/health")

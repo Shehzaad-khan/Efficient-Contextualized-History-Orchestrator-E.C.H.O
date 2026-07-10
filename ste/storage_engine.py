@@ -443,6 +443,10 @@ def store_youtube_detection(video_id: str, is_short: bool, detected_at: datetime
 
 
 def update_youtube_watch_time(video_id: str, watch_time_seconds: int) -> None:
+    # completion_rate uses CAST(... AS double precision) instead of a "::float"
+    # suffix cast: SQLAlchemy's text() bind parser breaks on a named parameter
+    # immediately followed by "::" (and also resolves ":name" inside SQL comments,
+    # so this note lives here rather than in the statement).
     with postgresql_manager.transaction() as connection:
         connection.execute(
             text(
@@ -452,7 +456,7 @@ def update_youtube_watch_time(video_id: str, watch_time_seconds: int) -> None:
                     last_accessed_at = NOW(),
                     completion_rate = CASE
                         WHEN ym.duration_seconds > 0
-                        THEN LEAST(1.0, :watch_time_seconds::float / ym.duration_seconds)
+                        THEN LEAST(1.0, CAST(:watch_time_seconds AS double precision) / ym.duration_seconds)
                         ELSE NULL
                     END
                 FROM memory_items mi

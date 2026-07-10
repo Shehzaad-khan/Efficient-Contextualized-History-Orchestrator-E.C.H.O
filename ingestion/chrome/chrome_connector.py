@@ -10,6 +10,7 @@ logger = logging.getLogger(__name__)
 from pydantic import BaseModel, Field
 
 from ste.storage_engine import store_chrome_page
+from ste import settings_store
 from ingestion.chrome import intent_filter
 from ingestion.chrome.revisit_tracker import check_and_record_visit, record_visit
 
@@ -108,6 +109,12 @@ def ingest_chrome_page(payload: ChromeIngestRequest):
     payload.canonical_url = payload.canonical_url or canonicalize_url(payload.url)
     payload.domain = extract_domain(payload.canonical_url) or extract_domain(payload.url) or payload.domain.strip().lower()
     payload.is_app_page = payload.is_app_page or intent_filter.is_application_page(payload.domain)
+
+    if not settings_store.is_source_enabled("chrome"):
+        return {"status": "discarded", "reason": "chrome_capture_disabled"}
+
+    if settings_store.is_domain_excluded(payload.domain):
+        return {"status": "discarded", "reason": "domain_excluded"}
 
     if is_skipped_page(payload.url):
         return {"status": "discarded", "reason": "application_path_excluded"}

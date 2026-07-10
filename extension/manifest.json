@@ -52,6 +52,7 @@
     }
   ],
   "action": {
-    "default_title": "Echo"
+    "default_title": "Echo",
+    "default_popup": "popup.html"
   }
 }
