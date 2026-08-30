@@ -30,6 +30,6 @@ def youtube_status() -> dict[str, Any]:
 
 @router.post("/ingest")
 def youtube_ingest(payload: dict[str, Any] | None = None) -> dict[str, Any]:
-    record = append_record("youtube", payload or {}, _STORAGE_PATH)
-    logger.info("Persisted YouTube ingest record: %s", record["timestamp"])
-    return {"status": "ok", "source": "youtube", "received": bool(payload), "mode": "local-store", "recorded": True}
+    result = _save_source_record("youtube", payload or {})
+    logger.info("Persisted YouTube ingest record via canonical ingestion path: %s", result)
+    return result

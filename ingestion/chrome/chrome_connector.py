@@ -30,6 +30,6 @@ def chrome_status() -> dict[str, Any]:
 
 @router.post("/ingest")
 def chrome_ingest(payload: dict[str, Any] | None = None) -> dict[str, Any]:
-    record = append_record("chrome", payload or {}, _STORAGE_PATH)
-    logger.info("Persisted Chrome ingest record: %s", record["timestamp"])
-    return {"status": "ok", "source": "chrome", "received": bool(payload), "mode": "local-store", "recorded": True}
+    result = _save_source_record("chrome", payload or {})
+    logger.info("Persisted Chrome ingest record via canonical ingestion path: %s", result)
+    return result

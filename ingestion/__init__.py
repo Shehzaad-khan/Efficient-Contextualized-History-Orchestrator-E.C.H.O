@@ -1,9 +1,8 @@
-"""Bootstrap ingestion package for Echo.
+"""E.C.H.O. ingestion package.
 
-This project's architecture documents define a full Gmail/Chrome/YouTube
-capture pipeline, but the repository was missing the ingestion package itself.
-This stub keeps the app importable and provides minimal health endpoints while
-the real source connectors are being implemented.
+This package exposes the Gmail, Chrome, and YouTube source adapters used by the
+main application. The adapters write through the canonical intake path and keep a
+local JSON backup for offline/local testing.
 """
 
 __all__ = ["gmail", "chrome", "youtube"]

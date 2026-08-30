@@ -45,5 +45,7 @@ async def poll_forever() -> None:
 
 
 @router.post("/sync")
-def gmail_sync() -> dict[str, Any]:
+def gmail_sync(payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    if payload:
+        return _save_source_record("gmail", payload)
     return poll_once()
