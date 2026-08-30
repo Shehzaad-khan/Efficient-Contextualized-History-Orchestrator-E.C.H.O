@@ -1,0 +1,58 @@
+{
+  "manifest_version": 3,
+  "name": "Echo",
+  "version": "0.1.0",
+  "description": "Echo Personal Memory System — local-first digital memory capture",
+  "permissions": [
+    "tabs",
+    "storage",
+    "idle",
+    "webNavigation"
+  ],
+  "host_permissions": [
+    "https://www.youtube.com/*",
+    "http://localhost:8000/*",
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.youtube.com/watch*",
+        "https://www.youtube.com/shorts/*"
+      ],
+      "js": [
+        "content/youtube_tracker.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://mail.google.com/*"
+      ],
+      "js": [
+        "content/gmail_tracker.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "exclude_matches": [
+        "https://www.youtube.com/*"
+      ],
+      "js": [
+        "content/chrome_tracker.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_title": "Echo",
+    "default_popup": "popup.html"
+  }
+}

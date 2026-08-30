@@ -1,0 +1,116 @@
+@import '@fontsource-variable/fraunces';
+@import '@fontsource-variable/instrument-sans';
+@import '@fontsource-variable/jetbrains-mono';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    background-color: theme('colors.night.950');
+  }
+
+  body {
+    @apply bg-night-950 text-ink font-body antialiased;
+    /* Warm lamp glow rising from the top-left — the room's single light source */
+    background-image:
+      radial-gradient(120% 90% at 12% -10%, rgba(245, 169, 71, 0.07), transparent 55%),
+      radial-gradient(80% 60% at 88% 110%, rgba(143, 184, 232, 0.04), transparent 60%);
+    background-attachment: fixed;
+    min-height: 100vh;
+  }
+
+  ::selection {
+    background: rgba(245, 169, 71, 0.28);
+    color: theme('colors.ink.DEFAULT');
+  }
+
+  /* Focus is part of the design language, not an afterthought */
+  :focus-visible {
+    outline: 2px solid theme('colors.ember.500');
+    outline-offset: 3px;
+    border-radius: 4px;
+  }
+
+  /* Quiet scrollbars that match the room */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: theme('colors.night.700') transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  *::-webkit-scrollbar-thumb {
+    background: theme('colors.night.700');
+    border-radius: 999px;
+  }
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
+
+@layer components {
+  /* Film grain — laid over everything at very low opacity for warmth */
+  .grain::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 5;
+    opacity: 0.05;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='0.6'/%3E%3C/svg%3E");
+  }
+
+  /* The luminous thread — Echo's recurring motif */
+  .thread {
+    @apply w-px bg-gradient-to-b from-ember-500/70 via-ember-500/25 to-transparent;
+    box-shadow: theme('boxShadow.thread');
+  }
+
+  .card {
+    @apply rounded-card border border-white/[0.06] bg-night-850 shadow-raise;
+  }
+
+  .card-hover {
+    @apply transition duration-300 ease-out hover:-translate-y-0.5 hover:border-ember-500/25;
+  }
+
+  .meta {
+    @apply font-mono text-meta uppercase text-ink-mute;
+  }
+
+  .btn-primary {
+    @apply rounded-pill bg-ink px-5 py-2.5 text-sm font-semibold text-night-950
+           transition duration-200 ease-out hover:bg-ember-300 active:scale-[0.97];
+  }
+
+  .btn-ghost {
+    @apply rounded-pill border border-white/10 px-4 py-2 text-sm text-ink-soft
+           transition duration-200 ease-out hover:border-ember-500/30 hover:text-ink active:scale-[0.97];
+  }
+
+  .input-study {
+    @apply w-full rounded-card border border-white/[0.08] bg-night-900 px-4 py-3 text-sm text-ink
+           placeholder:font-mono placeholder:text-xs placeholder:text-ink-faint
+           transition duration-200 focus:border-ember-500/40 focus:outline-none
+           focus:shadow-[0_0_0_3px_rgba(245,169,71,0.12)];
+  }
+
+  .shimmer-line {
+    @apply animate-shimmer bg-gradient-to-r from-transparent via-ember-500/30 to-transparent;
+    background-size: 200% 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

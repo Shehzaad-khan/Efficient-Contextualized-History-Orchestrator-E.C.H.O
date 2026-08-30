@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Echo</title>
+  <style>
+    :root {
+      --night-950: #100d0a;
+      --night-900: #171310;
+      --night-850: #1e1915;
+      --night-800: #262019;
+      --night-700: #38302a;
+      --ink: #efe6d8;
+      --ink-soft: #cfc4b2;
+      --ink-mute: #998e7d;
+      --ink-faint: #6b6254;
+      --ember: #f5a947;
+      --ember-deep: #d98324;
+      --gmail: #e8734a;
+      --chrome: #7fb069;
+      --youtube: #e05252;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      width: 340px;
+      background: radial-gradient(120% 80% at 50% 0%, var(--night-850) 0%, var(--night-950) 70%);
+      color: var(--ink);
+      font: 13px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+    }
+
+    .wrap { padding: 14px 14px 12px; }
+
+    /* ── Header ── */
+    header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding-bottom: 10px; border-bottom: 1px solid rgba(255,255,255,0.06);
+    }
+    .brand {
+      font-family: Georgia, "Times New Roman", serif;
+      font-style: italic; font-size: 17px; letter-spacing: 0.02em;
+      color: var(--ink);
+    }
+    .brand::after {
+      content: ""; display: inline-block; width: 5px; height: 5px;
+      margin-left: 6px; border-radius: 50%; background: var(--ember);
+      vertical-align: middle; box-shadow: 0 0 8px var(--ember);
+    }
+
+    /* pause toggle */
+    .pause {
+      display: flex; align-items: center; gap: 7px;
+      background: none; border: none; cursor: pointer;
+      font: 10px/1 ui-monospace, "Cascadia Mono", monospace;
+      letter-spacing: 0.08em; text-transform: uppercase;
+      color: var(--ink-mute);
+    }
+    .pause .track {
+      width: 28px; height: 15px; border-radius: 999px;
+      background: var(--night-700); position: relative;
+      transition: background 0.25s ease;
+    }
+    .pause .thumb {
+      position: absolute; top: 2px; left: 2px; width: 11px; height: 11px;
+      border-radius: 50%; background: var(--ink-mute);
+      transition: transform 0.25s ease, background 0.25s ease;
+    }
+    .pause[aria-checked="true"] .track { background: var(--ember-deep); }
+    .pause[aria-checked="true"] .thumb { transform: translateX(13px); background: var(--night-950); }
+    .pause[aria-checked="true"] { color: var(--ember); }
+
+    /* ── Search ── */
+    .search { margin-top: 12px; display: flex; gap: 6px; }
+    .search input {
+      flex: 1; padding: 8px 10px; border-radius: 8px;
+      border: 1px solid rgba(255,255,255,0.08);
+      background: var(--night-900); color: var(--ink);
+      font: inherit; outline: none;
+    }
+    .search input::placeholder { color: var(--ink-faint); }
+    .search input:focus { border-color: rgba(245,169,71,0.45); }
+    .search button {
+      padding: 8px 12px; border: none; border-radius: 8px; cursor: pointer;
+      background: var(--ember-deep); color: var(--night-950); font-weight: 600;
+    }
+    .search button:disabled { opacity: 0.5; cursor: default; }
+
+    .answer {
+      margin-top: 10px; padding: 10px 11px; border-radius: 8px;
+      background: var(--night-900); border: 1px solid rgba(245,169,71,0.15);
+      color: var(--ink-soft); font-size: 12.5px;
+      max-height: 150px; overflow-y: auto; white-space: pre-wrap;
+      display: none;
+    }
+    .answer.visible { display: block; }
+    .answer.thinking { color: var(--ink-faint); font-style: italic; }
+
+    /* ── Recent ── */
+    .section-label {
+      margin: 14px 0 7px;
+      font: 9px/1 ui-monospace, "Cascadia Mono", monospace;
+      letter-spacing: 0.14em; text-transform: uppercase;
+      color: var(--ink-faint);
+    }
+    .recent { list-style: none; }
+    .recent li {
+      display: flex; align-items: center; gap: 8px;
+      padding: 6px 2px; border-bottom: 1px solid rgba(255,255,255,0.04);
+    }
+    .recent li:last-child { border-bottom: none; }
+    .dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+    .dot.gmail   { background: var(--gmail); }
+    .dot.chrome  { background: var(--chrome); }
+    .dot.youtube { background: var(--youtube); }
+    .recent .title {
+      flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+      color: var(--ink-soft); font-size: 12px;
+    }
+    .recent .empty { color: var(--ink-faint); font-style: italic; font-size: 12px; }
+
+    /* ── Footer ── */
+    footer {
+      margin-top: 12px; padding-top: 10px;
+      border-top: 1px solid rgba(255,255,255,0.06);
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    footer a {
+      color: var(--ember); text-decoration: none; font-size: 12px;
+    }
+    footer a:hover { text-decoration: underline; }
+    .status {
+      font: 9px/1 ui-monospace, "Cascadia Mono", monospace;
+      letter-spacing: 0.1em; color: var(--ink-faint);
+    }
+    .status.offline { color: var(--youtube); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <span class="brand">Echo</span>
+      <button id="pauseToggle" class="pause" role="switch" aria-checked="false" title="Pause or resume all tracking">
+        <span id="pauseLabel">tracking</span>
+        <span class="track"><span class="thumb"></span></span>
+      </button>
+    </header>
+
+    <form id="searchForm" class="search">
+      <input id="searchInput" type="text" placeholder="ask your memory…" autocomplete="off" aria-label="Search Echo" />
+      <button id="searchBtn" type="submit">ask</button>
+    </form>
+    <div id="answer" class="answer" role="status"></div>
+
+    <p class="section-label">recent memories</p>
+    <ul id="recentList" class="recent">
+      <li><span class="empty">loading…</span></li>
+    </ul>
+
+    <footer>
+      <a id="dashboardLink" href="#" target="_blank" rel="noreferrer">open dashboard →</a>
+      <span id="status" class="status">connecting…</span>
+    </footer>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>
