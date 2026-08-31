@@ -26,7 +26,6 @@ Echo finds the interview email, resolves its timestamp as a hard time anchor, re
 | **Conversational Memory** | Multi-turn sessions — *"find Chrome pages about that topic after that email"* resolves references from earlier turns |
 | **Intent Filtering** | Only saves content you genuinely engaged with — a 3-second misclick is discarded, a 2-minute read is kept |
 | **On-Demand Attachments** | Email PDFs/DOCX extracted in full only when a search needs them; binaries never stored |
-| **Digital Wellbeing** | Time patterns, sessions, goal groups, and user-declared regret reflection — no scoring, no judging, no blocking |
 | **Local-First Privacy** | All personal data stays in PostgreSQL on your laptop. The LLM sees only your query and short snippets. |
 
 ---
@@ -50,7 +49,7 @@ Echo finds the interview email, resolves its timestamp as a hard time anchor, re
               → neighborhood context → attachments / live poll → synthesize
                               │
                               ▼
-        React dashboard ("Midnight Study") + Chrome extension popup
+        React dashboard ("Midnight Study")
 ```
 
 ---
@@ -62,14 +61,13 @@ Echo finds the interview email, resolves its timestamp as a hard time anchor, re
 | `ingestion/gmail/` | **GMC** | Gmail OAuth, polling, email + attachment-metadata ingestion, engagement updates |
 | `ingestion/chrome/` | **CHC** | Two-phase intent gate, revisit tracking, page ingestion endpoint |
 | `ingestion/youtube/` | **YTC** | Video detection, watch-time heartbeats, Data API metadata, Shorts classification |
-| `extension/` | — | MV3 extension: per-site trackers, service worker, popup (search · recent · pause toggle) |
+| `extension/` | — | MV3 extension: per-site trackers, service worker |
 | `ste/` | **STE** | PostgreSQL / FAISS / Redis managers, encryption, capture-settings store |
 | `enp/` | **ENP** | Background enrichment: cleaning, 4-stage classifier, embeddings, Tier-2 attachment extraction |
 | `rse/` | **RSE** | LangGraph hybrid retrieval graph, conversation memory, LLM synthesis |
-| `wba/` | **WBA** | Time aggregation, sessions, user groups (hybrid rule+KNN, human-in-the-loop), regret system, weekly insights |
-| `backend/` | **UIL** | FastAPI gateway (`main.py`) — all routers, auth, data export/deletion/settings |
-| `frontend/` | **UIL** | React + TypeScript dashboard: Recall · Timeline · Patterns · Reflections · Settings |
-| `scripts/` | — | DB setup, ENP maintenance (rebuild FAISS, recompute centroids), auth smoke tests |
+| `backend/` | **UIL** | FastAPI gateway (`main.py`) — all routers, data export/deletion/settings |
+| `frontend/` | **UIL** | React + TypeScript dashboard: Recall |
+| `scripts/` | — | DB setup, ENP maintenance (rebuild FAISS, recompute centroids) |
 | `docs/Timeless_docs/` | — | **Architecture & DB design documents — the source of truth** |
 
 ---
@@ -98,9 +96,6 @@ The frontend runs without the backend too — it flips into a clearly-badged **d
 
 - **Exactly 2 LLM calls per query** — intent parsing and answer synthesis. Every retrieval step between them is deterministic, inspectable Python.
 - **Rank fusion, not score fusion** — `ts_rank` and cosine similarity live on incomparable scales; RRF (k=60) merges by rank.
-- **Human-in-the-loop groups** — no item ever enters a user group without an explicit accepted decision; auto-assignments wait in a weekly review queue.
-- **Time is computed, never stored** — wellbeing analytics aggregate on demand from source tables, so there is nothing to drift out of sync.
-- **Regret is user-declared** — Echo never decides what was a waste of time; it only holds up the mirror you asked for.
 - **Everything rebuildable but PostgreSQL** — FAISS and Redis can be regenerated from it at any time.
 
 ---
@@ -121,5 +116,5 @@ The frontend runs without the backend too — it flips into a clearly-badged **d
 
 - All personal data lives on your laptop — never permanently in the cloud
 - Incognito is never tracked; typed text is never captured; app content (Slack, Notion, Jira) is never read
-- The LLM API receives only your query, short result snippets, and aggregated wellbeing numbers — never raw bodies, transcripts, or the database
-- Built-in controls: per-source capture toggles, domain/sender exclusions, soft deletion, full JSON/CSV export, pause-everything switch in the extension popup
+- The LLM API receives only your query and short result snippets — never raw bodies, transcripts, or the database
+- Built-in controls: per-source capture toggles, domain/sender exclusions, soft deletion, full JSON/CSV export
