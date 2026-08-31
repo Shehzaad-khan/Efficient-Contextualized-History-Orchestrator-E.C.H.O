@@ -35,3 +35,4 @@ extension/popup.html
 extension/popup.js
 backend/wellbeing.py
 RESTORE.md
+legacy_gmail_threads.json
