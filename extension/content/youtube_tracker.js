@@ -2,11 +2,18 @@
  * youtube_tracker.js — YTC Module, Chrome Extension Content Script
  * Echo Personal Memory System
  *
- * Injected into youtube.com/watch* and youtube.com/shorts/* pages.
+ * Injected into every youtube.com page (see manifest content_scripts).
+ *
+ * Why the whole domain and not just /watch and /shorts:
+ *   YouTube is a single-page app. Opening youtube.com and clicking a video is a
+ *   history.pushState — no new document, so a content script matched only on
+ *   "youtube.com/watch*" is NEVER injected on that navigation. Matching the
+ *   whole domain and activating per-URL is the only way to see videos the user
+ *   reaches by clicking rather than by pasting a URL.
  *
  * Responsibilities:
- *   - Detect video element and attach playback event listeners
- *   - Track foreground watch time (4-condition timer per architecture)
+ *   - Activate on /watch and /shorts URLs, deactivate on every other page
+ *   - Track foreground watch time (4-condition timer per architecture §7.6)
  *   - Detect manual interactions (pause, seek, speed change)
  *   - Send events to background.js for routing to backend
  *
@@ -14,10 +21,15 @@
  *   1. Video is playing (not paused, not ended)
  *   2. Tab is in foreground (document.visibilityState === 'visible')
  *   3. Browser window has focus
- *   4. User not idle > 30 seconds (no mouse/keyboard activity)
+ *   4. User not idle > 30 seconds
+ *      Playback progress counts as activity while conditions 2 and 3 hold —
+ *      architecture §7.3's own worked example ("watch OS tutorial 5 minutes →
+ *      PASS (300s)") is unreachable if someone sitting still watching a video
+ *      is called idle after 30 seconds. Walking away still stops the clock,
+ *      via conditions 2 and 3.
  *
  * Intent gate (ANY ONE must pass — enforced on backend too as safety net):
- *   Option A: watch_time_seconds >= 60 (regular) or >= 15 (Shorts)
+ *   Option A: watch_time_seconds >= 20 (architecture §7.3) or >= 15 (Shorts)
  *   Option B: completion_rate >= 0.5 (watch_time / duration)
  *   Option C: revisit (checked by backend via Redis)
  *   Extra:    manual interaction detected (pause/seek/speed)
@@ -25,6 +37,12 @@
 
 (function () {
   "use strict";
+
+  // Flip to true to trace injection / activation / watch-time in the page
+  // console — the only way to see inside a content script's isolated world.
+  const DEBUG = false;
+  const log = (...args) => { if (DEBUG) console.info("[Echo YTC]", ...args); };
+  log("injected", location.pathname);
 
   // ---------------------------------------------------------------------------
   // State
@@ -34,12 +52,11 @@
     isShort: false,
     watchTimeSeconds: 0,
     isPlaying: false,
-    isTabForeground: true,
-    isWindowFocused: true,
+    isTabForeground: document.visibilityState === "visible",
+    isWindowFocused: document.hasFocus(),
     lastActivityTime: Date.now(),
     intentFired: false,          // true once we've sent video-detected to backend
     heartbeatInterval: null,
-    idleCheckInterval: null,
     manualInteractionDetected: false,
     interactionType: null,
     durationSeconds: 0,          // total video length, from the <video> element
@@ -47,9 +64,32 @@
 
   const IDLE_THRESHOLD_MS = 30000;          // 30 seconds
   const HEARTBEAT_INTERVAL_MS = 5000;       // send heartbeat every 5 seconds
+  const TICK_INTERVAL_MS = 1000;            // watch-time + SPA URL check
+  const VIDEO_LOOKUP_RETRY_MS = 500;        // YouTube mounts <video> async
+  const VIDEO_LOOKUP_MAX_TRIES = 40;        // give up after ~20s on a non-player page
   const INTENT_WATCH_SHORT = 15;            // Option A — Shorts threshold (seconds)
-  const INTENT_WATCH_REGULAR = 60;          // Option A — regular video threshold (seconds)
+  const INTENT_WATCH_REGULAR = 20;          // Option A — architecture §7.3
   const INTENT_COMPLETION_THRESHOLD = 0.5;  // Option B — completion ratio
+
+  let currentUrl = window.location.href;
+  let trackedVideo = null;      // the <video> element we attached listeners to
+  let lookupTries = 0;
+  let lookupTimer = null;
+
+
+  // ---------------------------------------------------------------------------
+  // Messaging — never throws, extension context can disappear on reload
+  // ---------------------------------------------------------------------------
+  function send(type, payload) {
+    try {
+      if (!chrome.runtime?.id) return;
+      chrome.runtime.sendMessage({ type, payload }, () => {
+        void chrome.runtime.lastError;   // nothing to do; keeps the console clean
+      });
+    } catch (error) {
+      // Extension reloaded/uninstalled mid-session — stop trying.
+    }
+  }
 
 
   // ---------------------------------------------------------------------------
@@ -90,40 +130,40 @@
     );
   }
 
-  function startWatchTimer() {
-    // Tick every 1 second — increment only when all 4 conditions hold
-    if (state._watchTimerHandle) return; // already running
+  function evaluateIntent() {
+    if (state.intentFired) return;
 
-    state._watchTimerHandle = setInterval(() => {
-      if (isCountingActive()) {
-        state.watchTimeSeconds += 1;
+    // Option A — watch time (Shorts have a lower bar than regular videos)
+    const watchThreshold = state.isShort ? INTENT_WATCH_SHORT : INTENT_WATCH_REGULAR;
+    if (state.watchTimeSeconds >= watchThreshold) {
+      fireVideoDetected("watch_time");
+      return;
+    }
 
-        if (state.intentFired) return;
-
-        // Option A — watch time (Shorts have a lower bar than regular videos)
-        const watchThreshold = state.isShort ? INTENT_WATCH_SHORT : INTENT_WATCH_REGULAR;
-        if (state.watchTimeSeconds >= watchThreshold) {
-          fireVideoDetected("watch_time");
-          return;
-        }
-
-        // Option B — completion rate (watched at least half the video)
-        if (state.durationSeconds > 0) {
-          const completionRate = state.watchTimeSeconds / state.durationSeconds;
-          if (completionRate >= INTENT_COMPLETION_THRESHOLD) {
-            fireVideoDetected("completion_rate");
-          }
-        }
+    // Option B — completion rate (watched at least half the video)
+    if (state.durationSeconds > 0) {
+      const completionRate = state.watchTimeSeconds / state.durationSeconds;
+      if (completionRate >= INTENT_COMPLETION_THRESHOLD) {
+        fireVideoDetected("completion_rate");
       }
-    }, 1000);
-  }
-
-  function stopWatchTimer() {
-    if (state._watchTimerHandle) {
-      clearInterval(state._watchTimerHandle);
-      state._watchTimerHandle = null;
     }
   }
+
+  // One always-on tick: detects SPA navigation and accumulates watch time.
+  setInterval(() => {
+    if (window.location.href !== currentUrl) {
+      handleUrlChange();
+      return;
+    }
+
+    if (!state.videoId) return;
+
+    if (isCountingActive()) {
+      state.watchTimeSeconds += 1;
+      if (state.watchTimeSeconds % 5 === 0) log("watch", state.watchTimeSeconds);
+      evaluateIntent();
+    }
+  }, TICK_INTERVAL_MS);
 
 
   // ---------------------------------------------------------------------------
@@ -136,13 +176,10 @@
     state.heartbeatInterval = setInterval(() => {
       if (!state.videoId || !state.intentFired) return;
 
-      chrome.runtime.sendMessage({
-        type: "YTC_HEARTBEAT",
-        payload: {
-          video_id: state.videoId,
-          watch_time_seconds: state.watchTimeSeconds,
-          timestamp: new Date().toISOString(),
-        },
+      send("YTC_HEARTBEAT", {
+        video_id: state.videoId,
+        watch_time_seconds: state.watchTimeSeconds,
+        timestamp: new Date().toISOString(),
       });
     }, HEARTBEAT_INTERVAL_MS);
   }
@@ -163,19 +200,17 @@
     if (!state.videoId) return;
 
     state.intentFired = true;
+    log("intent fired", triggeredBy, state.watchTimeSeconds);
 
-    chrome.runtime.sendMessage({
-      type: "YTC_VIDEO_DETECTED",
-      payload: {
-        url: window.location.href,
-        video_id: state.videoId,
-        is_short: state.isShort,
-        watch_time_seconds: state.watchTimeSeconds,
-        triggered_by: triggeredBy,
-        interaction_type: interactionType,
-        duration_seconds: state.durationSeconds || null,
-        timestamp: new Date().toISOString(),
-      },
+    send("YTC_VIDEO_DETECTED", {
+      url: window.location.href,
+      video_id: state.videoId,
+      is_short: state.isShort,
+      watch_time_seconds: state.watchTimeSeconds,
+      triggered_by: triggeredBy,
+      interaction_type: interactionType,
+      duration_seconds: state.durationSeconds || null,
+      timestamp: new Date().toISOString(),
     });
 
     // Start heartbeat now that video is being tracked
@@ -187,13 +222,10 @@
 
     stopHeartbeat();
 
-    chrome.runtime.sendMessage({
-      type: "YTC_VIDEO_CLOSED",
-      payload: {
-        video_id: state.videoId,
-        final_watch_time_seconds: state.watchTimeSeconds,
-        timestamp: new Date().toISOString(),
-      },
+    send("YTC_VIDEO_CLOSED", {
+      video_id: state.videoId,
+      final_watch_time_seconds: state.watchTimeSeconds,
+      timestamp: new Date().toISOString(),
     });
   }
 
@@ -201,33 +233,42 @@
   // ---------------------------------------------------------------------------
   // Video element event listeners
   // ---------------------------------------------------------------------------
-  function attachVideoListeners(video) {
-    // Capture total duration — needed for Option B (completion rate).
-    // YouTube populates this once metadata loads, so read it now and on update.
-    if (video.duration && isFinite(video.duration)) {
+  function readDuration(video) {
+    // readyState < HAVE_METADATA means duration still belongs to the previous
+    // video on an SPA navigation — using it would let Option B fire against
+    // the wrong length.
+    if (video.readyState >= 1 && video.duration && isFinite(video.duration)) {
       state.durationSeconds = Math.round(video.duration);
     }
-    video.addEventListener("loadedmetadata", () => {
-      if (video.duration && isFinite(video.duration)) {
-        state.durationSeconds = Math.round(video.duration);
-      }
-    });
-    video.addEventListener("durationchange", () => {
-      if (video.duration && isFinite(video.duration)) {
-        state.durationSeconds = Math.round(video.duration);
-      }
-    });
+  }
+
+  function attachVideoListeners(video) {
+    // YouTube reuses one <video> element across SPA navigations, so listeners
+    // must be attached exactly once — otherwise every navigation stacks another
+    // copy of every handler on the same element.
+    if (trackedVideo === video) {
+      readDuration(video);
+      return;
+    }
+    trackedVideo = video;
+
+    readDuration(video);
+    video.addEventListener("loadedmetadata", () => readDuration(video));
+    video.addEventListener("durationchange", () => readDuration(video));
 
     video.addEventListener("play", () => {
       state.isPlaying = true;
-      startWatchTimer();
+    });
+
+    video.addEventListener("playing", () => {
+      state.isPlaying = true;
     });
 
     video.addEventListener("pause", () => {
       state.isPlaying = false;
 
       // Option B — manual pause (not autoplay end)
-      if (!video.ended && !state.intentFired) {
+      if (!video.ended && !state.intentFired && state.videoId) {
         state.manualInteractionDetected = true;
         state.interactionType = "pause";
         fireVideoDetected("manual_interaction", "pause");
@@ -236,20 +277,26 @@
 
     video.addEventListener("ended", () => {
       state.isPlaying = false;
-      stopWatchTimer();
     });
 
     video.addEventListener("seeked", () => {
       // Option B — user seeked to a timestamp
-      if (!state.intentFired) {
+      if (!state.intentFired && state.videoId) {
         fireVideoDetected("manual_interaction", "seek");
       }
     });
 
     video.addEventListener("ratechange", () => {
       // Option B — user changed playback speed
-      if (!state.intentFired && video.playbackRate !== 1) {
+      if (!state.intentFired && state.videoId && video.playbackRate !== 1) {
         fireVideoDetected("manual_interaction", "speed_change");
+      }
+    });
+
+    // Condition 4 — playback progress is engagement (see the header note).
+    video.addEventListener("timeupdate", () => {
+      if (state.isTabForeground && state.isWindowFocused && !video.paused) {
+        state.lastActivityTime = Date.now();
       }
     });
   }
@@ -281,33 +328,44 @@
 
   // ---------------------------------------------------------------------------
   // Page unload — fire video-closed to finalize watch time
+  // beforeunload does not fire reliably on mobile-style unloads or bfcache
+  // eviction, so pagehide backs it up. fireVideoClosed is idempotent-safe:
+  // deactivate() clears videoId, so a second call is a no-op.
   // ---------------------------------------------------------------------------
-  window.addEventListener("beforeunload", () => {
+  window.addEventListener("beforeunload", fireVideoClosed);
+  window.addEventListener("pagehide", fireVideoClosed);
+
+
+  // ---------------------------------------------------------------------------
+  // SPA navigation
+  //   yt-navigate-finish is YouTube's own navigation event; the 1s URL check in
+  //   the tick above is the fallback for when YouTube renames or drops it.
+  //   (history.pushState cannot be patched from a content script — the page's
+  //   JS runs in a different world.)
+  // ---------------------------------------------------------------------------
+  function handleUrlChange() {
+    const nextUrl = window.location.href;
+    if (nextUrl === currentUrl) return;
+    currentUrl = nextUrl;
+    deactivate();
+    activate();
+  }
+
+  document.addEventListener("yt-navigate-finish", handleUrlChange);
+  window.addEventListener("popstate", handleUrlChange);
+
+
+  // ---------------------------------------------------------------------------
+  // Activate / deactivate for the current URL
+  // ---------------------------------------------------------------------------
+  function deactivate() {
     fireVideoClosed();
-  });
-
-  // YouTube is a SPA — URL changes without full page reload
-  // Use a MutationObserver on the title to detect navigation
-  let lastUrl = window.location.href;
-
-  new MutationObserver(() => {
-    const currentUrl = window.location.href;
-    if (currentUrl !== lastUrl) {
-      // User navigated to a new video — finalize previous
-      fireVideoClosed();
-      lastUrl = currentUrl;
-      resetState();
-      init();
-    }
-  }).observe(document.querySelector("title"), { childList: true });
-
-
-  // ---------------------------------------------------------------------------
-  // State reset between video navigations
-  // ---------------------------------------------------------------------------
-  function resetState() {
-    stopWatchTimer();
     stopHeartbeat();
+
+    if (lookupTimer) {
+      clearTimeout(lookupTimer);
+      lookupTimer = null;
+    }
 
     state.videoId = null;
     state.isShort = false;
@@ -320,27 +378,32 @@
     state.lastActivityTime = Date.now();
   }
 
+  function activate() {
+    const videoId = extractVideoId(window.location.href);
+    if (!videoId) return; // home, search, channel page — nothing to track
 
-  // ---------------------------------------------------------------------------
-  // Init — called on page load and on SPA navigation
-  // ---------------------------------------------------------------------------
-  function init() {
-    const url = window.location.href;
-    const videoId = extractVideoId(url);
-
-    if (!videoId) return; // not a video page
-
+    log("activate", videoId, { vis: document.visibilityState, focus: document.hasFocus() });
     state.videoId = videoId;
-    state.isShort = isShortUrl(url);
+    state.isShort = isShortUrl(window.location.href);
+    state.isTabForeground = document.visibilityState === "visible";
+    state.isWindowFocused = document.hasFocus();
+    state.lastActivityTime = Date.now();
+    lookupTries = 0;
 
-    // Wait for video element to appear in DOM (YouTube loads it dynamically)
+    // Wait for the video element to appear in DOM (YouTube loads it async)
     const attachWhenReady = () => {
+      lookupTimer = null;
       const video = document.querySelector("video");
       if (video) {
         attachVideoListeners(video);
-      } else {
-        // Retry after short delay — YouTube DOM loads async
-        setTimeout(attachWhenReady, 500);
+        // The element is usually already playing by the time we get here —
+        // on SPA navigation the "play" event fired before this ran, and on a
+        // cold load it fires during document_idle. Seed from the element.
+        state.isPlaying = !video.paused && !video.ended;
+        return;
+      }
+      if (++lookupTries < VIDEO_LOOKUP_MAX_TRIES) {
+        lookupTimer = setTimeout(attachWhenReady, VIDEO_LOOKUP_RETRY_MS);
       }
     };
 
@@ -350,5 +413,5 @@
   // ---------------------------------------------------------------------------
   // Start
   // ---------------------------------------------------------------------------
-  init();
+  activate();
 })();

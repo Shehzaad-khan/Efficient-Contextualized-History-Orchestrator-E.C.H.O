@@ -33,6 +33,9 @@ DEFAULT_BATCH_SIZE = 10
 DEFAULT_POLL_INTERVAL = 10
 FAILED_CLASSIFIED_BY = "failed"
 RETRY_FAILED_ENV = "ENP_RETRY_FAILED"
+# How long a source-metadata backfill is given before an empty item is treated
+# as permanently empty rather than not-yet-arrived (see _awaiting_hydration).
+HYDRATION_GRACE_SECONDS = 600
 
 SYSTEM_GROUP_IDS = {
     "work": 1,
@@ -72,7 +75,13 @@ def fetch_unprocessed_items(
     with conn.cursor() as cursor:
         cursor.execute(
             f"""
-            SELECT memory_id, source_type, source_id, title, raw_text, created_at
+            SELECT memory_id,
+                   source_type,
+                   source_id,
+                   title,
+                   raw_text,
+                   created_at,
+                   EXTRACT(EPOCH FROM (LOCALTIMESTAMP - first_ingested_at)) AS age_seconds
             FROM memory_items
             WHERE preprocessed = FALSE
               AND is_deleted = FALSE
@@ -92,9 +101,29 @@ def fetch_unprocessed_items(
             "title": row[3] or "",
             "raw_text": row[4] or "",
             "created_at": row[5],
+            "age_seconds": float(row[6]) if row[6] is not None else None,
         }
         for row in rows
     ]
+
+
+def _awaiting_hydration(item: dict[str, Any]) -> bool:
+    """
+    True while a YouTube row is still waiting for its Data API backfill.
+
+    /ytc/video-detected inserts the memory row immediately with empty title and
+    raw_text; youtube_api_client fills them in a background task. An item picked
+    up inside that window has nothing to embed, and mark_item_failed is terminal
+    — fetch_unprocessed_items filters classified_by='failed' out of every later
+    batch — so a 10-second poll would permanently orphan videos that were only
+    a second away from being ready. Defer instead; leave the row pending.
+    """
+    if (item.get("source_type") or "").lower() != "youtube":
+        return False
+    if (item.get("title") or "").strip() or (item.get("raw_text") or "").strip():
+        return False
+    age_seconds = item.get("age_seconds")
+    return age_seconds is None or age_seconds < HYDRATION_GRACE_SECONDS
 
 
 def _fetch_thread_history(conn, item: dict[str, Any]) -> list[str]:
@@ -276,12 +305,17 @@ def prepare_item_for_embedding(conn, base_item: dict[str, Any]) -> dict[str, Any
     if not embeddable_text.strip():
         # Title/domain-only rows (e.g. Chrome telemetry without HTML) still index for retrieval.
         embeddable_text = " ".join(
-            part.strip()
+            str(part).strip()
             for part in (
                 item.get("title", ""),
                 item.get("domain", ""),
                 item.get("subject", ""),
                 item.get("channel_name", ""),
+                # Identity of last resort: a video whose metadata never arrived
+                # is still worth indexing — failing it is terminal, and the row
+                # would then be invisible to retrieval and the timeline forever.
+                item.get("video_id", ""),
+                item.get("url", ""),
             )
             if part and str(part).strip()
         )
@@ -381,6 +415,12 @@ def process_batch(manager: FAISSManager, batch_size: int) -> tuple[int, int]:
         prepared_items: list[dict[str, Any]] = []
         failures = 0
         for base_item in base_items:
+            if _awaiting_hydration(base_item):
+                logger.info(
+                    "Deferring memory_id=%s — YouTube metadata not backfilled yet",
+                    base_item["memory_id"],
+                )
+                continue
             try:
                 prepared_items.append(prepare_item_for_embedding(conn, base_item))
             except Exception as exc:

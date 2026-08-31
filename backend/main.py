@@ -13,6 +13,7 @@ Background workers:
 """
 
 import asyncio
+# import importlib.util  # only needed by the wellbeing mount below
 import logging
 import os
 import sys
@@ -34,8 +35,6 @@ from ingestion.chrome.chrome_connector import router as chc_router
 from ingestion.gmail.router import poll_forever as gmail_poll_forever
 from ingestion.gmail.router import router as gmail_router
 from backend.retrieval import router as retrieval_router
-from backend.wellbeing import router as wellbeing_router
-from backend.auth_routes import router as auth_router
 from backend.items import router as items_router
 
 load_dotenv()
@@ -111,12 +110,15 @@ app.add_middleware(
 )
 
 # Mount routers
-app.include_router(auth_router)
 app.include_router(ytc_router)
 app.include_router(chc_router)
 app.include_router(gmail_router)
 app.include_router(retrieval_router)
-app.include_router(wellbeing_router)
+# Wellbeing router is not mounted in this build. See RESTORE.md to re-enable.
+# if os.getenv("ECHO_WBA_ENABLED", "0") == "1" and importlib.util.find_spec("wba") is not None:
+#     from backend.wellbeing import router as wellbeing_router
+#
+#     app.include_router(wellbeing_router)
 app.include_router(items_router)
 
 

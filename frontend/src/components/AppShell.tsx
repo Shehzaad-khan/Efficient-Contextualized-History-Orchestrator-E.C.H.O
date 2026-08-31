@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
-import { Clock3, MessageCircle, Moon, Settings2, Waves } from 'lucide-react'
+// Clock3, Moon, Settings2, Waves are unused while the nav is Recall-only.
+import { MessageCircle } from 'lucide-react'
 import Lenis from 'lenis'
 import gsap from 'gsap'
 import { ScrollTrigger } from 'gsap/ScrollTrigger'
@@ -15,10 +16,11 @@ const EASE_OUT = [0.22, 1, 0.36, 1] as const
 
 const NAV = [
   { to: '/', label: 'Recall', icon: MessageCircle, hint: 'Ask your memory' },
-  { to: '/timeline', label: 'Timeline', icon: Clock3, hint: 'What Echo kept' },
-  { to: '/patterns', label: 'Patterns', icon: Waves, hint: 'Where time went' },
-  { to: '/reflections', label: 'Reflections', icon: Moon, hint: 'Your own regret marks' },
-  { to: '/settings', label: 'Settings', icon: Settings2, hint: 'Privacy & connectors' },
+  // Scoped to Recall for this milestone — restore together with App.tsx routes.
+  // { to: '/timeline', label: 'Timeline', icon: Clock3, hint: 'What Echo kept' },
+  // { to: '/patterns', label: 'Patterns', icon: Waves, hint: 'Where time went' },
+  // { to: '/reflections', label: 'Reflections', icon: Moon, hint: 'Your own regret marks' },
+  // { to: '/settings', label: 'Settings', icon: Settings2, hint: 'Privacy & connectors' },
 ]
 
 function DemoBadge() {

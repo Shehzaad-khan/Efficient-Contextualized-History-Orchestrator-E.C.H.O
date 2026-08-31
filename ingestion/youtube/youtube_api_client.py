@@ -2,6 +2,7 @@
 youtube_api_client.py - YTC Module
 """
 
+import asyncio
 import logging
 import json
 import re
@@ -34,7 +35,16 @@ def is_valid_video_id(video_id: str) -> bool:
     return bool(YOUTUBE_VIDEO_ID_RE.fullmatch(video_id or ""))
 
 
-def get_youtube_client():
+def get_youtube_client(*, interactive: bool = False):
+    """
+    Build an authorized YouTube Data API client from the stored token.
+
+    interactive=False (the default, and what the backend uses): never opens a
+    browser consent flow. run_local_server() blocks the calling thread waiting
+    for a redirect that will never arrive on a headless backend, which would
+    hang video-metadata fetches forever. Missing or unrefreshable credentials
+    raise instead — re-run scripts/test_youtube_auth.py to mint a new token.
+    """
     creds = None
     token_json = migrate_plaintext_file(LEGACY_TOKEN_PATH, TOKEN_PATH)
     if token_json:
@@ -51,6 +61,11 @@ def get_youtube_client():
     if not creds or not creds.valid:
         if not CREDENTIALS_PATH.exists():
             raise FileNotFoundError(f"credentials.json not found at {CREDENTIALS_PATH}")
+        if not interactive:
+            raise RuntimeError(
+                "No valid YouTube credentials — run scripts/test_youtube_auth.py "
+                "to re-authorize (the backend never opens a consent flow itself)."
+            )
         from google_auth_oauthlib.flow import InstalledAppFlow
 
         flow = InstalledAppFlow.from_client_secrets_file(str(CREDENTIALS_PATH), SCOPES)
@@ -106,14 +121,21 @@ async def fetch_video_transcript(video_id: str) -> str:
     return ""
 
 
+def _list_video_sync(video_id: str) -> dict:
+    """Blocking YouTube Data API call — always run via asyncio.to_thread."""
+    youtube = get_youtube_client()
+    return youtube.videos().list(part="snippet,contentDetails", id=video_id).execute()
+
+
 async def fetch_video_metadata(video_id: str) -> Optional[dict]:
     if not is_valid_video_id(video_id):
         logger.warning("Skipping metadata fetch for invalid YouTube video_id")
         return None
 
     try:
-        youtube = get_youtube_client()
-        response = youtube.videos().list(part="snippet,contentDetails", id=video_id).execute()
+        # googleapiclient is synchronous: build() plus execute() would block the
+        # FastAPI event loop for the whole round trip if awaited inline.
+        response = await asyncio.to_thread(_list_video_sync, video_id)
         items = response.get("items", [])
         if not items:
             logger.warning("No metadata found for video_id=%s", video_id)
@@ -139,6 +161,11 @@ async def fetch_video_metadata(video_id: str) -> Optional[dict]:
 
     except FileNotFoundError as exc:
         logger.error("YouTube auth setup incomplete: %s", exc)
+        return None
+    except RuntimeError as exc:
+        # Actionable message from get_youtube_client — don't let the catch-all
+        # below reduce it to a bare exception type name.
+        logger.error("YouTube auth unavailable: %s", exc)
         return None
     except HttpError as exc:
         if exc.resp.status == 403:

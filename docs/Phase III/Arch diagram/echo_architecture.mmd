@@ -1,0 +1,58 @@
+%%{init: {"flowchart": {"curve": "basis", "nodeSpacing": 60, "rankSpacing": 85, "subGraphTitleMargin": {"top": 10, "bottom": 26}}}}%%
+flowchart LR
+
+  subgraph L1["1 · DATA SOURCES"]
+    direction TB
+    GMAIL["Gmail"]
+    CHROME["Chrome"]
+    YOUTUBE["YouTube"]
+  end
+
+  subgraph L2["2 · CAPTURE — intent-gated"]
+    direction TB
+    GMC["GMC · Gmail API<br/>OAuth 2.0 polling"]
+    CHC["CHC · Chrome Extension MV3<br/>two-phase intent gate"]
+    YTC["YTC · YouTube Data API v3<br/>metadata + transcript"]
+  end
+
+  API["3 · FastAPI GATEWAY<br/>auth · ingest · retrieval<br/>wellbeing · items"]
+
+  STE["4 · STE — Storage Engine<br/>store_memory_item<br/>atomic · dedup"]
+
+  subgraph L4["5 · PERSISTENCE"]
+    direction TB
+    PG[("PostgreSQL<br/>16 tables · source of truth")]
+    FAISS[("FAISS<br/>384-d · IndexFlatL2")]
+    REDIS[("Redis<br/>revisit · cache · settings")]
+  end
+
+  subgraph L5["6 · PROCESSING &amp; QUERY"]
+    direction TB
+    ENP["ENP — Enrichment<br/>background worker<br/>clean → embed → classify<br/>writes back to PostgreSQL + FAISS"]
+    WBA["WBA — Wellbeing<br/>time · sessions · groups<br/>regret · insights"]
+    RSE["RSE — Retrieval &amp; Synthesis<br/>LangGraph · exactly 2 LLM calls<br/>parse → search → RRF → quality gate<br/>→ cross-encoder rerank → synthesize"]
+  end
+
+  subgraph L6["7 · UIL — INTERFACE"]
+    direction TB
+    REACT["React Dashboard<br/>Recall · Timeline · Patterns<br/>Reflections · Settings"]
+    POPUP["Extension Popup<br/>quick search · recent"]
+  end
+
+  GMAIL --> GMC
+  CHROME --> CHC
+  YOUTUBE --> YTC
+  GMC --> API
+  CHC --> API
+  YTC --> API
+  API --> STE
+  STE --> PG
+  STE --> REDIS
+  PG --> ENP
+  PG --> WBA
+  PG --> RSE
+  FAISS --> RSE
+  REDIS --> RSE
+  WBA --> REACT
+  RSE --> REACT
+  RSE --> POPUP

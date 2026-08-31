@@ -62,13 +62,8 @@ def main() -> None:
     if args.dry_run:
         return
 
-    import faiss
-
     manager = FAISSManager()
-    manager.index = faiss.IndexFlatL2(manager.dimension)
-    manager.memory_ids = []
-    manager.memory_id_to_offset = {}
-    manager.vectors = manager.vectors[:0]
+    manager.reset()
 
     memory_ids = [str(row[0]) for row in rows]
     texts = [row[1] for row in rows]

@@ -53,8 +53,12 @@ class VideoClosedEvent(BaseModel):
     timestamp: datetime
 
 
+# Architecture §7.3 Option A. These MUST match the extension's thresholds in
+# extension/content/youtube_tracker.js: the extension sends /ytc/video-detected
+# exactly once (intentFired latches), so a stricter server gate silently
+# discards the video with no retry ever happening.
 SHORT_MIN_WATCH_SECONDS = 15
-REGULAR_MIN_WATCH_SECONDS = 60
+REGULAR_MIN_WATCH_SECONDS = 20
 COMPLETION_RATE_THRESHOLD = 0.5
 
 

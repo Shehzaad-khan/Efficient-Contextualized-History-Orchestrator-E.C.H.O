@@ -1,4 +1,8 @@
-if (!chrome.extension.inIncognitoContext) {
+// chrome.extension is a legacy namespace and is not guaranteed to exist in an
+// MV3 content script; optional chaining keeps a missing namespace from
+// throwing and killing the whole tracker. background.js re-checks
+// sender.tab.incognito, which is the authoritative gate.
+if (chrome.extension?.inIncognitoContext !== true) {
   let maxScrollDepth = 0;
   let interactionCount = 0;
   let intervalId = null;
@@ -64,11 +68,37 @@ if (!chrome.extension.inIncognitoContext) {
     );
   }
 
+  // Non-data-entry controls. Counting these towards the "looks like a form"
+  // heuristic below made ordinary article pages register as private form
+  // surfaces — a Wikipedia article has 8 UI checkboxes, 2 search boxes and 2
+  // hidden inputs and nothing a user types personal data into, which was
+  // enough to suppress content extraction on most of the web.
+  const NON_ENTRY_INPUT_TYPES = new Set([
+    "button",
+    "checkbox",
+    "hidden",
+    "image",
+    "radio",
+    "range",
+    "reset",
+    "search",
+    "submit"
+  ]);
+
+  function isDataEntryField(element) {
+    if (element.tagName !== "INPUT") {
+      return true;
+    }
+    return !NON_ENTRY_INPUT_TYPES.has((element.getAttribute("type") || "text").toLowerCase());
+  }
+
   function hasPrivateFormSurface() {
     if (document.querySelector("input[type='password'], input[type='email'], input[type='tel'], input[type='number']")) {
       return true;
     }
-    const editableCount = document.querySelectorAll("input, textarea, select, [contenteditable=''], [contenteditable='true']").length;
+    const editableCount = [
+      ...document.querySelectorAll("input, textarea, select, [contenteditable=''], [contenteditable='true']")
+    ].filter(isDataEntryField).length;
     return editableCount >= 5;
   }
 

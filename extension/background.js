@@ -76,6 +76,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return;
   }
 
+  // Incognito is never captured (architecture §13). This is the authoritative
+  // check — the content-script guard is only a first line of defence.
+  if (sender.tab && sender.tab.incognito) {
+    return;
+  }
+
   if (!type || !payload) {
     return;
   }
@@ -344,6 +350,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const tabId = sender.tab && sender.tab.id;
   if (!tabId) {
     sendResponse?.({ ok: false, error: "missing_tab_id" });
+    return false;
+  }
+
+  if (sender.tab.incognito) {
+    sendResponse?.({ ok: false, error: "incognito" });
     return false;
   }
 

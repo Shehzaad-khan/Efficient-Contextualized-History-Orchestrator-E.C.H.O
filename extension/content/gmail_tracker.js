@@ -39,7 +39,11 @@
  *   emails or leaves the tab), never on a repeating heartbeat.
  */
 
-if (!chrome.extension.inIncognitoContext) {
+// chrome.extension is a legacy namespace and is not guaranteed to exist in an
+// MV3 content script; optional chaining keeps a missing namespace from
+// throwing and killing the whole tracker. background.js re-checks
+// sender.tab.incognito, which is the authoritative gate.
+if (chrome.extension?.inIncognitoContext !== true) {
   "use strict";
 
   const IDLE_THRESHOLD_MS = 30000;   // user considered idle after 30s of no input
