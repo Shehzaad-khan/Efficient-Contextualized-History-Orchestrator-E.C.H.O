@@ -13,7 +13,7 @@ Background workers:
 """
 
 import asyncio
-# import importlib.util  # only needed by the wellbeing mount below
+import importlib.util
 import logging
 import os
 import sys
@@ -38,6 +38,15 @@ from backend.retrieval import router as retrieval_router
 from backend.items import router as items_router
 
 load_dotenv()
+
+# Ingested email/page text is arbitrary Unicode (currency signs, CJK, emoji).
+# On Windows stdout defaults to cp1252, so printing such text raises
+# UnicodeEncodeError mid-ingestion and aborts the whole batch. Force UTF-8 and
+# replace anything unmappable so logging can never take the pipeline down.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -114,11 +123,15 @@ app.include_router(ytc_router)
 app.include_router(chc_router)
 app.include_router(gmail_router)
 app.include_router(retrieval_router)
-# Wellbeing router is not mounted in this build. See RESTORE.md to re-enable.
-# if os.getenv("ECHO_WBA_ENABLED", "0") == "1" and importlib.util.find_spec("wba") is not None:
-#     from backend.wellbeing import router as wellbeing_router
-#
-#     app.include_router(wellbeing_router)
+# Wellbeing (WBA) is an optional feature module. It mounts only when the wba
+# package is present AND ECHO_WBA_ENABLED=1, so the app boots and serves every
+# other route when wba/ is absent. Re-enable with ECHO_WBA_ENABLED=1.
+if os.getenv("ECHO_WBA_ENABLED", "0") == "1" and importlib.util.find_spec("wba") is not None:
+    from backend.wellbeing import router as wellbeing_router
+
+    app.include_router(wellbeing_router)
+else:
+    logger.info("Wellbeing module disabled (set ECHO_WBA_ENABLED=1 to enable)")
 app.include_router(items_router)
 
 

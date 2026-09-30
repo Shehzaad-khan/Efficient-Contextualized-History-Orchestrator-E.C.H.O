@@ -29,10 +29,8 @@ AGENTS.md
 graphify-out/
 
 
-# Wellbeing module + extension popup -- staged for a later review
-wba/
+# Extension popup -- staged for a later review (WBA restored for Phase 3 Review 2)
 extension/popup.html
 extension/popup.js
-backend/wellbeing.py
 RESTORE.md
 legacy_gmail_threads.json
