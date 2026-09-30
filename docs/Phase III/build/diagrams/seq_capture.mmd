@@ -1,0 +1,24 @@
+sequenceDiagram
+    autonumber
+    actor U as User
+    participant C as Connectors<br/>(Chrome ext · Gmail · YouTube)
+    participant G as FastAPI Gateway<br/>+ Storage Engine
+    participant P as PostgreSQL
+    participant E as ENP Worker<br/>(background thread)
+    participant F as FAISS Index
+
+    rect rgb(234, 240, 255)
+    Note over U,P: Capture — only engaged activity passes the intent gate
+    U->>C: Reads page / watches video / receives email
+    C->>C: Intent gate (dwell, scroll, playback, revisit)
+    C->>G: Send captured item
+    G->>P: store_memory_item() — one atomic transaction,<br/>UNIQUE(source_type, source_id) dedup
+    end
+
+    rect rgb(240, 248, 240)
+    Note over P,F: Enrichment — background worker, never blocks capture
+    E->>P: Poll items where preprocessed = FALSE
+    E->>E: Clean text → embed (MiniLM, 384-d) → classify group
+    E->>F: Append vector
+    E->>P: Mark processed (failed → retry on demand)
+    end

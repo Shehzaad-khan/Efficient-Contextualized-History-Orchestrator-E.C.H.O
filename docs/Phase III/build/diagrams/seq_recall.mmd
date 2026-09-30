@@ -1,0 +1,25 @@
+sequenceDiagram
+    autonumber
+    actor U as User
+    participant G as FastAPI Gateway
+    participant R as RSE (LangGraph)
+    participant P as PostgreSQL
+    participant F as FAISS Index
+    participant L as LLM (OpenAI gpt-4.1-mini)
+
+    rect rgb(255, 246, 234)
+    Note over U,L: Recall — exactly 2 LLM calls per query
+    U->>G: Natural-language question
+    G->>R: Invoke graph
+    R->>L: LLM call 1 · parse_intent
+    L-->>R: Sources, time filter, clean query
+    par Hybrid search
+        R->>P: Keyword search (full-text)
+    and
+        R->>F: Semantic search
+    end
+    R->>R: RRF merge → quality gate (widen ≤ 3×) → cross-encoder rerank
+    R->>L: LLM call 2 · synthesize (snippets only)
+    L-->>R: Answer with citations
+    R-->>U: Answer
+    end

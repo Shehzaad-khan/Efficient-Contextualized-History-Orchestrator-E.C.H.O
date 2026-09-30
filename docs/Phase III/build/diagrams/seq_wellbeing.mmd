@@ -1,0 +1,16 @@
+sequenceDiagram
+    autonumber
+    actor U as User
+    participant G as FastAPI Gateway
+    participant W as WBA
+    participant P as PostgreSQL
+    participant L as LLM (OpenAI gpt-4.1-mini)
+
+    rect rgb(248, 238, 248)
+    Note over U,L: Wellbeing — descriptive, human-in-the-loop
+    U->>G: Open Patterns / Reflections
+    G->>W: Request analytics
+    W->>P: Time, sessions, regret, group suggestions
+    W->>L: Weekly insight (aggregated numbers only)
+    W-->>U: Summaries · pending suggestions to accept / reject
+    end
