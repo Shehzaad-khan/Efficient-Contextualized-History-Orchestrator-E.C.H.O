@@ -4,9 +4,11 @@ Gmail API module - Handles Gmail authentication and email extraction.
 
 import base64
 import json
+import re
 import time
 import uuid
 from datetime import datetime
+from html import unescape
 from pathlib import Path
 
 from google.auth.transport.requests import Request
@@ -88,46 +90,75 @@ def authenticate_gmail():
     return build("gmail", "v1", credentials=creds)
 
 
-def extract_body(message):
-    payload = message.get("payload", {})
-    parts = payload.get("parts", [])
+def _decode_part_data(part):
+    """Decode a MIME part's inline base64url body, or "" when it carries none."""
+    data = part.get("body", {}).get("data")
+    if not data:
+        return ""
+    try:
+        return base64.urlsafe_b64decode(data).decode("utf-8", errors="replace")
+    except Exception:
+        return ""
 
-    if parts:
-        for part in parts:
-            if part.get("mimeType") == "text/plain":
-                data = part.get("body", {}).get("data")
-                if data:
-                    try:
-                        return base64.urlsafe_b64decode(data).decode("utf-8")
-                    except Exception:
-                        pass
-    else:
-        data = payload.get("body", {}).get("data")
-        if data:
-            try:
-                return base64.urlsafe_b64decode(data).decode("utf-8")
-            except Exception:
-                pass
 
+def _find_mime_part(part, target_mime):
+    """Depth-first search for the first `target_mime` part carrying inline data.
+
+    Gmail nests the real body inside multipart/alternative — and inside
+    multipart/mixed once a forward or an attachment is involved — so scanning
+    only the top-level parts misses the body entirely.
+    """
+    if part.get("mimeType") == target_mime:
+        text = _decode_part_data(part)
+        if text:
+            return text
+    for child in part.get("parts", []) or []:
+        found = _find_mime_part(child, target_mime)
+        if found:
+            return found
     return ""
 
 
-def extract_attachments(message, message_id):
-    attachments = []
-    payload = message.get("payload", {})
-    parts = payload.get("parts", [])
+def _html_to_text(html):
+    """Minimal tag strip for HTML-only mail. ENP does the real cleaning downstream."""
+    if not html:
+        return ""
+    text = re.sub(r"(?is)<script.*?</script>", " ", html)
+    text = re.sub(r"(?is)<style.*?</style>", " ", text)
+    text = re.sub(r"<[^>]+>", " ", text)
+    return re.sub(r"\s+", " ", unescape(text)).strip()
 
-    for part in parts:
-        filename = part.get("filename", "")
-        if filename and filename.strip():
+
+def extract_body(message):
+    """Return the email body, preferring text/plain and falling back to HTML."""
+    payload = message.get("payload", {})
+    plain = _find_mime_part(payload, "text/plain")
+    if plain:
+        return plain
+    return _html_to_text(_find_mime_part(payload, "text/html"))
+
+
+def extract_attachments(message, message_id):
+    """Collect every attachment part, including ones nested inside multipart."""
+    attachments = []
+
+    def walk(part):
+        filename = (part.get("filename") or "").strip()
+        body = part.get("body", {})
+        if filename:
             attachments.append(
                 {
                     "filename": filename,
                     "mime_type": part.get("mimeType", "application/octet-stream"),
-                    "size": int(part.get("size", 0)),
+                    # Size lives on body, not on the part itself.
+                    "size": int(body.get("size") or 0),
+                    "attachment_id": body.get("attachmentId"),
                 }
             )
+        for child in part.get("parts", []) or []:
+            walk(child)
 
+    walk(message.get("payload", {}))
     return attachments
 
 

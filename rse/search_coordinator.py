@@ -25,6 +25,7 @@ from typing import Any, Sequence
 import numpy as np
 import psycopg2
 import psycopg2.extras
+import psycopg2.pool
 
 from rse.config import (
     DATABASE_URL,
@@ -102,11 +103,51 @@ _FTS_DOCUMENT = (
 )
 
 
+_POOL = None
+
+
+class _PooledConnection:
+    """Delegates to a pooled connection, but returns it to the pool on close().
+
+    Every retrieval call site follows `conn = get_connection() ... finally:
+    conn.close()`. Handing those sites a raw pooled connection would close it
+    permanently, so this proxy intercepts close() and leaves everything else --
+    including `with conn:` transaction handling -- to the real connection.
+    """
+
+    def __init__(self, pool, conn):
+        self._pool = pool
+        self._conn = conn
+
+    def close(self) -> None:
+        conn, self._conn = self._conn, None
+        if conn is not None:
+            # A connection broken mid-query must not go back into rotation.
+            self._pool.putconn(conn, close=bool(conn.closed))
+
+    def __enter__(self):
+        return self._conn.__enter__()
+
+    def __exit__(self, *exc_info):
+        return self._conn.__exit__(*exc_info)
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+
 def get_connection():
-    """Open a psycopg2 connection to the configured PostgreSQL database."""
+    """Lease a pooled psycopg2 connection to the configured database.
+
+    Neon runs in us-east-1, where a fresh TCP+TLS+auth handshake measured
+    ~700ms. The retrieval path opens connections from six call sites and the
+    widen loop repeats them, so connecting per call dominated query latency.
+    """
+    global _POOL
     if not DATABASE_URL:
         raise RuntimeError("DATABASE_URL is not configured for the RSE module.")
-    return psycopg2.connect(DATABASE_URL)
+    if _POOL is None:
+        _POOL = psycopg2.pool.ThreadedConnectionPool(1, 10, DATABASE_URL)
+    return _PooledConnection(_POOL, _POOL.getconn())
 
 
 def normalise_row(row: dict[str, Any]) -> dict[str, Any]:

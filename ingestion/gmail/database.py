@@ -143,6 +143,10 @@ def store_in_postgresql(data):
             except Exception as exc:
                 print(f"Failed to cache email in Redis: {exc}")
 
+        store_attachments_metadata(
+            data.get("content", {}).get("attachments", []), memory_id
+        )
+
         print("Stored in canonical Gmail tables")
         return True
     except Exception as exc:

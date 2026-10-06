@@ -23,7 +23,12 @@ def get_engine() -> Engine:
         _engine = create_engine(
             get_database_url(),
             future=True,
-            pool_pre_ping=True,
+            # pool_pre_ping issues a validation SELECT 1 before every checkout.
+            # Against Neon in us-east-1 that measured ~190ms of the ~860ms each
+            # operation cost — roughly 4s across a full retrieval query. Recycling
+            # connections well inside Neon's idle window guards staleness instead.
+            pool_pre_ping=False,
+            pool_recycle=240,
             pool_size=5,
             max_overflow=10,
         )
