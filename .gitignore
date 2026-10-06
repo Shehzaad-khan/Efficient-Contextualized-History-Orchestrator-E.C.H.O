@@ -34,3 +34,9 @@ extension/popup.html
 extension/popup.js
 RESTORE.md
 legacy_gmail_threads.json
+
+# Office lock files (created while a .pptx/.docx is open)
+~$*
+
+# Stray copy of rse/rse_langgraph.png at the repo root (the tracked one is in rse/)
+/rse_langgraph.png
