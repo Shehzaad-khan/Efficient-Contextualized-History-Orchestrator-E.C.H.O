@@ -1,4 +1,5 @@
 """Render a .mmd file to a tightly cropped PNG using headless Chrome + Mermaid from jsdelivr."""
+import base64
 import pathlib
 import subprocess
 import sys
@@ -22,11 +23,24 @@ mermaid.initialize({startOnLoad:true, theme:"base", securityLevel:"loose",
 </script></body></html>"""
 
 
+# UML actor (stick figure) for use case diagrams. Mermaid has no actor shape in flowcharts, so a .mmd file
+# writes an image node instead:  U@{ img: "{{STICKMAN}}", label: "User", pos: "b", w: 36, h: 60 }
+_STICKMAN_SVG = (
+    "<svg xmlns='http://www.w3.org/2000/svg' width='36' height='60' viewBox='0 0 36 60'>"
+    "<g fill='none' stroke='#10204A' stroke-width='2.4' stroke-linecap='round'>"
+    "<circle cx='18' cy='9' r='7' fill='#EAF0FF'/>"
+    "<line x1='18' y1='16' x2='18' y2='38'/><line x1='5' y1='24' x2='31' y2='24'/>"
+    "<line x1='18' y1='38' x2='7' y2='57'/><line x1='18' y1='38' x2='29' y2='57'/></g></svg>"
+)
+STICKMAN_URI = "data:image/svg+xml;base64," + base64.b64encode(_STICKMAN_SVG.encode("utf-8")).decode("ascii")
+
+
 def render(mmd_path: pathlib.Path, width: int, height: int) -> pathlib.Path:
     html_path = mmd_path.with_suffix(".html")
     raw_png = mmd_path.with_name(mmd_path.stem + "_raw.png")
     out_png = mmd_path.with_suffix(".png")
-    source = mmd_path.read_text(encoding="utf-8").replace("<", "&lt;").replace(">", "&gt;")
+    source = mmd_path.read_text(encoding="utf-8").replace("{{STICKMAN}}", STICKMAN_URI)
+    source = source.replace("<", "&lt;").replace(">", "&gt;")
     html_path.write_text(HTML % source, encoding="utf-8")
     subprocess.run(
         [CHROME, "--headless=new", "--disable-gpu", "--hide-scrollbars",

@@ -35,3 +35,33 @@ python "docs\Phase III\build\diagrams\render_mermaid.py" "docs\Phase III\build\d
 - The Phase II class and use-case diagrams are pulled from `docs/Phase II/phase 2 review 1.pdf` by pixel size
   (`pdf_embedded_image`). If that PDF changes, update the sizes.
 - Close the deck in PowerPoint before rebuilding. Saving over an open file fails.
+
+# Review 2 LLD document build
+
+Rebuilds `../ECHO_Phase3_Review2_LLD.docx` (Low Level Design & Implementation Document) from the official template
+`../UE23CS441A _LOW LEVEL DESIGN & IMPLEMENTATION DOCUMENT.docx`. The template itself is never modified.
+
+| File | What it does |
+|---|---|
+| `lld/build_lld.py` | All document content — one function per section, `class_block()` per class. Edit here and rebuild. |
+| `lld/docx_writer.py` | Fills the template by cloning the template's own headings, bullets and tables, so the format stays the template's. |
+| `render_docx.ps1` | Exports a .docx to PDF through real Word; `-OutlinePath` also lists every heading with its page. |
+| `lld/diagrams/*.mmd` | Mermaid sources for the 3 level-1 use case and 3 class diagrams (one per module). |
+| `lld/diagrams/*.png` | Their renders, plus reused images: Phase II master class + level-0 use case, and the deck's deployment slide. |
+
+The sequence diagrams are the deck's (`diagrams/seq_*.png`), reused as is.
+
+```powershell
+python "docs\Phase III\build\lld\build_lld.py"                  # 2 passes: build, ask Word for pages, rebuild the TOC
+python "docs\Phase III\build\lld\build_lld.py" --single-pass    # quick build, TOC page column empty
+python "docs\Phase III\build\diagrams\render_mermaid.py" "docs\Phase III\build\lld\diagrams\cls_m2_retrieval.mmd" 3200 2400
+```
+
+Gotchas:
+- The table of contents is a manual table in the template, so its page numbers come from Word (`render_docx.ps1`).
+  Always use the two-pass build for the final file; it warns if pages move after the TOC is filled.
+- The template footer had the page total typed as "10"; the build replaces it with a NUMPAGES field.
+- `TemplateDocument` checks that the template's prototype elements still hold the expected text and stops if the
+  template changes. Update `_PROTOTYPES` if you swap in a new template.
+- Pseudo-code wider than the text column is reported as a WARNING (Courier 9 pt, about 72 characters).
+- Close the document in Word before rebuilding.

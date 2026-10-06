@@ -1,0 +1,30 @@
+%%{init: {"themeVariables": {"edgeLabelBackground": "#ffffff"}}}%%
+flowchart LR
+    U@{ img: "{{STICKMAN}}", label: "User", pos: "b", w: 36, h: 60, constraint: "on" }
+    T@{ img: "{{STICKMAN}}", label: "Dashboard or<br/>OS scheduler", pos: "b", w: 36, h: 60, constraint: "on" }
+    L@{ img: "{{STICKMAN}}", label: "LLM<br/>gpt-4.1-mini", pos: "b", w: 36, h: 60, constraint: "on" }
+    subgraph S["Module 3 — Digital Wellbeing and Analytics (WBA)"]
+        direction TB
+        UC1([View daily summary and heatmap])
+        UC2([Mark or unmark an item as regretted])
+        UC3([Receive a gentle reminder])
+        UC4([Create a group and its rules])
+        UC5([Add an item to a group by hand])
+        UC6([Review group suggestions])
+        UC7([View weekly insight])
+        UC8([Rebuild sessions for a day])
+        UC9([Run group auto-assignment])
+    end
+    U --- UC1
+    U --- UC2
+    U --- UC3
+    U --- UC4
+    U --- UC5
+    U --- UC6
+    U --- UC7
+    T --- UC8
+    T --- UC9
+    L --- UC7
+    UC9 -.->|creates pending| UC6
+    classDef actor fill:none,stroke:none
+    class U,T,L actor

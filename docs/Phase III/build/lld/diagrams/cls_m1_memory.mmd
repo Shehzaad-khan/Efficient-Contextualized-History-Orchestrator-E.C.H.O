@@ -1,0 +1,73 @@
+classDiagram
+    direction LR
+    class ChromeConnector {
+        <<module chrome_connector.py>>
+        +ingest_chrome_page(payload) dict
+        +revisit_check(payload) dict
+        +canonicalize_url(raw_url) str
+    }
+    class IntentFilter {
+        <<module intent_filter.py>>
+        +evaluate(dwell, scroll, interactions, revisits) bool
+    }
+    class YouTubeConnector {
+        <<module youtube_connector.py>>
+        +handle_video_detected(event) dict
+        +passes_intent_gate(event, is_revisit) bool
+        +handle_heartbeat(event) dict
+    }
+    class GmailConnector {
+        <<module gmail_api.py and router.py>>
+        +poll_once() dict
+        +fetch_and_store_new_emails(service) int
+    }
+    class StorageEngine {
+        <<module storage_engine.py>>
+        +store_memory_item(source_type, source_id, ...) tuple
+        +store_chrome_page(payload) dict
+        +store_youtube_detection(video_id, is_short, at) str
+        +store_gmail_message(data) tuple
+    }
+    class SettingsStore {
+        <<module settings_store.py>>
+        +is_source_enabled(source_type) bool
+        +is_domain_excluded(domain) bool
+    }
+    class RedisManager {
+        <<module redis_manager.py>>
+        +check_and_record_revisit(namespace, key, ttl) bool
+    }
+    class EnrichmentPipeline {
+        <<module enrichment_pipeline.py>>
+        +run_pipeline(batch_size, poll_interval) None
+        +process_batch(manager, batch_size) tuple
+    }
+    class SystemGroupClassifier {
+        <<module system_group_classifier.py>>
+        +classify_system_group(item, embedding) tuple
+        +stage3_centroid(embedding) tuple
+    }
+    class EmbeddingGenerator {
+        <<module embedding_generator.py>>
+        +generate_embeddings(texts, batch_size) ndarray
+    }
+    class FAISSManager {
+        +int dimension = 384
+        +list memory_ids
+        +dict memory_id_to_offset
+        +add(memory_id, vector, embeddable_text) bool
+        +search(query_vector, candidate_ids, k) list
+        +save_index(path) Path
+    }
+    ChromeConnector ..> IntentFilter : uses
+    ChromeConnector ..> RedisManager : revisit
+    YouTubeConnector ..> RedisManager : revisit
+    ChromeConnector ..> SettingsStore
+    YouTubeConnector ..> SettingsStore
+    GmailConnector ..> SettingsStore
+    ChromeConnector ..> StorageEngine
+    YouTubeConnector ..> StorageEngine
+    GmailConnector ..> StorageEngine
+    EnrichmentPipeline ..> EmbeddingGenerator : embed
+    EnrichmentPipeline ..> SystemGroupClassifier : classify
+    EnrichmentPipeline ..> FAISSManager : index

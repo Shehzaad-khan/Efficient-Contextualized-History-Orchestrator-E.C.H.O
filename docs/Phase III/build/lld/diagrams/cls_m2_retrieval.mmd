@@ -1,0 +1,69 @@
+classDiagram
+    direction LR
+    class EchoState {
+        <<TypedDict>>
+        +str user_query
+        +list conversation_history
+        +ParsedIntent parsed_intent
+        +list merged_candidates
+        +list ranked_results
+        +str result_quality
+        +int attempt_count
+        +str final_answer
+        +... see data members table
+    }
+    class ParsedIntent {
+        <<TypedDict>>
+        +list sources
+        +str time_filter
+        +str query_clean
+        +list query_variants
+        +bool fetch_attachment
+        +bool fetch_api
+        +... see data members table
+    }
+    class RetrievalEngine {
+        <<module retrieval_engine.py>>
+        -CompiledGraph _COMPILED_GRAPH
+        +run_query(user_query, session_id) dict
+        -_build_graph() CompiledGraph
+    }
+    class LLMCalls {
+        <<query_parser.py and llm_synthesizer.py>>
+        +parse_intent(state) dict
+        +synthesize(state) dict
+    }
+    class HybridSearch {
+        <<search_coordinator.py and fusion.py>>
+        +int RRF_K = 60
+        +postgres_keyword_search(state) dict
+        +faiss_semantic_search(state) dict
+        +merge_and_rrf(state) dict
+    }
+    class QualityGate {
+        <<graph_nodes.py and graph_routing.py>>
+        +float MIN_TOP_SIMILARITY = 0.35
+        +int MAX_WIDEN_ATTEMPTS = 3
+        +node_evaluate_quality(state) dict
+        +node_widen_scope(state) dict
+        +route_after_evaluate_quality(state) str
+    }
+    class Reranker {
+        <<module reranker.py>>
+        +float CROSS_ENCODER_WEIGHT = 0.8
+        +float EFFORT_WEIGHT = 0.2
+        +rerank_cross_encoder(state) dict
+        +compute_effort_score(item) float
+    }
+    class ConversationMemory {
+        <<module conversation_memory.py>>
+        +load_conversation_history(session_id) list
+        +save_turn(session_id, query, answer) None
+    }
+    EchoState *-- ParsedIntent
+    RetrievalEngine ..> EchoState : carries
+    RetrievalEngine ..> LLMCalls : exactly 2 calls
+    RetrievalEngine ..> HybridSearch : nodes 2a, 2b, 3
+    RetrievalEngine ..> QualityGate : nodes 4, 5
+    RetrievalEngine ..> Reranker : node 6
+    RetrievalEngine ..> ConversationMemory : history

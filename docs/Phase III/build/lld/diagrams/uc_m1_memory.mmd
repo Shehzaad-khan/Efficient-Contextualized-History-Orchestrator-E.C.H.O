@@ -1,0 +1,40 @@
+%%{init: {"themeVariables": {"edgeLabelBackground": "#ffffff"}}}%%
+flowchart LR
+    U@{ img: "{{STICKMAN}}", label: "User", pos: "b", w: 36, h: 60, constraint: "on" }
+    X@{ img: "{{STICKMAN}}", label: "Chrome<br/>extension", pos: "b", w: 36, h: 60, constraint: "on" }
+    GA@{ img: "{{STICKMAN}}", label: "Gmail API", pos: "b", w: 36, h: 60, constraint: "on" }
+    YA@{ img: "{{STICKMAN}}", label: "YouTube<br/>Data API", pos: "b", w: 36, h: 60, constraint: "on" }
+    W@{ img: "{{STICKMAN}}", label: "ENP worker", pos: "b", w: 36, h: 60, constraint: "on" }
+    L@{ img: "{{STICKMAN}}", label: "LLM<br/>Stage 4", pos: "b", w: 36, h: 60, constraint: "on" }
+    subgraph S["Module 1 — Memory Capture and Enrichment"]
+        direction TB
+        UC1([Capture an engaged web page])
+        UC2([Capture a watched YouTube video])
+        UC3([Capture a received email])
+        UC4([Record email reading time])
+        UC5([Apply source intent gate])
+        UC6([Store memory item atomically])
+        UC7([Enrich item: clean, embed, classify])
+        UC8([Index vector in FAISS])
+        UC9([Manage capture settings])
+        UC10([Delete or export stored data])
+    end
+    U --- UC1
+    U --- UC2
+    U --- UC4
+    U --- UC9
+    U --- UC10
+    X --- UC1
+    X --- UC2
+    X --- UC4
+    GA --- UC3
+    YA --- UC2
+    UC1 -.-> UC5
+    UC2 -.-> UC5
+    UC5 -.-> UC6
+    UC3 -.-> UC6
+    W --- UC7
+    UC7 -.-> UC8
+    L --- UC7
+    classDef actor fill:none,stroke:none
+    class U,X,GA,YA,W,L actor

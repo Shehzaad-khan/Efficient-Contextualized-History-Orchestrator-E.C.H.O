@@ -1,0 +1,65 @@
+classDiagram
+    direction TB
+    class GroupManager {
+        <<module group_manager.py>>
+        +int MIN_CONFIRMED_FOR_KNN = 6
+        +float AUTO_SUGGEST_THRESHOLD = 0.70
+        +int KNN_TOP_K = 3
+        +float RULE_WEIGHT = 0.5
+        +float KNN_WEIGHT = 0.5
+        +create_group(name, description) dict
+        +add_rule(group_id, rule_type, rule_value) dict
+        +score_item_for_group(item, group_id) dict
+        +run_auto_assignment(limit) dict
+        +review_queue(group_id) list
+        +decide_suggestion(suggestion_id, accept) dict
+        +manual_assign(memory_id, group_id) dict
+    }
+    class FAISSManager {
+        <<Module 1>>
+        +list memory_ids
+        +dict memory_id_to_offset
+    }
+    class WellbeingAnalytics {
+        <<module wellbeing_analytics.py>>
+        +int SESSION_GAP_MINUTES = 5
+        +rebuild_sessions_for_day(day) dict
+        +sessions_for_day(day) list
+        +fragmentation_for_day(day) dict
+        +daily_summary(day) dict
+    }
+    class InsightGenerator {
+        <<module insight_generator.py>>
+        +collect_weekly_aggregates(week_end) dict
+        +generate_weekly_insight(week_end) dict
+    }
+    class TimeAggregator {
+        <<module time_aggregator.py>>
+        +total_time(start_day, end_day) int
+        +time_by_system_group(start_day, end_day) list
+        +time_by_source(start_day, end_day) list
+        +shorts_summary(start_day, end_day) dict
+        +activity_heatmap(start_day, end_day) list
+    }
+    class RegretSystem {
+        <<module regret_system.py>>
+        +int MIN_SESSION_MINUTES_FOR_REMINDER = 15
+        +int MAX_REMINDERS_TOTAL_PER_DAY = 2
+        +toggle_regret(memory_id, note) dict
+        +is_regretted(memory_id) bool
+        +regret_rate(day) dict
+        +maybe_get_reminder(source_type, session_minutes) dict
+    }
+    class PatternDetector {
+        <<module pattern_detector.py>>
+        +regret_time_patterns(lookback_days) dict
+        +has_habitual_regret_pattern(source_type, hour) bool
+        +peak_activity_hours(start_day, end_day) list
+    }
+    GroupManager ..> FAISSManager : KNN vectors
+    WellbeingAnalytics ..> TimeAggregator
+    WellbeingAnalytics ..> RegretSystem
+    RegretSystem ..> PatternDetector
+    InsightGenerator ..> TimeAggregator
+    InsightGenerator ..> PatternDetector
+    InsightGenerator ..> RegretSystem

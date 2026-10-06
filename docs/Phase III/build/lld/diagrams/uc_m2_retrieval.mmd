@@ -1,0 +1,35 @@
+%%{init: {"themeVariables": {"edgeLabelBackground": "#ffffff"}}}%%
+flowchart TB
+    U@{ img: "{{STICKMAN}}", label: "User", pos: "b", w: 36, h: 60, constraint: "on" }
+    L@{ img: "{{STICKMAN}}", label: "LLM<br/>gpt-4.1-mini", pos: "b", w: 36, h: 60, constraint: "on" }
+    GA@{ img: "{{STICKMAN}}", label: "Gmail API", pos: "b", w: 36, h: 60, constraint: "on" }
+    subgraph S["Module 2 — Retrieval and Synthesis Engine (RSE)"]
+        direction TB
+        UC1([Ask a natural-language question])
+        UC2([Ask a follow-up question])
+        UC3([Parse intent — LLM call 1])
+        UC4([Hybrid search: keyword + semantic])
+        UC5([Fuse, check quality, widen scope])
+        UC6([Re-rank with cross-encoder + effort])
+        UC7([Fetch attachment text])
+        UC8([Fetch today's new mail])
+        UC9([Synthesize answer — LLM call 2])
+        UC10([Clear conversation session])
+    end
+    U --- UC1
+    U --- UC2
+    U --- UC10
+    UC2 -.->|extend| UC1
+    UC1 -.-> UC3
+    UC1 -.-> UC4
+    UC4 -.-> UC5
+    UC5 -.-> UC6
+    UC6 -.-> UC9
+    UC7 -.->|extend| UC9
+    UC8 -.->|extend| UC9
+    L --- UC3
+    L --- UC9
+    GA --- UC7
+    GA --- UC8
+    classDef actor fill:none,stroke:none
+    class U,L,GA actor
