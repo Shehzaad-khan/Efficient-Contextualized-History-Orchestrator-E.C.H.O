@@ -40,3 +40,9 @@ legacy_gmail_threads.json
 
 # Stray copy of rse/rse_langgraph.png at the repo root (the tracked one is in rse/)
 /rse_langgraph.png
+
+# Runtime logs (backend/logging_config.py) — local only, may contain email text
+logs/
+
+# Temp file from ste/security.py atomic token writes (left behind only by a crash)
+*.enc.tmp

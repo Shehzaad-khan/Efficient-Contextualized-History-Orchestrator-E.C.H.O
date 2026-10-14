@@ -1,16 +1,62 @@
+"""
+faiss_manager.py — STE Module
+Echo Personal Memory System
+
+The semantic index (architecture §8 STE, DB design `embedding_index`):
+a FAISS IndexFlatL2 over UNNORMALIZED all-MiniLM-L6-v2 vectors (384-d),
+mirrored by a numpy cache, plus one `embedding_index` row per vector in
+PostgreSQL. L2 distance is not cosine similarity — anything that needs a
+similarity score must compute true cosine from the vectors (cosine()).
+
+On disk: enp/echo_faiss.index (the vectors) + enp/echo_faiss.index.meta.json
+(the memory_id of each row, in order). Row offset N in the index belongs to
+memory_ids[N].
+
+Callers:
+    Writes   enp/enrichment_pipeline.py   its OWN FAISSManager (ENP thread):
+                                          add() per item, save_index() per batch
+             scripts/enp_rebuild_faiss.py its own instance, separate process
+    Reads    get_manager() — the shared process-wide instance:
+             rse/search_coordinator.py    full-index search (request threads)
+             rse/time_anchor.py           nearest item for an anchor phrase
+             wba/group_manager.py         item vectors for KNN group scoring
+             enp/system_group_classifier.py  centroid recomputation
+
+Known gap (tracked; fixed in enrichment_pipeline.py's review): the ENP thread
+writes to its own instance, and get_manager() loads the files from disk once.
+So items embedded after the first query are not semantically searchable until
+the backend restarts. The fix is for ENP to use get_manager() too — this file
+is ready for that (all state is behind one lock).
+
+Thread safety:
+    - `self._lock` (RLock) guards every field. All methods take it, so one
+      instance can be shared by the ENP thread and request threads. FAISS
+      itself is NOT safe for add() running during search() on the same index.
+    - search_all() and get_vector() are the locked read paths for outside
+      callers. The public attributes (index, vectors, memory_ids,
+      memory_id_to_offset) are read WITHOUT the lock by the callers above;
+      those callers move to the locked methods when each is reviewed.
+    - The PostgreSQL upsert in add() runs outside the lock, so a slow Neon
+      round trip never blocks searches.
+    - `_manager_lock` guards creation of the shared instance in get_manager().
+    - save_index() writes temp files and renames them over the real ones, so
+      a reader (another process, or a load at startup) never reads a
+      half-written file.
+"""
+
 from __future__ import annotations
 
 import json
 import logging
 import os
+import threading
+import time
 from pathlib import Path
 from typing import Iterable
 
 import numpy as np
-import psycopg2
-from dotenv import load_dotenv
 
-load_dotenv()
+from ste import postgresql_manager
 
 try:
     import faiss
@@ -27,7 +73,45 @@ DEFAULT_INDEX_PATH = PROJECT_ROOT / "enp" / "echo_faiss.index"
 # O(N^2) a per-add np.vstack would cost.
 INITIAL_CAPACITY = 256
 
+# Temp files are named "<stem>.tmp<suffix>" (echo_faiss.tmp.index and
+# echo_faiss.tmp.index.meta.json), so the existing *.index / *.index.meta.json
+# .gitignore rules already cover a temp file left behind by a crash.
+_TEMP_MARKER = ".tmp"
+
+_UPSERT_EMBEDDING_ROW_SQL = """
+    INSERT INTO embedding_index (
+        memory_id,
+        embedding_version,
+        vector_dimension,
+        is_active,
+        embeddable_text
+    )
+    VALUES (:memory_id, :embedding_version, :vector_dimension, TRUE, :embeddable_text)
+    ON CONFLICT (memory_id) DO UPDATE
+    SET embedding_version = EXCLUDED.embedding_version,
+        vector_dimension = EXCLUDED.vector_dimension,
+        is_active = TRUE,
+        indexed_at = NOW(),
+        embeddable_text = EXCLUDED.embeddable_text
+"""
+
 logger = logging.getLogger(__name__)
+
+
+def _metadata_path_for(index_path: Path) -> Path:
+    return index_path.with_suffix(f"{index_path.suffix}.meta.json")
+
+
+def _temp_path_for(index_path: Path) -> Path:
+    return index_path.with_name(f"{index_path.stem}{_TEMP_MARKER}{index_path.suffix}")
+
+
+def cosine(a: np.ndarray, b: np.ndarray) -> float:
+    """True cosine similarity of two vectors (0.0 if either is all zeros)."""
+    denominator = float(np.linalg.norm(a) * np.linalg.norm(b))
+    if denominator == 0.0:
+        return 0.0
+    return float(np.dot(a, b) / denominator)
 
 
 class FAISSManager:
@@ -50,7 +134,6 @@ class FAISSManager:
         *,
         dimension: int = VECTOR_DIMENSION,
         embedding_version: str = EMBEDDING_VERSION,
-        db_url: str | None = None,
     ) -> None:
         if faiss is None:  # pragma: no cover - dependency-driven
             raise RuntimeError(
@@ -60,8 +143,9 @@ class FAISSManager:
 
         self.dimension = dimension
         self.embedding_version = embedding_version
-        self.db_url = db_url or os.getenv("DATABASE_URL")
         self.index_path = Path(index_path or os.getenv("ECHO_FAISS_INDEX_PATH", DEFAULT_INDEX_PATH))
+        # RLock: public methods read `self.index`, whose property takes the lock again.
+        self._lock = threading.RLock()
         self.memory_ids: list[str] = []
         self.memory_id_to_offset: dict[str, int] = {}
         self._index = faiss.IndexFlatL2(self.dimension)
@@ -74,20 +158,22 @@ class FAISSManager:
     @property
     def index(self):
         """The FAISS index, rebuilt first if in-place updates left it stale."""
-        if self._index_stale:
-            self._materialize_index()
-        return self._index
+        with self._lock:
+            if self._index_stale:
+                self._materialize_index()
+            return self._index
 
     @property
     def vectors(self) -> np.ndarray:
-        """Live (n, dim) view of the cached vectors — not a copy."""
+        """Live (n, dim) view of the cached vectors — not a copy, not locked.
+        Outside callers should use get_vector()."""
         return self._buffer[: self._count]
 
     @property
     def metadata_path(self) -> Path:
-        return self.index_path.with_suffix(f"{self.index_path.suffix}.meta.json")
+        return _metadata_path_for(self.index_path)
 
-    # -- Internals ------------------------------------------------------------
+    # -- Internals (caller holds self._lock) -----------------------------------
 
     def _ensure_vector(self, vector: np.ndarray) -> np.ndarray:
         arr = np.asarray(vector, dtype=np.float32).reshape(1, -1)
@@ -107,13 +193,22 @@ class FAISSManager:
         if self._count:
             grown[: self._count] = self._buffer[: self._count]
         self._buffer = grown
+        logger.debug("FAISS vector cache grown to %d rows", new_capacity)
 
     def _materialize_index(self) -> None:
+        started_at = time.perf_counter()
         index = faiss.IndexFlatL2(self.dimension)
         if self._count:
             index.add(np.ascontiguousarray(self.vectors))
         self._index = index
         self._index_stale = False
+        # DEBUG, not INFO: with a shared instance this can run once per query
+        # while ENP is re-embedding (~3 ms per 2,500 vectors).
+        logger.debug(
+            "FAISS index rebuilt after in-place updates: %d vectors (%.0f ms)",
+            self._count,
+            (time.perf_counter() - started_at) * 1000,
+        )
 
     def _load_vector_cache(self, index) -> None:
         """Populate the numpy cache from a freshly read index."""
@@ -129,45 +224,18 @@ class FAISSManager:
                 self._buffer[offset] = index.reconstruct(offset)
 
     def _upsert_embedding_row(self, memory_id: str, embeddable_text: str | None) -> None:
-        if not self.db_url:
-            logger.warning("DATABASE_URL not set; skipping embedding_index upsert for %s", memory_id)
-            return
+        """Record the vector in embedding_index (pooled connection; raises on DB error)."""
+        postgresql_manager.execute(
+            _UPSERT_EMBEDDING_ROW_SQL,
+            {
+                "memory_id": memory_id,
+                "embedding_version": self.embedding_version,
+                "vector_dimension": self.dimension,
+                "embeddable_text": embeddable_text,
+            },
+        )
 
-        conn = psycopg2.connect(self.db_url)
-        try:
-            with conn:
-                with conn.cursor() as cursor:
-                    cursor.execute(
-                        """
-                        INSERT INTO embedding_index (
-                            memory_id,
-                            embedding_version,
-                            vector_dimension,
-                            is_active,
-                            embeddable_text
-                        )
-                        VALUES (%s, %s, %s, TRUE, %s)
-                        ON CONFLICT (memory_id) DO UPDATE
-                        SET embedding_version = EXCLUDED.embedding_version,
-                            vector_dimension = EXCLUDED.vector_dimension,
-                            is_active = TRUE,
-                            indexed_at = NOW(),
-                            embeddable_text = EXCLUDED.embeddable_text
-                        """,
-                        (
-                            memory_id,
-                            self.embedding_version,
-                            self.dimension,
-                            embeddable_text,
-                        ),
-                    )
-        finally:
-            conn.close()
-
-    # -- Public API -----------------------------------------------------------
-
-    def reset(self) -> None:
-        """Drop every vector and mapping, keeping paths and configuration."""
+    def _clear(self) -> None:
         self.memory_ids = []
         self.memory_id_to_offset = {}
         self._index = faiss.IndexFlatL2(self.dimension)
@@ -175,30 +243,86 @@ class FAISSManager:
         self._buffer = np.empty((0, self.dimension), dtype=np.float32)
         self._count = 0
 
+    # -- Public API -----------------------------------------------------------
+
+    def reset(self) -> None:
+        """Drop every vector and mapping, keeping paths and configuration."""
+        with self._lock:
+            self._clear()
+        logger.info("FAISS index reset to empty (%s)", self.index_path.name)
+
     def add(self, memory_id: str, vector: np.ndarray, embeddable_text: str | None = None) -> bool:
+        """Add or replace the vector for memory_id, then upsert its embedding_index row.
+
+        Returns True for a new memory_id, False when an existing one was re-embedded.
+        Raises if the database write fails; the in-memory vector stays, and a retry
+        of the same item overwrites it and upserts again.
+        """
         memory_id = str(memory_id)
         arr = self._ensure_vector(vector)
 
-        offset = self.memory_id_to_offset.get(memory_id)
-        if offset is not None:
-            # Re-embedding a known item: overwrite its row and defer the index
-            # rebuild to the next read of `.index`.
-            self._buffer[offset] = arr[0]
-            self._index_stale = True
-            self._upsert_embedding_row(memory_id, embeddable_text)
-            return False
+        with self._lock:
+            offset = self.memory_id_to_offset.get(memory_id)
+            if offset is not None:
+                # Re-embedding a known item: overwrite its row and defer the index
+                # rebuild to the next read of `.index`.
+                self._buffer[offset] = arr[0]
+                self._index_stale = True
+                is_new = False
+            else:
+                self._reserve(self._count + 1)
+                self._buffer[self._count] = arr[0]
+                self._count += 1
+                self.memory_ids.append(memory_id)
+                self.memory_id_to_offset[memory_id] = self._count - 1
+                if not self._index_stale:
+                    # A stale index gets rebuilt wholesale on its next read; appending
+                    # to it now would only be thrown away.
+                    self._index.add(arr)
+                is_new = True
+            total = self._count
 
-        self._reserve(self._count + 1)
-        self._buffer[self._count] = arr[0]
-        self._count += 1
-        self.memory_ids.append(memory_id)
-        self.memory_id_to_offset[memory_id] = self._count - 1
-        if not self._index_stale:
-            # A stale index gets rebuilt wholesale on its next read; appending
-            # to it now would only be thrown away.
-            self._index.add(arr)
+        # Outside the lock: a Neon round trip must not block searches.
         self._upsert_embedding_row(memory_id, embeddable_text)
-        return True
+        logger.debug(
+            "FAISS %s memory_id=%s (total %d vectors)",
+            "added" if is_new else "re-embedded",
+            memory_id,
+            total,
+        )
+        return is_new
+
+    def search_all(self, query_vector: np.ndarray, k: int) -> list[tuple[str, float]]:
+        """Nearest k items over the WHOLE index, as (memory_id, cosine), best first.
+
+        FAISS ranks by L2 distance; the returned score is true cosine similarity
+        (vectors are unnormalized), and the list is re-sorted by it.
+        """
+        query = self._ensure_vector(query_vector)
+        with self._lock:
+            index = self.index
+            total = index.ntotal
+            if total == 0:
+                return []
+            _, offsets = index.search(query, min(max(k, 1), total))
+            # Copy the rows while locked: a re-embed may overwrite them in place.
+            hits = [
+                (self.memory_ids[offset], self._buffer[offset].copy())
+                for offset in offsets[0]
+                if offset >= 0
+            ]
+
+        results = [(memory_id, cosine(query[0], vector)) for memory_id, vector in hits]
+        results.sort(key=lambda pair: pair[1], reverse=True)
+        return results
+
+    def get_vector(self, memory_id: str) -> np.ndarray | None:
+        """A copy of the item's vector, or None when it is not indexed yet."""
+        with self._lock:
+            offset = self.memory_id_to_offset.get(str(memory_id))
+            if offset is None:
+                return None
+            return self._buffer[offset].copy()
 
     def search(
         self,
@@ -206,13 +330,15 @@ class FAISSManager:
         candidate_ids: Iterable[str],
         k: int = 20,
     ) -> list[tuple[str, float]]:
-        ordered_ids = [memory_id for memory_id in candidate_ids if memory_id in self.memory_id_to_offset]
-        if not ordered_ids:
-            return []
-
+        """Nearest k among candidate_ids only, as (memory_id, L2 distance), nearest first."""
         query = self._ensure_vector(query_vector)
-        candidate_offsets = [self.memory_id_to_offset[memory_id] for memory_id in ordered_ids]
-        candidate_vectors = np.ascontiguousarray(self.vectors[candidate_offsets])
+        with self._lock:
+            ordered_ids = [memory_id for memory_id in candidate_ids if memory_id in self.memory_id_to_offset]
+            if not ordered_ids:
+                return []
+            candidate_offsets = [self.memory_id_to_offset[memory_id] for memory_id in ordered_ids]
+            # Fancy indexing returns a copy, so the search below is safe outside the lock.
+            candidate_vectors = np.ascontiguousarray(self.vectors[candidate_offsets])
 
         temp_index = faiss.IndexFlatL2(self.dimension)
         temp_index.add(candidate_vectors)
@@ -227,62 +353,134 @@ class FAISSManager:
         return results
 
     def save_index(self, path: str | Path | None = None) -> Path:
-        target = Path(path or self.index_path)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        faiss.write_index(self.index, str(target))
+        """Write the index and its metadata atomically (temp file + os.replace each).
 
-        metadata = {
-            "dimension": self.dimension,
-            "embedding_version": self.embedding_version,
-            "memory_ids": self.memory_ids,
-        }
-        metadata_path = target.with_suffix(f"{target.suffix}.meta.json")
-        metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
-        self.index_path = target
+        The index file is replaced first, then the metadata. A crash between the
+        two leaves a count mismatch, which load_index() reports loudly instead of
+        loading vectors under the wrong memory_ids.
+        """
+        started_at = time.perf_counter()
+        with self._lock:
+            target = Path(path or self.index_path)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            temp_index_path = _temp_path_for(target)
+            temp_metadata_path = _metadata_path_for(temp_index_path)
+
+            index = self.index
+            total = index.ntotal
+            metadata = {
+                "dimension": self.dimension,
+                "embedding_version": self.embedding_version,
+                "memory_ids": self.memory_ids,
+            }
+            faiss.write_index(index, str(temp_index_path))
+            temp_metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+            os.replace(temp_index_path, target)
+            os.replace(temp_metadata_path, _metadata_path_for(target))
+            self.index_path = target
+
+        logger.info(
+            "FAISS index saved: %d vectors to %s (%.0f ms)",
+            total,
+            target.name,
+            (time.perf_counter() - started_at) * 1000,
+        )
         return target
 
     def load_index(self, path: str | Path | None = None) -> None:
+        """Replace this instance's contents with the index on disk.
+
+        Neither file exists -> start empty (first run).
+        Only one exists, or they disagree -> raise ValueError. Starting empty
+        there would let the next save_index() overwrite the surviving vectors.
+        Rebuild with scripts/enp_rebuild_faiss.py.
+        """
+        started_at = time.perf_counter()
         target = Path(path or self.index_path)
-        metadata_path = target.with_suffix(f"{target.suffix}.meta.json")
+        metadata_path = _metadata_path_for(target)
 
-        if not target.exists() or not metadata_path.exists():
-            self.reset()
+        with self._lock:
+            index_exists = target.exists()
+            metadata_exists = metadata_path.exists()
+            if not index_exists and not metadata_exists:
+                self._clear()
+                self.index_path = target
+                logger.info("No FAISS index at %s — starting with an empty index", target)
+                return
+            if index_exists != metadata_exists:
+                raise ValueError(
+                    f"FAISS files incomplete: {target.name} exists={index_exists}, "
+                    f"{metadata_path.name} exists={metadata_exists}. "
+                    "Rebuild with scripts/enp_rebuild_faiss.py."
+                )
+
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            dimension = int(metadata.get("dimension", self.dimension))
+            if dimension != self.dimension:
+                raise ValueError(f"Expected FAISS dimension {self.dimension}, found {dimension}")
+
+            stored_version = metadata.get("embedding_version")
+            if stored_version != self.embedding_version:
+                # Vectors from another model are not comparable with new ones.
+                logger.warning(
+                    "FAISS index was built with embedding_version=%s, current is %s — "
+                    "rebuild with scripts/enp_rebuild_faiss.py",
+                    stored_version,
+                    self.embedding_version,
+                )
+
+            index = faiss.read_index(str(target))
+            if index.d != self.dimension:
+                raise ValueError(f"Expected FAISS dimension {self.dimension}, index file has {index.d}")
+            memory_ids = [str(memory_id) for memory_id in metadata.get("memory_ids", [])]
+            if index.ntotal != len(memory_ids):
+                raise ValueError(
+                    f"FAISS index/vector metadata mismatch: index has {index.ntotal} vectors, "
+                    f"metadata has {len(memory_ids)} memory_ids. "
+                    "Rebuild with scripts/enp_rebuild_faiss.py."
+                )
+
+            self._index = index
+            self._index_stale = False
+            self.memory_ids = memory_ids
+            self._rebuild_mappings()
+            self._load_vector_cache(index)
             self.index_path = target
-            return
 
-        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-        dimension = int(metadata.get("dimension", self.dimension))
-        if dimension != self.dimension:
-            raise ValueError(f"Expected FAISS dimension {self.dimension}, found {dimension}")
-
-        index = faiss.read_index(str(target))
-        memory_ids = [str(memory_id) for memory_id in metadata.get("memory_ids", [])]
-        if index.ntotal != len(memory_ids):
-            raise ValueError(
-                f"FAISS index/vector metadata mismatch: index has {index.ntotal} vectors, "
-                f"metadata has {len(memory_ids)} memory_ids"
-            )
-
-        self._index = index
-        self._index_stale = False
-        self.memory_ids = memory_ids
-        self._rebuild_mappings()
-        self._load_vector_cache(index)
-        self.index_path = target
+        logger.info(
+            "FAISS index loaded: %d vectors from %s (%.0f ms)",
+            len(memory_ids),
+            target.name,
+            (time.perf_counter() - started_at) * 1000,
+        )
 
 
 _default_manager: FAISSManager | None = None
+_manager_lock = threading.Lock()
 
 
 def get_manager(index_path: str | Path | None = None) -> FAISSManager:
+    """Return the shared process-wide manager, loading it from disk on first use.
+
+    A different index_path replaces the shared manager. If loading fails, the
+    error is raised and the previous manager (or none) stays in place — a broken
+    load is never cached as an empty index.
+    """
     global _default_manager
-    if _default_manager is None:
-        _default_manager = FAISSManager(index_path=index_path)
-        _default_manager.load_index()
-    elif index_path is not None and Path(index_path) != _default_manager.index_path:
-        _default_manager = FAISSManager(index_path=index_path)
-        _default_manager.load_index()
-    return _default_manager
+    wanted_path = Path(index_path) if index_path is not None else None
+
+    manager = _default_manager
+    if manager is not None and (wanted_path is None or wanted_path == manager.index_path):
+        return manager
+
+    with _manager_lock:
+        manager = _default_manager
+        if manager is None or (wanted_path is not None and wanted_path != manager.index_path):
+            fresh = FAISSManager(index_path=index_path)
+            fresh.load_index()
+            _default_manager = fresh
+            logger.info("Shared FAISS manager ready (%s)", fresh.index_path.name)
+        return _default_manager
 
 
 def add(memory_id: str, vector: np.ndarray, embeddable_text: str | None = None) -> bool:

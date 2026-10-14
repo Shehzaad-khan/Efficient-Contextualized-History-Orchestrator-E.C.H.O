@@ -17,6 +17,7 @@ import importlib.util
 import logging
 import os
 import sys
+import threading
 from pathlib import Path
 
 import redis.asyncio as aioredis
@@ -29,6 +30,21 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+# Ingested email/page text is arbitrary Unicode (currency signs, CJK, emoji).
+# On Windows stdout defaults to cp1252, so printing such text raises
+# UnicodeEncodeError mid-ingestion and aborts the whole batch. Force UTF-8 and
+# replace anything unmappable so logging can never take the pipeline down.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
+# Configure logging BEFORE importing the modules below, so log lines they emit
+# while importing already reach the console and logs/echo.log.
+from backend.logging_config import setup_logging
+
+setup_logging()
+logger = logging.getLogger(__name__)
+
 from ste.security import validate_redis_tls_url
 from ingestion.youtube.youtube_connector import router as ytc_router
 from ingestion.chrome.chrome_connector import router as chc_router
@@ -39,25 +55,31 @@ from backend.items import router as items_router
 
 load_dotenv()
 
-# Ingested email/page text is arbitrary Unicode (currency signs, CJK, emoji).
-# On Windows stdout defaults to cp1252, so printing such text raises
-# UnicodeEncodeError mid-ingestion and aborts the whole batch. Force UTF-8 and
-# replace anything unmappable so logging can never take the pipeline down.
-for _stream in (sys.stdout, sys.stderr):
-    if hasattr(_stream, "reconfigure"):
-        _stream.reconfigure(encoding="utf-8", errors="replace")
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
 REDIS_URL = os.getenv("REDIS_URL") or os.getenv("UPSTASH_REDIS_URL") or "redis://localhost:6379"
+
+
+ENP_THREAD_NAME = "enp-worker"
+
+
+def _run_enp_in_named_thread() -> None:
+    """Run the ENP loop with a readable thread name, so its log lines show
+    [enp-worker] instead of the default executor name [asyncio_0]."""
+    thread = threading.current_thread()
+    original_name = thread.name
+    thread.name = ENP_THREAD_NAME
+    try:
+        from enp.enrichment_pipeline import run_pipeline
+
+        run_pipeline()
+    finally:
+        # The thread belongs to asyncio's default executor; give its name back
+        # if run_pipeline ever returns, so later executor work isn't mislabelled.
+        thread.name = original_name
 
 
 def start_enp_worker() -> asyncio.Task:
     async def runner() -> None:
-        from enp.enrichment_pipeline import run_pipeline
-
-        await asyncio.to_thread(run_pipeline)
+        await asyncio.to_thread(_run_enp_in_named_thread)
 
     return asyncio.create_task(runner(), name="enp-worker")
 
