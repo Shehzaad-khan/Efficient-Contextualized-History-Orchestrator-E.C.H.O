@@ -1,18 +1,55 @@
 """
-Database module - Handles Gmail PostgreSQL storage operations.
+database.py — Gmail ingestion storage
+Echo Personal Memory System
+
+Thin layer between the Gmail poller and the storage engine.
+
+    initialize_database()       is PostgreSQL reachable and the Gmail schema present?
+    store_in_postgresql(data)   store one parsed email; True only when it is new
+
+All writes go through ste.storage_engine.store_gmail_message, which stores the
+memory item, gmail_metadata, engagement and attachment rows in ONE transaction.
+This file writes no SQL of its own.
+
+Callers (all sync, all off the event loop):
+    router.poll_once (asyncio.to_thread)  initialize_database
+    gmail_api.fetch_and_store_new_emails  store_in_postgresql
 """
 
-import json
+import logging
+import threading
 
 from ste import postgresql_manager
 from ste.storage_engine import store_gmail_message
-from .config import get_redis_client
+
+logger = logging.getLogger(__name__)
+
+# Last result of initialize_database, so its log fires only when the state
+# changes. router.poll_once calls it every 30 s; logging each call would spam.
+_db_ready: bool | None = None
+_db_ready_lock = threading.Lock()
 
 
-def initialize_database():
-    """Validate Gmail canonical tables are reachable."""
+def _record_db_state(ready: bool, detail: str) -> None:
+    global _db_ready
+    with _db_ready_lock:
+        changed = ready != _db_ready
+        _db_ready = ready
+    if not changed:
+        return
+    if ready:
+        logger.info("Gmail storage ready: PostgreSQL reachable, gmail_metadata present")
+    else:
+        logger.error("Gmail storage unavailable: %s", detail)
+
+
+def initialize_database() -> bool:
+    """Return True when PostgreSQL answers and the gmail_metadata table exists.
+
+    Read-only check: it creates nothing (scripts/setup_db.py owns the schema).
+    """
     try:
-        postgresql_manager.scalar(
+        found = postgresql_manager.scalar(
             """
             SELECT 1
             FROM information_schema.tables
@@ -20,135 +57,31 @@ def initialize_database():
             LIMIT 1
             """
         )
-        print("PostgreSQL Database initialized")
-        return True
     except Exception as exc:
-        print(f"PostgreSQL connection error: {exc}")
+        _record_db_state(False, f"PostgreSQL connection error: {exc}")
         return False
 
-
-def get_thread_history(thread_id):
-    try:
-        rows = postgresql_manager.fetchall(
-            """
-            SELECT
-                mi.memory_id,
-                mi.title,
-                gm.sender AS email_from,
-                gm.recipients AS email_to,
-                mi.raw_text AS content_primary_text,
-                gm.gmail_labels AS email_labels,
-                gm.received_at AS event_timestamp,
-                mi.first_ingested_at AS ingested_at,
-                gm.has_attachments AS email_has_attachments
-            FROM memory_items mi
-            JOIN gmail_metadata gm ON gm.memory_id = mi.memory_id
-            WHERE gm.thread_id = :thread_id
-            ORDER BY gm.received_at ASC
-            """,
-            {"thread_id": thread_id},
-        )
-
-        result = []
-        for row in rows:
-            converted = dict(row)
-            if converted.get("event_timestamp"):
-                converted["event_timestamp"] = converted["event_timestamp"].isoformat()
-            if converted.get("ingested_at"):
-                converted["ingested_at"] = converted["ingested_at"].isoformat()
-            if isinstance(converted.get("email_to"), str):
-                converted["email_to"] = json.loads(converted["email_to"])
-            if isinstance(converted.get("email_labels"), str):
-                converted["email_labels"] = json.loads(converted["email_labels"])
-            result.append(converted)
-        return result
-    except Exception as exc:
-        print(f"Failed to fetch thread history: {exc}")
-        return []
-
-
-def store_attachments_metadata(attachments, memory_id):
-    if not attachments:
-        return True
-
-    try:
-        for attachment in attachments:
-            filename = attachment.get("filename")
-            if not filename:
-                continue
-            postgresql_manager.execute(
-                """
-                INSERT INTO gmail_attachments (
-                    memory_id,
-                    filename,
-                    mime_type,
-                    file_size,
-                    lightweight_extract,
-                    last_extracted_at,
-                    is_processed
-                )
-                VALUES (
-                    :memory_id,
-                    :filename,
-                    :mime_type,
-                    :file_size,
-                    :lightweight_extract,
-                    NOW(),
-                    :is_processed
-                )
-                ON CONFLICT DO NOTHING
-                """,
-                {
-                    "memory_id": memory_id,
-                    "filename": filename,
-                    "mime_type": attachment.get("mime_type", "application/octet-stream"),
-                    "file_size": int(attachment.get("size", 0)),
-                    "lightweight_extract": " | ".join(
-                        part
-                        for part in [
-                            filename,
-                            attachment.get("mime_type"),
-                            str(attachment.get("size", 0) or ""),
-                        ]
-                        if part and part != "0"
-                    ),
-                    "is_processed": True,
-                },
-            )
-        return True
-    except Exception as exc:
-        print(f"Attachment storage error: {exc}")
+    if found is None:
+        # Reachable, but the schema is missing — storing would fail on every email.
+        _record_db_state(False, "gmail_metadata table not found (run scripts/setup_db.py)")
         return False
 
-
-def store_in_memory_items(data, memory_id):
+    _record_db_state(True, "")
     return True
 
 
-def store_in_gmail_metadata(data, memory_id):
-    return True
+def store_in_postgresql(data: dict) -> bool:
+    """Store one parsed email. Returns True only when it was newly inserted.
 
-
-def store_in_postgresql(data):
+    False means either already stored (normal: every poll re-sees recent
+    emails) or a storage error, which is logged with its traceback. The caller
+    counts True results as "processed".
+    """
     try:
-        memory_id, inserted = store_gmail_message(data)
-        if not inserted:
-            print("Already stored -> Skipping")
-            return False
-
-        rc = get_redis_client()
-        if rc:
-            try:
-                rc.setex(f"email:{data['source_item_id']}", 3600, json.dumps(data))
-            except Exception as exc:
-                print(f"Failed to cache email in Redis: {exc}")
-
-        store_attachments_metadata(
-            data.get("content", {}).get("attachments", []), memory_id
-        )
-
-        print("Stored in canonical Gmail tables")
-        return True
-    except Exception as exc:
-        print(f"PostgreSQL storage error: {exc}")
+        _memory_id, inserted = store_gmail_message(data)
+    except Exception:
+        # No body in the log — the email id is enough to find it.
+        logger.exception("Gmail storage failed: email_id=%s", data.get("source_item_id"))
         return False
+    # store_gmail_message already logs the insert / the update.
+    return inserted
