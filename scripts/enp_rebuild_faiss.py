@@ -1,5 +1,5 @@
 """
-Rebuild enp/echo_faiss.index from embedding_index rows (fixes FAISS/DB drift).
+Rebuild data_faiss/echo_faiss.index from embedding_index rows (fixes FAISS/DB drift).
 
 Usage:
   python scripts/enp_rebuild_faiss.py

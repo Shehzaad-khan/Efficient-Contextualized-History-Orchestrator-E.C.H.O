@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 load_dotenv(ROOT / ".env")
 
-DEFAULT_INDEX = ROOT / "enp" / "echo_faiss.index"
+from ste.faiss_manager import DEFAULT_INDEX_PATH as DEFAULT_INDEX  # noqa: E402  (single source of the path)
 
 
 def _connect():

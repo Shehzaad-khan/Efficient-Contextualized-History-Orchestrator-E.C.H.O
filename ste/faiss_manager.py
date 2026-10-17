@@ -8,9 +8,11 @@ mirrored by a numpy cache, plus one `embedding_index` row per vector in
 PostgreSQL. L2 distance is not cosine similarity — anything that needs a
 similarity score must compute true cosine from the vectors (cosine()).
 
-On disk: enp/echo_faiss.index (the vectors) + enp/echo_faiss.index.meta.json
-(the memory_id of each row, in order). Row offset N in the index belongs to
-memory_ids[N].
+On disk: data_faiss/echo_faiss.index (the vectors) +
+data_faiss/echo_faiss.index.meta.json (the memory_id of each row, in order).
+Row offset N in the index belongs to memory_ids[N]. The same folder holds the
+classifier's centroids.npz. data_faiss/ is git-ignored (personal data); set
+ECHO_FAISS_INDEX_PATH to use another location.
 
 Callers:
     Writes   enp/enrichment_pipeline.py   its OWN FAISSManager (ENP thread):
@@ -66,7 +68,8 @@ except ImportError:  # pragma: no cover - dependency-driven
 EMBEDDING_VERSION = "all-MiniLM-L6-v2-v1"
 VECTOR_DIMENSION = 384
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_INDEX_PATH = PROJECT_ROOT / "enp" / "echo_faiss.index"
+# Runtime data, kept out of the source folders.
+DEFAULT_INDEX_PATH = PROJECT_ROOT / "data_faiss" / "echo_faiss.index"
 
 # Rows preallocated the first time a vector is added. The vector cache grows by
 # doubling from here, so N appends cost O(N) row copies in total instead of the
