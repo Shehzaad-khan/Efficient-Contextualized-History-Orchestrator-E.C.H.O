@@ -1,7 +1,39 @@
+"""
+text_cleaner.py — text cleaning before embedding (architecture §5.2, §6.4, §9.1; ENP module)
+Echo Personal Memory System
+
+Caller: enrichment_pipeline.prepare_item_for_embedding -> clean_item_text(item).
+Returns CleanedContent(clean_text, headings, snippet); topic_extractor builds the
+embeddable text from it.
+
+What arrives here (raw_text as stored by each connector):
+  gmail    plain text. ingestion/gmail/gmail_api.py already turned HTML into text
+           (tags, <head>, tracking pixels and invisible characters gone, line
+           breaks kept). Rows stored before that change may still hold HTML,
+           so HTML is detected and converted here too.
+  chrome   plain text. The extension sends the innerText of <article>/<main>/
+           <body> with all whitespace collapsed, so no tags and no headings
+           reach the backend. The Readability branch runs only if a row really
+           holds HTML (decision A13).
+  youtube  title + description (+ transcript, empty today — decision A11).
+
+Steps per source:
+  gmail    [HTML -> text] -> drop quoted replies -> drop signature -> normalize
+  chrome   [HTML -> Readability -> text + headings] or normalize
+  youtube  join title, description, transcript -> normalize
+
+Tracking pixels (doc §5.2) need no step of their own: an <img> holds no text,
+and stripping tags removes it (here and in gmail_api).
+
+Pure functions, no shared state: safe from any thread. Logs at DEBUG only, and
+never logs content.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from html import unescape
+import logging
 import re
 from typing import Any
 
@@ -15,15 +47,30 @@ try:
 except ImportError:  # pragma: no cover - dependency-driven
     Document = None
 
+logger = logging.getLogger(__name__)
 
-HTML_TAG_RE = re.compile(r"<[^>]+>")
-TRACKING_PIXEL_RE = re.compile(
-    r"<img\b[^>]*(?:width=['\"]?1['\"]?|height=['\"]?1['\"]?|display\s*:\s*none|visibility\s*:\s*hidden)[^>]*>",
+SNIPPET_LIMIT = 500
+
+# Real HTML markup, not just a "<" in prose ("if a < b and b > c").
+HTML_SNIFF_RE = re.compile(
+    r"<(?:html|head|body|div|p|br|span|table|tr|td|a|img|h[1-6]|ul|ol|li|article|main|section)\b[^>]*>",
     flags=re.IGNORECASE,
 )
-SCRIPT_STYLE_RE = re.compile(r"<(script|style|noscript)[^>]*>.*?</\1>", flags=re.IGNORECASE | re.DOTALL)
+HTML_TAG_RE = re.compile(r"<[^>]+>")
+# \b so <header> is not taken for <head>.
+DROP_BLOCK_RE = re.compile(r"<(script|style|noscript|head|title)\b[^>]*>.*?</\1\s*>", flags=re.IGNORECASE | re.DOTALL)
 COMMENT_RE = re.compile(r"<!--.*?-->", flags=re.DOTALL)
-MULTISPACE_RE = re.compile(r"[ \t]+")
+# Tags that end a visual line. Same set as gmail_api, so both produce the
+# line structure the quote and signature steps rely on.
+LINE_BREAK_TAG_RE = re.compile(
+    r"<br\s*/?>|</(?:p|div|tr|li|h[1-6]|table|blockquote|ul|ol)\s*>|<(?:hr|li)\b[^>]*>",
+    flags=re.IGNORECASE,
+)
+# Zero-width and other invisible characters (email preheader padding, soft
+# hyphens). Same set as gmail_api._INVISIBLE_RE.
+INVISIBLE_RE = re.compile("[­͏​-‏⁠﻿]")
+# Any whitespace except a newline: spaces, tabs, non-breaking spaces (&nbsp;).
+INLINE_SPACE_RE = re.compile(r"[^\S\n]+")
 MULTINEWLINE_RE = re.compile(r"\n{3,}")
 
 SIGNATURE_MARKERS = (
@@ -37,7 +84,12 @@ SIGNATURE_MARKERS = (
     "sincerely",
     "sent from my",
 )
+# "On <date>, <name> <address> wrote:" on one line (Apple Mail, Gmail when short) ...
 REPLY_HEADER_RE = re.compile(r"^on .+wrote:$", flags=re.IGNORECASE)
+# ... or wrapped by Gmail's ~78-char plain-text line limit, with "wrote:" alone
+# on the next line.
+REPLY_HEADER_START_RE = re.compile(r"^on .+", flags=re.IGNORECASE)
+REPLY_HEADER_END_RE = re.compile(r"^(?:.+ )?wrote:$", flags=re.IGNORECASE)
 EMAIL_ONLY_RE = re.compile(r"^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$", flags=re.IGNORECASE)
 NAME_ONLY_RE = re.compile(r"^[A-Za-z][A-Za-z .'-]{1,50}$")
 
@@ -50,65 +102,69 @@ class CleanedContent:
 
 
 def normalize_text(text: str) -> str:
-    text = text.replace("\r", "\n")
-    text = MULTISPACE_RE.sub(" ", text)
-    text = MULTINEWLINE_RE.sub("\n\n", text)
-    return text.strip()
+    """Unify line endings, drop invisible characters, collapse runs of spaces
+    (incl. &nbsp;) and of blank lines. Line breaks themselves are kept."""
+    # "\r\n" first: replacing a lone "\r" before it would turn every Windows
+    # line ending into a blank line.
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    text = INVISIBLE_RE.sub("", text)
+    lines = [INLINE_SPACE_RE.sub(" ", line).strip() for line in text.split("\n")]
+    return MULTINEWLINE_RE.sub("\n\n", "\n".join(lines)).strip()
 
 
-def truncate(text: str, limit: int = 500) -> str:
+def truncate(text: str, limit: int = SNIPPET_LIMIT) -> str:
+    """Normalized text cut to `limit` chars at the last word boundary."""
     value = normalize_text(text)
     if len(value) <= limit:
         return value
     return value[:limit].rsplit(" ", 1)[0].strip()
 
 
+def looks_like_html(text: str) -> bool:
+    return bool(text) and HTML_SNIFF_RE.search(text) is not None
+
+
 def html_to_text(html: str) -> str:
+    """HTML -> readable text with its line structure kept."""
     if not html:
         return ""
-    stripped = COMMENT_RE.sub(" ", html)
-    stripped = SCRIPT_STYLE_RE.sub(" ", stripped)
-    stripped = re.sub(r"(?i)<br\s*/?>", "\n", stripped)
-    stripped = re.sub(r"(?i)</p>", "\n", stripped)
-    stripped = re.sub(r"(?i)</div>", "\n", stripped)
-    stripped = HTML_TAG_RE.sub(" ", stripped)
+    stripped = COMMENT_RE.sub(" ", html)  # includes Outlook's <!--[if mso]> blocks
+    stripped = DROP_BLOCK_RE.sub(" ", stripped)
+    stripped = LINE_BREAK_TAG_RE.sub("\n", stripped)
+    stripped = HTML_TAG_RE.sub(" ", stripped)  # also drops <img> tracking pixels
     return normalize_text(unescape(stripped))
 
 
-def remove_tracking_pixels(html: str) -> str:
-    if not html:
-        return ""
-
-    if BeautifulSoup is None:
-        return TRACKING_PIXEL_RE.sub(" ", html)
-
-    soup = BeautifulSoup(html, "html.parser")
-    for img in soup.find_all("img"):
-        width = (img.get("width") or "").strip()
-        height = (img.get("height") or "").strip()
-        style = (img.get("style") or "").lower()
-        hidden = "display:none" in style.replace(" ", "") or "visibility:hidden" in style.replace(" ", "")
-        if width == "1" or height == "1" or hidden:
-            img.decompose()
-    return str(soup)
-
-
 def remove_quoted_replies(text: str) -> str:
+    """Drop "> " quoted lines, and everything from the "On ... wrote:" reply
+    header down (the earlier messages, already stored as their own rows).
+
+    A "Forwarded message" block is kept: its content exists nowhere else.
+    """
     if not text:
         return ""
 
+    lines = text.splitlines()
     cleaned_lines: list[str] = []
-    for line in text.splitlines():
+    for index, line in enumerate(lines):
         stripped = line.strip()
         if stripped.startswith(">"):
             continue
         if REPLY_HEADER_RE.match(stripped):
+            break
+        if (
+            REPLY_HEADER_START_RE.match(stripped)
+            and index + 1 < len(lines)
+            and REPLY_HEADER_END_RE.match(lines[index + 1].strip())
+        ):
             break
         cleaned_lines.append(line)
     return "\n".join(cleaned_lines)
 
 
 def _looks_like_signature_line(line: str) -> bool:
+    # Heuristic under review (decision A12): it also matches ordinary short
+    # lines ("Deploy is done") and sentences starting with "Thanks"/"Regards".
     lowered = line.strip().lower()
     if not lowered:
         return False
@@ -124,6 +180,8 @@ def _looks_like_signature_line(line: str) -> bool:
 
 
 def remove_email_signature(text: str) -> str:
+    """Cut the mail at the first signature-looking line in its last 6 lines
+    (never line 0). Decision A12 covers replacing or removing this step."""
     if not text:
         return ""
 
@@ -144,9 +202,13 @@ def remove_email_signature(text: str) -> str:
 
 
 def clean_gmail_text(raw_text: str) -> CleanedContent:
-    without_pixels = remove_tracking_pixels(raw_text or "")
-    plain_text = html_to_text(without_pixels)
-    no_quotes = remove_quoted_replies(plain_text)
+    text = raw_text or ""
+    if looks_like_html(text):
+        logger.debug("Gmail body still holds HTML (pre-connector-fix row); converting")
+        text = html_to_text(text)
+    else:
+        text = normalize_text(text)
+    no_quotes = remove_quoted_replies(text)
     no_signature = remove_email_signature(no_quotes)
     cleaned = normalize_text(no_signature)
     return CleanedContent(clean_text=cleaned, snippet=truncate(cleaned))
@@ -162,6 +224,7 @@ def _extract_headings_from_soup(soup: Any) -> list[str]:
 
 
 def _fallback_extract_article_html(raw_html: str) -> str:
+    """Readability stand-in: drop page chrome, keep the node with the most text."""
     if not raw_html:
         return ""
 
@@ -187,18 +250,23 @@ def _fallback_extract_article_html(raw_html: str) -> str:
     return str(best_node or soup)
 
 
-def clean_chrome_text(raw_html: str) -> CleanedContent:
-    if not raw_html:
+def clean_chrome_text(raw_text: str) -> CleanedContent:
+    if not raw_text:
         return CleanedContent(clean_text="")
 
-    article_html = raw_html
-    if Document is not None and "<" in raw_html and ">" in raw_html:
+    if not looks_like_html(raw_text):
+        # The normal case: the extension already sent the main text.
+        clean_text = normalize_text(raw_text)
+        return CleanedContent(clean_text=clean_text, snippet=truncate(clean_text))
+
+    if Document is not None:
         try:
-            article_html = Document(raw_html).summary(html_partial=True)
-        except Exception:
-            article_html = _fallback_extract_article_html(raw_html)
+            article_html = Document(raw_text).summary(html_partial=True)
+        except Exception as exc:
+            logger.debug("Readability failed (%s); using the fallback extractor", type(exc).__name__)
+            article_html = _fallback_extract_article_html(raw_text)
     else:
-        article_html = _fallback_extract_article_html(raw_html)
+        article_html = _fallback_extract_article_html(raw_text)
 
     if BeautifulSoup is None:
         clean_text = html_to_text(article_html)
@@ -223,6 +291,7 @@ def clean_youtube_text(title: str = "", description: str = "", transcript: str =
 
 
 def clean_item_text(item: dict[str, Any]) -> CleanedContent:
+    """Clean one memory item by its source. Unknown sources: normalize only."""
     source = (item.get("source") or item.get("source_type") or "").lower()
 
     if source == "gmail":
@@ -230,8 +299,8 @@ def clean_item_text(item: dict[str, Any]) -> CleanedContent:
         return clean_gmail_text(raw_body)
 
     if source == "chrome":
-        raw_html = item.get("raw_html") or item.get("raw_text") or ""
-        return clean_chrome_text(raw_html)
+        raw_text = item.get("raw_html") or item.get("raw_text") or ""
+        return clean_chrome_text(raw_text)
 
     if source == "youtube":
         return clean_youtube_text(

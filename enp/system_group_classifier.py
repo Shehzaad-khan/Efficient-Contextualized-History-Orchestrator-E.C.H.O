@@ -1,14 +1,55 @@
+"""
+system_group_classifier.py — 4-stage system group classifier (architecture §9; ENP module)
+Echo Personal Memory System
+
+Every item gets exactly one of work | study | entertainment | personal | misc.
+Caller: enrichment_pipeline.classify_item -> classify_system_group(item, embedding)
+-> (category, classified_by, confidence). The first stage that is sure wins:
+
+  1. stage1_structural     source metadata: Gmail labels / sender domain,
+                           YouTube Shorts + categoryId, Chrome .edu/.ac.in and
+                           WORK_DOMAINS / ENTERTAINMENT_DOMAINS     -> 'structural', 1.0
+  2. stage2_domain_lookup  Chrome only: DOMAIN_CATEGORY_MAP          -> 'domain', 0.95
+  3. stage3_centroid       cosine of the item's MiniLM vector (its embeddable_text)
+                           to 5 category centroids; needs best > 0.55 AND a
+                           0.08 lead over the runner-up            -> 'centroid', cosine
+  4. stage4_llm_fallback   LLM reads source + title + first 300 chars of the
+                           clean text (_STAGE4_PROMPT, the doc's prompt) -> 'llm', 0.90
+                           No LLM configured / failure / bad answer -> 'misc', 'fallback', 0.40
+
+Centroids (CENTROIDS):
+  - initialize_centroids (ENP start): embed the 5 SEED_TEXTS, then override them
+    with data/.../centroids.npz when a recompute has saved one.
+  - recompute_centroids (scripts/enp_recompute_centroids.py, run monthly by
+    hand): per category, the mean stored FAISS vector of items classified
+    'structural', 'user_override' or 'llm' (needs >= 10 such items), saved
+    to centroids.npz. The ENP thread picks it up on its next start.
+
+Threading: CENTROIDS and the Stage-4 client are module globals written only by
+the ENP thread (and by the recompute script, a separate process); nothing else
+in the backend calls this module, so no lock. Never logs titles or content.
+"""
+
 import logging
+import os
+from pathlib import Path
+import re
+import tempfile
 from typing import Any, Dict
 from urllib.parse import urlparse
 
-from sklearn.metrics.pairwise import cosine_similarity
+import numpy as np
+
+from ste.faiss_manager import DEFAULT_INDEX_PATH, cosine, get_manager
 
 logger = logging.getLogger(__name__)
 
 # -------------------------
 # CONSTANTS
 # -------------------------
+# Stage 1 (structural). Stage 2's DOMAIN_CATEGORY_MAP holds only domains NOT
+# listed here: these lists are checked first, so a duplicate there would never
+# be reached.
 WORK_DOMAINS = [
     "github.com", "gitlab.com", "bitbucket.org",
     "slack.com", "teams.microsoft.com", "discord.com",
@@ -38,7 +79,10 @@ ENTERTAINMENT_DOMAINS = [
     "letterboxd.com", "goodreads.com",
 ]
 
-# Comprehensive domain-to-category mappings (200+ entries)
+# Stage 2: domain -> category for Chrome pages. Matched on the host and every
+# parent domain (docs.python.org -> python.org). Keys are host names only: the
+# URL path is not looked at, so a "site.com/section" key could never match.
+# Coverage is small (decision A17).
 DOMAIN_CATEGORY_MAP = {
     # STUDY DOMAINS
     "geeksforgeeks.org": "study",
@@ -69,13 +113,10 @@ DOMAIN_CATEGORY_MAP = {
     "codecademy.com": "study",
     "datacamp.com": "study",
     "pluralsight.com": "study",
-    "linkedin.com/learning": "study",
     "w3schools.com": "study",
     "mdn.mozilla.org": "study",
     "developer.mozilla.org": "study",
     "docs.microsoft.com": "study",
-    "cloud.google.com/docs": "study",
-    "aws.amazon.com/documentation": "study",
     "python.org": "study",
     "cplusplus.com": "study",
     "cppreference.com": "study",
@@ -117,7 +158,6 @@ DOMAIN_CATEGORY_MAP = {
     "jenkins.io": "study",
     "circleci.com": "study",
     "travis-ci.org": "study",
-    "github.com/actions": "study",
     "webpack.js.org": "study",
     "rollupjs.org": "study",
     "parceljs.org": "study",
@@ -129,7 +169,6 @@ DOMAIN_CATEGORY_MAP = {
     "angularjs.org": "study",
     "angular.io": "study",
     "svelte.dev": "study",
-    "ember.js": "study",
     "backbonejs.org": "study",
     "jquery.com": "study",
     "jsfiddle.net": "study",
@@ -138,39 +177,7 @@ DOMAIN_CATEGORY_MAP = {
     "jsperf.com": "study",
     "caniuse.com": "study",
     # WORK DOMAINS
-    "github.com": "work",
-    "gitlab.com": "work",
-    "bitbucket.org": "work",
-    "slack.com": "work",
-    "teams.microsoft.com": "work",
-    "discord.com": "work",
-    "jira.com": "work",
-    "asana.com": "work",
-    "monday.com": "work",
-    "trello.com": "work",
-    "notion.so": "work",
-    "confluence.atlassian.net": "work",
-    "outlook.office.com": "work",
-    "mail.google.com": "work",
     "gmail.com": "work",
-    "zoom.us": "work",
-    "meet.google.com": "work",
-    "whereby.com": "work",
-    "aws.amazon.com": "work",
-    "cloud.google.com": "work",
-    "azure.microsoft.com": "work",
-    "salesforce.com": "work",
-    "hubspot.com": "work",
-    "pipedrive.com": "work",
-    "figma.com": "work",
-    "adobe.com": "work",
-    "canva.com": "work",
-    "tableau.com": "work",
-    "power.bi": "work",
-    "metabase.com": "work",
-    "stripe.com": "work",
-    "square.com": "work",
-    "shopify.com": "work",
     "wistia.com": "work",
     "vimeo.com": "work",
     "airtable.com": "work",
@@ -187,37 +194,6 @@ DOMAIN_CATEGORY_MAP = {
     "atlassian.net": "work",
     "bitbucket.io": "work",
     # ENTERTAINMENT DOMAINS
-    "youtube.com": "entertainment",
-    "youtu.be": "entertainment",
-    "netflix.com": "entertainment",
-    "primevideo.com": "entertainment",
-    "hulu.com": "entertainment",
-    "disneyplus.com": "entertainment",
-    "spotify.com": "entertainment",
-    "music.apple.com": "entertainment",
-    "soundcloud.com": "entertainment",
-    "twitch.tv": "entertainment",
-    "kick.com": "entertainment",
-    "reddit.com": "entertainment",
-    "9gag.com": "entertainment",
-    "imgur.com": "entertainment",
-    "tiktok.com": "entertainment",
-    "instagram.com": "entertainment",
-    "facebook.com": "entertainment",
-    "twitter.com": "entertainment",
-    "x.com": "entertainment",
-    "pinterest.com": "entertainment",
-    "tumblr.com": "entertainment",
-    "steam.com": "entertainment",
-    "epicgames.com": "entertainment",
-    "playstation.com": "entertainment",
-    "xbox.com": "entertainment",
-    "roblox.com": "entertainment",
-    "minecraft.net": "entertainment",
-    "imdb.com": "entertainment",
-    "rottentomatoes.com": "entertainment",
-    "letterboxd.com": "entertainment",
-    "goodreads.com": "entertainment",
     "wattpad.com": "entertainment",
     "webtoon.com": "entertainment",
     "comixology.com": "entertainment",
@@ -259,10 +235,19 @@ SEED_TEXTS = {
     "misc": "general information article news update random browse read",
 }
 
-CENTROIDS = {}
+# Stage 3 thresholds (doc §9.3). Measured 2026-10-17: against the SEED centroids,
+# realistic items score only 0.10-0.55, so Stage 3 fired on 1 of 20 (decision A18).
+CENTROID_MIN_SCORE = 0.55
+CENTROID_MIN_MARGIN = 0.08
+
+# category -> centroid vector; filled by initialize_centroids / recompute_centroids.
+CENTROIDS: Dict[str, np.ndarray] = {}
+# Categories whose centroid came from centroids.npz (kept when saving again).
+_persisted_categories: set[str] = set()
 
 
 def _normalize_domain(value: Any) -> str:
+    """'https://www.Docs.Python.org/3/' or 'a@b.org' -> 'docs.python.org' / 'b.org'."""
     raw = str(value or "").strip().lower()
     if not raw:
         return ""
@@ -277,11 +262,13 @@ def _normalize_domain(value: Any) -> str:
 
 
 def _domain_matches(domain: str, candidates) -> bool:
+    """True when domain is a candidate or a subdomain of one."""
     normalized = _normalize_domain(domain)
     return any(normalized == candidate or normalized.endswith(f".{candidate}") for candidate in candidates)
 
 
 def _domain_category(domain: str) -> str | None:
+    """Look up the host, then each parent domain, in DOMAIN_CATEGORY_MAP."""
     normalized = _normalize_domain(domain)
     if not normalized:
         return None
@@ -303,18 +290,13 @@ def _coerce_category_id(value: Any) -> int | None:
 # -------------------------
 # INIT CENTROIDS
 # -------------------------
-def _centroids_path():
-    from pathlib import Path
-    from ste.faiss_manager import DEFAULT_INDEX_PATH
-
+def _centroids_path() -> Path:
     return Path(DEFAULT_INDEX_PATH).parent / "centroids.npz"
 
 
 def _load_persisted_centroids() -> bool:
     """Load centroids saved by a previous recompute_centroids() run.
     Returns True when at least one category was loaded."""
-    import numpy as np
-
     path = _centroids_path()
     if not path.exists():
         return False
@@ -323,21 +305,26 @@ def _load_persisted_centroids() -> bool:
             for category in stored.files:
                 if category in SEED_TEXTS:
                     CENTROIDS[category] = stored[category]
-        return bool(CENTROIDS)
+                    _persisted_categories.add(category)
     except Exception as exc:
         logger.warning("Failed to load persisted centroids from %s: %s", path, exc)
         return False
+    logger.info("Loaded recomputed centroids for %s from %s", sorted(_persisted_categories), path.name)
+    return bool(_persisted_categories)
 
 
-def initialize_centroids(generate_embedding):
-    global CENTROIDS
+def initialize_centroids(generate_embedding) -> None:
+    """Seed all 5 centroids, then let recomputed ones (centroids.npz) override.
+
+    Categories below the recompute threshold keep their seeds. Runs once per
+    process; later calls do nothing.
+    """
     if CENTROIDS:
         return
-    # Seed every category first, then let persisted (recomputed) centroids
-    # override — categories below the recompute threshold keep their seeds.
     for category, text in SEED_TEXTS.items():
         CENTROIDS[category] = generate_embedding(text)
-    _load_persisted_centroids()
+    if not _load_persisted_centroids():
+        logger.info("Using seed centroids only (no centroids.npz yet)")
 
 # -------------------------
 # STAGE 1
@@ -409,32 +396,38 @@ def stage2_domain_lookup(item: Dict[str, Any]):
 # STAGE 3
 # -------------------------
 def stage3_centroid(embedding):
+    """Nearest centroid by true cosine (vectors are unnormalized), only when
+    the best score is high enough AND clearly ahead of the runner-up."""
     if embedding is None or len(CENTROIDS) < 2:
         return None
 
-    scores = {}
-
-    for category, centroid in CENTROIDS.items():
-        sim = cosine_similarity([embedding], [centroid])[0][0]
-        scores[category] = sim
-
+    scores = {category: cosine(embedding, centroid) for category, centroid in CENTROIDS.items()}
     sorted_scores = sorted(scores.items(), key=lambda x: x[1], reverse=True)
 
     best_cat, best_score = sorted_scores[0]
     second_score = sorted_scores[1][1]
 
-    if best_score > 0.55 and (best_score - second_score) > 0.08:
+    if best_score > CENTROID_MIN_SCORE and (best_score - second_score) > CENTROID_MIN_MARGIN:
         return best_cat, "centroid", float(best_score)
 
+    logger.debug(
+        "Stage 3 not confident: best=%s %.2f, margin %.2f",
+        best_cat,
+        best_score,
+        best_score - second_score,
+    )
     return None
 
 # -------------------------
 # STAGE 4 — LLM fallback (architecture §9.4)
 # -------------------------
 _VALID_CATEGORIES = {"work", "study", "entertainment", "personal", "misc"}
+_FALLBACK = ("misc", "fallback", 0.40)
 _llm_client = None
 _llm_unavailable = False
 
+# The doc's prompt (§9.4), word for word. Only the source, a 200-char title and
+# a 300-char snippet leave the machine (privacy rule: short snippets only).
 _STAGE4_PROMPT = """Classify the following content into exactly one category:
   work | study | entertainment | personal | misc
 
@@ -443,12 +436,15 @@ Title:  "{title}"
 Snippet:"{snippet}"
 
 Reply with exactly one word. Nothing else."""
+_STAGE4_TITLE_CHARS = 200
+_STAGE4_SNIPPET_CHARS = 300
 
 
 def _get_stage4_llm():
     """
     Lazily build the fallback classifier LLM from the shared plug-and-play
-    LLM_CONFIG (rse.config — single provider change point for the whole app).
+    LLM_CONFIG (rse.config — single provider change point for the whole app),
+    with the same temperature and fail-fast retry limit as RSE's parse_intent.
     Returns None when no provider/API key is configured; Stage 4 then degrades
     to the deterministic 'misc' fallback so enrichment never blocks on the LLM.
     """
@@ -462,8 +458,10 @@ def _get_stage4_llm():
         _llm_client = init_chat_model(
             model=LLM_CONFIG["parser_model"],
             model_provider=LLM_CONFIG["provider"],
-            temperature=0.0,
+            temperature=LLM_CONFIG.get("parser_temperature", 0.0),
+            max_retries=LLM_CONFIG.get("max_retries", 2),
         )
+        logger.info("Stage 4 LLM ready: %s / %s", LLM_CONFIG["provider"], LLM_CONFIG["parser_model"])
     except Exception as exc:
         logger.warning("Stage 4 LLM unavailable, falling back to 'misc': %s", exc)
         _llm_unavailable = True
@@ -471,25 +469,35 @@ def _get_stage4_llm():
     return _llm_client
 
 
+def _parse_category(reply: Any) -> str | None:
+    """First word of the reply, lower-cased, punctuation stripped ('Work.' -> 'work')."""
+    words = re.findall(r"[a-z]+", str(reply or "").lower())
+    if words and words[0] in _VALID_CATEGORIES:
+        return words[0]
+    return None
+
+
 def stage4_llm_fallback(item):
     llm = _get_stage4_llm()
     if llm is None:
-        return "misc", "fallback", 0.40
+        return _FALLBACK
 
     prompt = _STAGE4_PROMPT.format(
         source=item.get("source") or item.get("source_type") or "unknown",
-        title=(item.get("title") or "")[:200],
-        snippet=(item.get("clean_text") or item.get("raw_text") or "")[:300],
+        title=(item.get("title") or "")[:_STAGE4_TITLE_CHARS],
+        snippet=(item.get("clean_text") or item.get("raw_text") or "")[:_STAGE4_SNIPPET_CHARS],
     )
     try:
         response = llm.invoke(prompt)
-        category = str(response.content).strip().lower().split()[0]
-        if category in _VALID_CATEGORIES:
-            return category, "llm", 0.90
-        logger.warning("Stage 4 LLM returned invalid category %r; using 'misc'", category)
     except Exception as exc:
-        logger.warning("Stage 4 LLM classification failed: %s", exc)
-    return "misc", "fallback", 0.40
+        logger.warning("Stage 4 LLM call failed (%s); using 'misc'", type(exc).__name__)
+        return _FALLBACK
+
+    category = _parse_category(getattr(response, "content", ""))
+    if category is None:
+        logger.warning("Stage 4 LLM reply is not a category (%r); using 'misc'", str(response.content)[:40])
+        return _FALLBACK
+    return category, "llm", 0.90
 
 # -------------------------
 # CENTROID RECOMPUTATION (architecture §9.3 — "How Centroids Improve Over Time")
@@ -497,23 +505,36 @@ def stage4_llm_fallback(item):
 _MIN_CONFIRMED_FOR_RECOMPUTE = 10
 
 
+def _save_centroids(categories: set[str]) -> None:
+    """Write CENTROIDS[categories] to centroids.npz atomically (temp file + replace)."""
+    path = _centroids_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # The temp name must end in .npz, or np.savez appends it.
+    fd, temp_name = tempfile.mkstemp(dir=path.parent, prefix="centroids.", suffix=".tmp.npz")
+    os.close(fd)
+    try:
+        np.savez(temp_name, **{category: CENTROIDS[category] for category in sorted(categories)})
+        os.replace(temp_name, path)
+    except BaseException:
+        Path(temp_name).unlink(missing_ok=True)
+        raise
+
+
 def recompute_centroids() -> Dict[str, int]:
     """
     Recompute each category centroid as the mean embedding of confirmed items
     (classified_by IN structural/user_override — plus llm results, which the
-    architecture also feeds back into the monthly recomputation).
+    architecture also feeds back into the monthly recomputation, doc §9.4).
 
     A category keeps its current centroid until it has at least 10 confirmed
     items. Intended to run monthly via scripts/enp_recompute_centroids.py —
-    passive learning, no retraining.
+    passive learning, no retraining. Expects the shared FAISS manager to be
+    loaded (the script does that) and initialize_centroids() to have run.
 
     Returns:
         {category: confirmed_item_count} for every category that was updated.
     """
-    import numpy as np
-
     from ste import postgresql_manager
-    from enp.faiss_manager import get_manager
 
     rows = postgresql_manager.fetchall(
         """
@@ -528,29 +549,37 @@ def recompute_centroids() -> Dict[str, int]:
 
     manager = get_manager()
     by_category: Dict[str, list] = {}
+    not_indexed = 0
     for row in rows:
-        offset = manager.memory_id_to_offset.get(str(row["memory_id"]))
-        if offset is not None:
-            by_category.setdefault(row["group_name"], []).append(manager.vectors[offset])
+        vector = manager.get_vector(str(row["memory_id"]))  # locked read (tracker C4)
+        if vector is None:
+            not_indexed += 1
+            continue
+        by_category.setdefault(row["group_name"], []).append(vector)
+    if not_indexed:
+        logger.warning("recompute_centroids: %d confirmed items have no FAISS vector; skipped", not_indexed)
 
     updated: Dict[str, int] = {}
     for category, vectors in by_category.items():
         if category not in _VALID_CATEGORIES or len(vectors) < _MIN_CONFIRMED_FOR_RECOMPUTE:
+            logger.info("recompute_centroids: %s kept (%d confirmed items, need %d)",
+                        category, len(vectors), _MIN_CONFIRMED_FOR_RECOMPUTE)
             continue
         CENTROIDS[category] = np.mean(np.asarray(vectors, dtype=np.float32), axis=0)
         updated[category] = len(vectors)
         logger.info("recompute_centroids: %s updated from %d confirmed items", category, len(vectors))
 
     if updated:
-        # Persist so the ENP worker (a different process) picks the new
-        # centroids up on its next start via initialize_centroids().
-        path = _centroids_path()
+        # Persist so the ENP worker picks the new centroids up on its next start
+        # via initialize_centroids(). Categories recomputed in an earlier run are
+        # saved again too, so a run that updates fewer never drops them.
+        to_save = set(updated) | _persisted_categories
         try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            np.savez(path, **{c: CENTROIDS[c] for c in updated})
-            logger.info("recompute_centroids: persisted %d centroids to %s", len(updated), path)
-        except Exception as exc:
-            logger.error("recompute_centroids: failed to persist centroids — %s", exc)
+            _save_centroids(to_save)
+            _persisted_categories.update(updated)
+            logger.info("recompute_centroids: persisted %d centroids to %s", len(to_save), _centroids_path())
+        except Exception:
+            logger.exception("recompute_centroids: failed to persist centroids")
 
     return updated
 
@@ -559,20 +588,20 @@ def recompute_centroids() -> Dict[str, int]:
 # MAIN FUNCTION
 # -------------------------
 def classify_system_group(item: Dict[str, Any], embedding=None):
-    if item.get("source") == "youtube" and item.get("is_short"):
-        return "entertainment", "structural", 1.0
-
+    """Run the stages in order; the first confident one wins. Never returns
+    None: the last resort is 'misc' (system_group_id must never be NULL)."""
     result = stage1_structural(item)
-    if result:
-        return result
-
-    result = stage2_domain_lookup(item)
-    if result:
-        return result
-
-    if embedding is not None:
+    if result is None:
+        result = stage2_domain_lookup(item)
+    if result is None and embedding is not None:
         result = stage3_centroid(embedding)
-        if result:
-            return result
+    if result is None:
+        result = stage4_llm_fallback(item)
 
-    return stage4_llm_fallback(item)
+    logger.debug(
+        "Classified memory_id=%s (%s) as %s via %s (%.2f)",
+        item.get("memory_id"),
+        item.get("source"),
+        *result,
+    )
+    return result

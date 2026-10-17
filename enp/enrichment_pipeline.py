@@ -1,49 +1,77 @@
+"""
+enrichment_pipeline.py — ENP worker loop (architecture §5, §9; ENP module)
+Echo Personal Memory System
+
+Every connector stores a raw memory_items row with preprocessed = FALSE. This
+worker turns those rows into searchable memories:
+
+  1. fetch_unprocessed_items   next batch, oldest first (skips 'failed' rows and
+                               YouTube rows still waiting for their metadata)
+  2. load_item_context         per-source metadata (gmail / chrome / youtube tables)
+  3. clean_item_text           text_cleaner: HTML, quotes, signatures -> clean text
+  4. build_embeddable_text     topic_extractor: the text to embed + auto_keywords
+  5. generate_embeddings       embedding_generator: MiniLM, whole batch at once
+  6. classify_system_group     system_group_classifier: 4-stage system group
+  7. FAISSManager.add          vector + embedding_index row
+  8. save_index                FAISS file written BEFORE any row is marked done
+  9. mark_item_processed       system group, keywords, preprocessed = TRUE
+
+A row that fails at any step is marked classified_by = 'failed' and is skipped
+by later batches (set ENP_RETRY_FAILED=true, or scripts/enp_run_once.py
+--retry-failed, to try them again).
+
+Threading: run_pipeline is blocking. backend/main.py runs it in a worker
+thread named 'enp-worker', so nothing here touches the event loop. Pass a
+threading.Event as stop_event and set it to stop the loop between batches.
+Known gap (tracked as C4): this thread builds its own FAISSManager, so RSE does
+not see new vectors until a restart. Switching to get_manager() must wait until
+the RSE / WBA readers use the locked FAISS API.
+
+Database: psycopg2 with %s params. One connection per batch, reused for every
+read and write in it. Each item's writes commit on their own.
+"""
+
 from __future__ import annotations
 
 import logging
 import os
 from pathlib import Path
 import sys
+import threading
 import time
 from typing import Any
 
 import psycopg2
-from dotenv import load_dotenv
 
 if __package__ in (None, ""):
+    # Run as a script (python enp/enrichment_pipeline.py): make the repo root importable.
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-    from enp.embedding_generator import generate_embedding, generate_embeddings
-    from enp.system_group_classifier import classify_system_group, initialize_centroids
-    from enp.text_cleaner import clean_item_text
-    from enp.topic_extractor import build_embeddable_text, parse_message_history, sender_domain_hint
-    from ste.faiss_manager import EMBEDDING_VERSION, VECTOR_DIMENSION, FAISSManager
-else:
-    from .embedding_generator import generate_embedding, generate_embeddings
-    from .system_group_classifier import classify_system_group, initialize_centroids
-    from .text_cleaner import clean_item_text
-    from .topic_extractor import build_embeddable_text, parse_message_history, sender_domain_hint
-    from ste.faiss_manager import EMBEDDING_VERSION, VECTOR_DIMENSION, FAISSManager
 
-load_dotenv()
+from enp.embedding_generator import generate_embedding, generate_embeddings
+from enp.system_group_classifier import classify_system_group, initialize_centroids
+from enp.text_cleaner import clean_item_text
+from enp.topic_extractor import build_embeddable_text, sender_domain_hint
+from ste.faiss_manager import EMBEDDING_VERSION, VECTOR_DIMENSION, FAISSManager
+from ste.storage_engine import SYSTEM_GROUP_IDS
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 DEFAULT_BATCH_SIZE = 10
 DEFAULT_POLL_INTERVAL = 10
 FAILED_CLASSIFIED_BY = "failed"
 RETRY_FAILED_ENV = "ENP_RETRY_FAILED"
-# How long a source-metadata backfill is given before an empty item is treated
-# as permanently empty rather than not-yet-arrived (see _awaiting_hydration).
+
+# YouTube rows are inserted by /ytc/video-detected with an empty title and
+# raw_text; youtube_connector fills them from the Data API in a background task
+# a few seconds later. A row picked up before that has only its video_id to
+# embed, and once marked preprocessed it is never embedded again, so it would
+# stay findable by ID only. The fetch query therefore skips such rows for this
+# long. After it, the backfill is taken as failed and the row is indexed with
+# what it has (video_id + URL), so it never stays hidden from retrieval.
 HYDRATION_GRACE_SECONDS = 600
 
-SYSTEM_GROUP_IDS = {
-    "work": 1,
-    "study": 2,
-    "entertainment": 3,
-    "personal": 4,
-    "misc": 5,
-}
+# Whitespace characters BTRIM strips, matching Python's str.strip() for our data.
+_SQL_WHITESPACE = " \t\r\n"
 
 
 def get_database_url() -> str:
@@ -63,14 +91,24 @@ def fetch_unprocessed_items(
     *,
     include_failed: bool | None = None,
 ) -> list[dict[str, Any]]:
+    """Next batch of rows to enrich, oldest first.
+
+    YouTube rows still inside their metadata grace period are filtered out
+    here, in SQL, rather than skipped after fetching: skipped rows would stay
+    at the head of the queue and, once there were batch_size of them (a burst
+    of Shorts while the Data API is down), block every other row.
+    """
     if include_failed is None:
         include_failed = os.getenv(RETRY_FAILED_ENV, "").lower() in {"1", "true", "yes"}
 
-    failed_clause = "" if include_failed else "AND COALESCE(classified_by, 'pending') <> %s"
     params: list[Any] = []
+    failed_clause = ""
     if not include_failed:
+        failed_clause = "AND COALESCE(classified_by, 'pending') <> %s"
         params.append(FAILED_CLASSIFIED_BY)
-    params.append(batch_size)
+    # COALESCE(..., FALSE): a row with no first_ingested_at is processed now,
+    # not hidden forever.
+    params.extend([_SQL_WHITESPACE, _SQL_WHITESPACE, HYDRATION_GRACE_SECONDS, batch_size])
 
     with conn.cursor() as cursor:
         cursor.execute(
@@ -80,12 +118,17 @@ def fetch_unprocessed_items(
                    source_id,
                    title,
                    raw_text,
-                   created_at,
-                   EXTRACT(EPOCH FROM (LOCALTIMESTAMP - first_ingested_at)) AS age_seconds
+                   created_at
             FROM memory_items
             WHERE preprocessed = FALSE
               AND is_deleted = FALSE
               {failed_clause}
+              AND NOT (
+                    LOWER(source_type) = 'youtube'
+                AND BTRIM(COALESCE(title, ''), %s) = ''
+                AND BTRIM(COALESCE(raw_text, ''), %s) = ''
+                AND COALESCE(first_ingested_at > LOCALTIMESTAMP - %s * INTERVAL '1 second', FALSE)
+              )
             ORDER BY first_ingested_at ASC
             LIMIT %s
             """,
@@ -101,37 +144,17 @@ def fetch_unprocessed_items(
             "title": row[3] or "",
             "raw_text": row[4] or "",
             "created_at": row[5],
-            "age_seconds": float(row[6]) if row[6] is not None else None,
         }
         for row in rows
     ]
 
 
-def _awaiting_hydration(item: dict[str, Any]) -> bool:
-    """
-    True while a YouTube row is still waiting for its Data API backfill.
-
-    /ytc/video-detected inserts the memory row immediately with empty title and
-    raw_text; youtube_api_client fills them in a background task. An item picked
-    up inside that window has nothing to embed, and mark_item_failed is terminal
-    — fetch_unprocessed_items filters classified_by='failed' out of every later
-    batch — so a 10-second poll would permanently orphan videos that were only
-    a second away from being ready. Defer instead; leave the row pending.
-    """
-    if (item.get("source_type") or "").lower() != "youtube":
-        return False
-    if (item.get("title") or "").strip() or (item.get("raw_text") or "").strip():
-        return False
-    age_seconds = item.get("age_seconds")
-    return age_seconds is None or age_seconds < HYDRATION_GRACE_SECONDS
-
-
 def _fetch_thread_history(conn, item: dict[str, Any]) -> list[str]:
     """
     Thread Context Enrichment (architecture §5.3): fetch prior emails in the
-    same thread from the CANONICAL tables so a bare "Re:" reply inherits its
-    thread's topics in embeddable_text. Returns subject + keyword strings of
-    earlier thread messages (empty when the item opens the thread).
+    same thread so a bare "Re:" reply inherits its thread's topics in
+    embeddable_text. Returns subject + keyword + first-300-chars strings of up
+    to 5 earlier thread messages (empty when the item opens the thread).
     """
     thread_id = item.get("thread_id")
     if not thread_id:
@@ -189,37 +212,12 @@ def _fetch_gmail_context(conn, item: dict[str, Any]) -> dict[str, Any]:
                 "has_attachments": row[6],
             }
         )
+    else:
+        logger.warning("No gmail_metadata row for memory_id=%s; enriching from memory_items only", item["memory_id"])
 
-    # Thread context from canonical tables — primary source (architecture §5.3).
-    thread_history = _fetch_thread_history(conn, item)
-    if thread_history:
-        item["content_primary_text"] = item.get("raw_text", "")
-        item["message_history"] = thread_history
-        return item
-
-    # Legacy fallback for thread context and full body until Gmail is fully unified.
-    try:
-        with conn.cursor() as cursor:
-            cursor.execute(
-                """
-                SELECT content_primary_text, message_history
-                FROM gmail_memory
-                WHERE source_item_id = %s
-                ORDER BY created_at DESC
-                LIMIT 1
-                """,
-                (item["source_id"],),
-            )
-            legacy = cursor.fetchone()
-        if legacy:
-            item["content_primary_text"] = legacy[0] or item.get("raw_text", "")
-            item["message_history"] = parse_message_history(legacy[1])
-    except psycopg2.Error as exc:
-        conn.rollback()
-        logger.debug("Legacy gmail_memory lookup unavailable for memory_id=%s: %s", item["memory_id"], exc)
-        item["content_primary_text"] = item.get("raw_text", "")
-        item["message_history"] = None
-
+    # The full body is memory_items.raw_text (the connector stores it there).
+    item["content_primary_text"] = item.get("raw_text", "")
+    item["message_history"] = _fetch_thread_history(conn, item) or None
     return item
 
 
@@ -243,6 +241,8 @@ def _fetch_chrome_context(conn, item: dict[str, Any]) -> dict[str, Any]:
                 "domain": row[2] or "",
             }
         )
+    else:
+        logger.warning("No chrome_metadata row for memory_id=%s; enriching from memory_items only", item["memory_id"])
     item["raw_html"] = item.get("raw_text", "")
     return item
 
@@ -271,7 +271,9 @@ def _fetch_youtube_context(conn, item: dict[str, Any]) -> dict[str, Any]:
                 "youtube_category_id": row[6],
             }
         )
-    # Current YouTube connector stores description + tags in raw_text.
+    else:
+        logger.warning("No youtube_metadata row for memory_id=%s; enriching from memory_items only", item["memory_id"])
+    # The YouTube connector stores description + tags in raw_text.
     item["description"] = item.get("raw_text", "")
     return item
 
@@ -286,6 +288,8 @@ def load_item_context(conn, base_item: dict[str, Any]) -> dict[str, Any]:
         return _fetch_chrome_context(conn, item)
     if item["source"] == "youtube":
         return _fetch_youtube_context(conn, item)
+    logger.warning("Unknown source_type=%r for memory_id=%s; enriching from memory_items only",
+                   item["source_type"], item["memory_id"])
     return item
 
 
@@ -294,6 +298,8 @@ def _word_count(text: str) -> int:
 
 
 def prepare_item_for_embedding(conn, base_item: dict[str, Any]) -> dict[str, Any]:
+    """Steps 2-4: context, cleaning, embeddable text. Raises ValueError when
+    nothing at all can be embedded."""
     item = load_item_context(conn, base_item)
     cleaned = clean_item_text(item)
     embeddable_text, auto_keywords = build_embeddable_text(
@@ -303,7 +309,10 @@ def prepare_item_for_embedding(conn, base_item: dict[str, Any]) -> dict[str, Any
     )
 
     if not embeddable_text.strip():
-        # Title/domain-only rows (e.g. Chrome telemetry without HTML) still index for retrieval.
+        # Identity of last resort: title/domain-only rows (Chrome telemetry
+        # without HTML, a video whose metadata never arrived) still get indexed.
+        # Failing them is terminal and would hide them from retrieval and the
+        # timeline for good.
         embeddable_text = " ".join(
             str(part).strip()
             for part in (
@@ -311,14 +320,12 @@ def prepare_item_for_embedding(conn, base_item: dict[str, Any]) -> dict[str, Any
                 item.get("domain", ""),
                 item.get("subject", ""),
                 item.get("channel_name", ""),
-                # Identity of last resort: a video whose metadata never arrived
-                # is still worth indexing — failing it is terminal, and the row
-                # would then be invisible to retrieval and the timeline forever.
                 item.get("video_id", ""),
                 item.get("url", ""),
             )
             if part and str(part).strip()
         )
+        logger.debug("memory_id=%s embedded from identity fields only", item["memory_id"])
     if not embeddable_text.strip():
         raise ValueError(f"No embeddable text constructed for memory_id={item['memory_id']}")
 
@@ -338,6 +345,7 @@ def classify_item(item: dict[str, Any], embedding) -> tuple[str, str, float]:
 
 
 def mark_item_processed(
+    conn,
     memory_id: str,
     category: str,
     method: str,
@@ -347,65 +355,82 @@ def mark_item_processed(
     source: str | None = None,
     word_count: int | None = None,
 ) -> None:
-    conn = get_connection()
-    try:
-        with conn:
-            with conn.cursor() as cursor:
+    """Step 9: store the classification and set preprocessed = TRUE (one commit)."""
+    with conn:  # commit on success, rollback on error; does not close conn
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE memory_items
+                SET system_group_id = %s,
+                    classified_by = %s,
+                    classification_confidence = %s,
+                    auto_keywords = %s,
+                    preprocessed = TRUE,
+                    last_updated_at = NOW()
+                WHERE memory_id = %s
+                """,
+                (
+                    SYSTEM_GROUP_IDS.get(category, SYSTEM_GROUP_IDS["misc"]),
+                    method,
+                    confidence,
+                    auto_keywords,
+                    memory_id,
+                ),
+            )
+            if source == "chrome" and word_count is not None:
                 cursor.execute(
                     """
-                    UPDATE memory_items
-                    SET system_group_id = %s,
-                        classified_by = %s,
-                        classification_confidence = %s,
-                        auto_keywords = %s,
-                        preprocessed = TRUE,
-                        last_updated_at = NOW()
+                    UPDATE chrome_metadata
+                    SET word_count = %s
                     WHERE memory_id = %s
                     """,
-                    (
-                        SYSTEM_GROUP_IDS.get(category, SYSTEM_GROUP_IDS["misc"]),
-                        method,
-                        confidence,
-                        auto_keywords,
-                        memory_id,
-                    ),
+                    (word_count, memory_id),
                 )
-                if source == "chrome" and word_count is not None:
-                    cursor.execute(
-                        """
-                        UPDATE chrome_metadata
-                        SET word_count = %s
-                        WHERE memory_id = %s
-                        """,
-                        (word_count, memory_id),
-                    )
-    finally:
-        conn.close()
 
 
-def mark_item_failed(memory_id: str, reason: str) -> None:
+def mark_item_failed(conn, memory_id: str, reason: str) -> None:
+    """Mark a row classified_by='failed' so later batches skip it.
+
+    The schema has no error column, so the reason (first 500 chars) is kept in
+    auto_keywords. RSE only reads preprocessed = TRUE rows, so it is never searched.
+    """
     reason_text = str(reason or "unknown failure")[:500]
-    conn = get_connection()
-    try:
-        with conn:
-            with conn.cursor() as cursor:
-                cursor.execute(
-                    """
-                    UPDATE memory_items
-                    SET classified_by = %s,
-                        classification_confidence = NULL,
-                        preprocessed = FALSE,
-                        auto_keywords = ARRAY[%s],
-                        last_updated_at = NOW()
-                    WHERE memory_id = %s
-                    """,
-                    (FAILED_CLASSIFIED_BY, reason_text, memory_id),
-                )
-    finally:
-        conn.close()
+    with conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE memory_items
+                SET classified_by = %s,
+                    classification_confidence = NULL,
+                    preprocessed = FALSE,
+                    auto_keywords = ARRAY[%s],
+                    last_updated_at = NOW()
+                WHERE memory_id = %s
+                """,
+                (FAILED_CLASSIFIED_BY, reason_text, memory_id),
+            )
+
+
+def _fail_item(conn, memory_id: str, reason: str) -> None:
+    """Log the current exception and mark the row failed.
+
+    Rolls back first: if the failure was a SQL error, the connection's
+    transaction is aborted and would reject the UPDATE.
+    """
+    logger.exception("ENP failed memory_id=%s at %s", memory_id, reason.split(":", 1)[0])
+    conn.rollback()
+    mark_item_failed(conn, memory_id, reason)
 
 
 def process_batch(manager: FAISSManager, batch_size: int) -> tuple[int, int]:
+    """Enrich one batch. Returns (processed, failed).
+
+    Order matters for crash safety: every vector is added and the FAISS file
+    saved BEFORE any row is marked preprocessed. A crash in between leaves rows
+    unprocessed, and the retry overwrites their vectors (add() replaces by
+    memory_id). The reverse order could leave a row marked done whose vector
+    never reached disk, missing from semantic search for good.
+    """
     conn = get_connection()
     try:
         base_items = fetch_unprocessed_items(conn, batch_size=batch_size)
@@ -415,18 +440,14 @@ def process_batch(manager: FAISSManager, batch_size: int) -> tuple[int, int]:
         prepared_items: list[dict[str, Any]] = []
         failures = 0
         for base_item in base_items:
-            if _awaiting_hydration(base_item):
-                logger.info(
-                    "Deferring memory_id=%s — YouTube metadata not backfilled yet",
-                    base_item["memory_id"],
-                )
-                continue
             try:
                 prepared_items.append(prepare_item_for_embedding(conn, base_item))
             except Exception as exc:
-                logger.exception("Preparation failed for memory_id=%s: %s", base_item["memory_id"], exc)
-                mark_item_failed(base_item["memory_id"], f"prepare: {exc}")
+                _fail_item(conn, base_item["memory_id"], f"prepare: {exc}")
                 failures += 1
+        # End the read transaction before the slow part (embedding, LLM
+        # fallback), so the connection does not sit "idle in transaction".
+        conn.commit()
 
         if not prepared_items:
             return 0, failures
@@ -438,7 +459,8 @@ def process_batch(manager: FAISSManager, batch_size: int) -> tuple[int, int]:
             logger.warning("Batch embedding failed, falling back to item-by-item mode: %s", exc)
             batch_embeddings = None
 
-        processed = 0
+        # Steps 5-7 per item; collect what to mark once the index is saved.
+        indexed: list[tuple[dict[str, Any], str, str, float]] = []
         for index, item in enumerate(prepared_items):
             try:
                 embedding = (
@@ -452,7 +474,23 @@ def process_batch(manager: FAISSManager, batch_size: int) -> tuple[int, int]:
                     embedding,
                     embeddable_text=item["embeddable_text"],
                 )
+                indexed.append((item, category, method, confidence))
+            except Exception as exc:
+                _fail_item(conn, item["memory_id"], f"process: {exc}")
+                failures += 1
+
+        if not indexed:
+            return 0, failures
+
+        # Step 8. If this raises, nothing below runs: the rows stay unprocessed
+        # and the next batch redoes them.
+        manager.save_index()
+
+        processed = 0
+        for item, category, method, confidence in indexed:
+            try:
                 mark_item_processed(
+                    conn,
                     item["memory_id"],
                     category,
                     method,
@@ -462,24 +500,41 @@ def process_batch(manager: FAISSManager, batch_size: int) -> tuple[int, int]:
                     word_count=item.get("word_count"),
                 )
                 processed += 1
-            except Exception as exc:
-                logger.exception("Failed processing memory_id=%s: %s", item["memory_id"], exc)
-                mark_item_failed(item["memory_id"], f"process: {exc}")
-                failures += 1
-
-        if processed:
-            manager.save_index()
+                logger.debug(
+                    "ENP enriched memory_id=%s source=%s group=%s via %s (%.2f)",
+                    item["memory_id"],
+                    item.get("source"),
+                    category,
+                    method,
+                    confidence,
+                )
+            except Exception:
+                # The vector is saved; the row stays unprocessed and is redone
+                # (and its vector overwritten) next batch.
+                logger.exception("ENP could not mark memory_id=%s processed; will retry", item["memory_id"])
+                conn.rollback()
 
         return processed, failures
     finally:
         conn.close()
 
 
-def run_pipeline(batch_size: int = DEFAULT_BATCH_SIZE, poll_interval: int = DEFAULT_POLL_INTERVAL) -> None:
+def run_pipeline(
+    batch_size: int = DEFAULT_BATCH_SIZE,
+    poll_interval: int = DEFAULT_POLL_INTERVAL,
+    stop_event: threading.Event | None = None,
+) -> None:
+    """Poll for unprocessed rows until stop_event is set (forever when None).
+
+    Blocking; run it in its own thread. The stop is checked between batches,
+    so a stop request waits for the current batch to finish.
+    """
+    stop_event = stop_event or threading.Event()
+
     manager = FAISSManager()
     manager.load_index()
 
-    logger.info("Initializing Stage 3 centroid seeds with generate_embedding()")
+    logger.info("Initializing Stage 3 centroid seeds")
     initialize_centroids(generate_embedding)
     logger.info(
         "ENP started: batch_size=%s poll_interval=%ss embedding_version=%s dim=%s",
@@ -490,26 +545,38 @@ def run_pipeline(batch_size: int = DEFAULT_BATCH_SIZE, poll_interval: int = DEFA
     )
 
     iteration = 0
-    while True:
+    while not stop_event.is_set():
         iteration += 1
+        started_at = time.perf_counter()
         try:
             processed, failed = process_batch(manager, batch_size=batch_size)
             if processed == 0 and failed == 0:
-                logger.info("Iteration %s: no unprocessed items found", iteration)
+                logger.debug("ENP iteration %s: nothing to process", iteration)
             else:
                 logger.info(
-                    "Iteration %s complete: processed=%s failed=%s",
+                    "ENP iteration %s: processed=%s failed=%s (%.0f ms)",
                     iteration,
                     processed,
                     failed,
+                    (time.perf_counter() - started_at) * 1000,
                 )
-        except Exception as exc:
-            logger.exception("Fatal batch error on iteration %s: %s", iteration, exc)
+        except Exception:
+            # e.g. the database is unreachable. Keep polling; the next batch retries.
+            logger.exception("ENP batch error on iteration %s", iteration)
 
-        time.sleep(poll_interval)
+        # Sleeps poll_interval, but wakes at once when a stop is requested.
+        stop_event.wait(poll_interval)
+
+    logger.info("ENP stopped after %s iterations", iteration)
 
 
 if __name__ == "__main__":
+    from dotenv import load_dotenv
+
+    from backend.logging_config import setup_logging
+
+    load_dotenv()
+    setup_logging()
     run_pipeline(
         batch_size=int(os.getenv("ENP_BATCH_SIZE", DEFAULT_BATCH_SIZE)),
         poll_interval=int(os.getenv("ENP_POLL_INTERVAL", DEFAULT_POLL_INTERVAL)),
