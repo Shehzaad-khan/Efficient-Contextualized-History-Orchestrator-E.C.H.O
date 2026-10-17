@@ -1,14 +1,38 @@
+"""
+intent_filter.py — Chrome two-phase intent gate (architecture §6.2)
+Echo Personal Memory System
+
+    Phase 1 (exposure):  foreground >= 5 s, else discard.
+    Phase 2 (intent):    at least ONE of
+                           foreground >= 10 s
+                           scroll depth >= 25 %
+                           >= 1 interaction (click on content, text selection)
+                           a visit to the same URL in the last 24 h (Redis flag)
+
+Pure functions, no state and no I/O: safe to call from any thread.
+Used by chrome_connector.py, which logs the discard reason.
+"""
+
 from __future__ import annotations
 
-# Architecture §6.2 two-phase intent gate. These MUST match the extension's
-# thresholds in extension/background.js (evaluateChromeIntent): the extension
-# sends /chrome/ingest exactly once when ITS gate passes, so a stricter server
-# gate silently discards the page with no retry ever happening.
+import logging
+
+logger = logging.getLogger(__name__)
+
+# These MUST match the extension's thresholds in extension/background.js
+# (evaluateChromeIntent): the extension sends /chrome/ingest exactly once when
+# ITS gate passes, so a stricter server gate silently discards the page with no
+# retry ever happening.
 PHASE1_MIN_SECONDS = 5
 PHASE2_MIN_FOREGROUND = 10
 PHASE2_MIN_SCROLL = 0.25
 PHASE2_MIN_INTERACTIONS = 1
 
+# Web apps whose content is private (§6.5): only time spent is kept, never text.
+# Matches the domain itself and every subdomain. Must match the lists in
+# extension/background.js and extension/content/chrome_tracker.js.
+# "app.slack.com" and "confluence.atlassian.net" are already covered by
+# "slack.com" and "atlassian.net"; kept so the three copies stay identical.
 APPLICATION_DOMAINS = {
     "slack.com",
     "app.slack.com",
@@ -53,11 +77,23 @@ def evaluate(
     interaction_count: int,
     revisit_count: int,
 ) -> bool:
+    """Run both phases. revisit_count > 0 is the extension's report that the
+    Redis revisit flag was already set when the page passed Phase 1."""
     if not phase1_passes(dwell_seconds):
+        logger.debug("Intent gate: phase 1 failed (dwell=%ss < %ss)", dwell_seconds, PHASE1_MIN_SECONDS)
         return False
-    return phase2_passes(
+    passed = phase2_passes(
         dwell_seconds=dwell_seconds,
         scroll_depth=scroll_depth,
         interaction_count=interaction_count,
         is_revisit=revisit_count > 0,
     )
+    logger.debug(
+        "Intent gate: phase 2 %s (dwell=%ss scroll=%.2f interactions=%d revisit=%s)",
+        "passed" if passed else "failed",
+        dwell_seconds,
+        scroll_depth,
+        interaction_count,
+        revisit_count > 0,
+    )
+    return passed

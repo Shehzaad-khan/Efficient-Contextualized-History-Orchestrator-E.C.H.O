@@ -1,23 +1,43 @@
+"""
+chrome_connector.py — Chrome page capture API (architecture §6, CHC module)
+Echo Personal Memory System
+
+    POST /chrome/ingest          the extension sends one page after ITS intent gate passes
+    POST /chrome/revisit-check   the extension asks "was this URL seen in the last 24 h?"
+
+The extension (extension/background.js) already canonicalizes the URL, skips
+incognito / sensitive / GitHub issue pages and runs the same two-phase intent
+gate. This router re-checks everything server-side, so a stale or modified
+extension can't store what the privacy rules forbid.
+
+Threads: both routes are plain `def`, so FastAPI runs them in its threadpool.
+The blocking calls inside them (settings read from Redis, the revisit flag in
+Redis, the PostgreSQL upsert) never run on the event loop.
+"""
+
 from __future__ import annotations
 
 import logging
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
-from dotenv import load_dotenv
 from fastapi import APIRouter
-
-logger = logging.getLogger(__name__)
 from pydantic import BaseModel, Field
 
-from ste.storage_engine import store_chrome_page
 from ste import settings_store
+from ste.storage_engine import store_chrome_page
 from ingestion.chrome import intent_filter
 from ingestion.chrome.revisit_tracker import check_and_record_visit, record_visit
 
-load_dotenv()
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/chrome", tags=["Chrome Connector"])
 
+# The four lists below MUST match extension/background.js (and the sensitive
+# terms also extension/content/chrome_tracker.js). If they drift, the extension
+# and the server disagree about which pages exist.
+
+# Tracking parameters stripped from the URL, so the same article reached from a
+# newsletter, Facebook or Google Ads is one row (UNIQUE(source_type, source_id)).
 IGNORED_QUERY_PARAMS = {
     "utm_source",
     "utm_medium",
@@ -32,11 +52,13 @@ IGNORED_QUERY_PARAMS = {
     "yclid",
 }
 
+# Pages that are never captured. Plain substring match on the full URL.
 APPLICATION_PATH_PREFIXES = (
     "github.com/issues",
     "github.com/pulls",
 )
 
+# Pages that may show personal data (login, payment, account). Never captured.
 SENSITIVE_PATH_TERMS = (
     "account",
     "auth",
@@ -75,6 +97,8 @@ class RevisitCheckRequest(BaseModel):
 
 
 def canonicalize_url(raw_url: str) -> str:
+    """Drop tracking parameters and the #fragment. Used only when the
+    extension sent no canonical_url (it normally sends its own)."""
     parsed = urlparse(raw_url)
     clean_query = [
         (key, value)
@@ -96,6 +120,8 @@ def is_skipped_page(url: str) -> bool:
 
 
 def is_sensitive_page(url: str) -> bool:
+    """True when a sensitive term is a whole path segment ("/login"), starts a
+    path segment ("/authentication" matches "auth"), or is a query key ("password=")."""
     parsed = urlparse(url or "")
     target = f"{parsed.path}?{parsed.query}".lower()
     path_parts = {part for part in parsed.path.lower().split("/") if part}
@@ -104,30 +130,44 @@ def is_sensitive_page(url: str) -> bool:
     return any(f"/{term}" in target or f"{term}=" in target for term in SENSITIVE_PATH_TERMS)
 
 
+def _discard(reason: str, domain: str) -> dict:
+    # Only the domain is logged: a discarded URL can carry secrets
+    # (an OAuth callback's ?code=, a reset link's ?token=).
+    logger.info("Chrome page discarded: reason=%s domain=%s", reason, domain)
+    return {"status": "discarded", "reason": reason}
+
+
 @router.post("/ingest")
 def ingest_chrome_page(payload: ChromeIngestRequest):
     payload.canonical_url = payload.canonical_url or canonicalize_url(payload.url)
     payload.domain = extract_domain(payload.canonical_url) or extract_domain(payload.url) or payload.domain.strip().lower()
     payload.is_app_page = payload.is_app_page or intent_filter.is_application_page(payload.domain)
 
+    # Cheapest and strictest checks first; the order also decides which
+    # reason is reported when several apply.
     if not settings_store.is_source_enabled("chrome"):
-        return {"status": "discarded", "reason": "chrome_capture_disabled"}
+        return _discard("chrome_capture_disabled", payload.domain)
 
     if settings_store.is_domain_excluded(payload.domain):
-        return {"status": "discarded", "reason": "domain_excluded"}
+        return _discard("domain_excluded", payload.domain)
 
     if is_skipped_page(payload.url):
-        return {"status": "discarded", "reason": "application_path_excluded"}
+        return _discard("application_path_excluded", payload.domain)
 
     if is_sensitive_page(payload.canonical_url):
-        return {"status": "discarded", "reason": "sensitive_page_excluded"}
+        return _discard("sensitive_page_excluded", payload.domain)
 
+    # §6.2 Phase 1: a page seen for >= 5 s leaves a 24 h revisit flag in Redis,
+    # even if Phase 2 then fails — a later return to it counts as a revisit.
     if intent_filter.phase1_passes(payload.dwell_seconds):
         try:
             record_visit(payload.canonical_url)
         except Exception:
-            logger.warning("Failed to record visit for %s", payload.canonical_url)
+            # The page can still be stored; only the revisit signal is lost.
+            logger.warning("Chrome revisit flag not recorded: domain=%s", payload.domain, exc_info=True)
 
+    # App pages (Slack, Notion, Jira, ...): engagement only, never their text
+    # (§6.7), and they skip the intent gate below.
     if payload.is_app_page:
         payload.content_extract = ""
         payload.word_count = None
@@ -138,9 +178,15 @@ def ingest_chrome_page(payload: ChromeIngestRequest):
         interaction_count=payload.interaction_count,
         revisit_count=payload.revisit_count,
     ):
-        return {"status": "discarded", "reason": "intent_not_confirmed"}
+        return _discard("intent_not_confirmed", payload.domain)
 
-    saved = store_chrome_page(payload)
+    # storage_engine logs the stored row. A DB error is logged here and
+    # re-raised, so the extension gets a 500.
+    try:
+        saved = store_chrome_page(payload)
+    except Exception:
+        logger.exception("Chrome page storage failed: domain=%s", payload.domain)
+        raise
     return {
         "status": "saved",
         "memory_id": str(saved["memory_id"]),
@@ -150,7 +196,10 @@ def ingest_chrome_page(payload: ChromeIngestRequest):
 
 @router.post("/revisit-check")
 def revisit_check(payload: RevisitCheckRequest):
+    """Return whether this URL was seen in the last 24 h, and mark it as seen now.
+    If Redis is down, answer False (no revisit signal) instead of failing."""
     try:
         return {"is_revisit": check_and_record_visit(payload.canonical_url)}
     except Exception:
+        logger.warning("Chrome revisit check failed; answering False", exc_info=True)
         return {"is_revisit": False}
