@@ -1,100 +1,51 @@
 """
-video_classifier.py — YTC Module
+video_classifier.py — Shorts vs long-form (architecture §7.4, YTC module)
 Echo Personal Memory System
 
-Classifies YouTube videos as 'short' or 'long' based on URL pattern first,
-duration as fallback. This is the architecture-specified classification logic.
+Rules (doc §7.4):
+  - URL path starts with /shorts/   -> 'short'   (definitive)
+  - 0 < duration_seconds < 60       -> 'short'   (fallback)
+  - otherwise                       -> 'long'
 
-Rules (from architecture doc):
-  - URL contains '/shorts/' → 'short'
-  - duration_seconds < 60   → 'short'
-  - otherwise               → 'long'
+Caller: youtube_connector.handle_video_detected, with the URL only (the Data API
+duration arrives later). The result is stored as youtube_metadata.is_short, and
+ENP's Stage-1 classifier (enp/system_group_classifier.py) puts every Short in the
+'entertainment' system group. Wellbeing treats Shorts at session level (§7.4).
 
-Shorts are auto-assigned to 'entertainment' system_group downstream.
-Regret system for Shorts operates at SESSION level, not individual video level.
+Pure function, no state and no I/O: safe from any thread. No logger — the
+connector logs the stored result.
 """
 
+from __future__ import annotations
 
-def classify_video_type(url: str, duration_seconds: int | None = None) -> str:
+from typing import Literal, Optional
+from urllib.parse import urlsplit
+
+VideoType = Literal["short", "long"]
+
+SHORTS_PATH_PREFIX = "/shorts/"
+# Doc §7.4. Likely (YouTube change in late 2024, not checked here): Shorts can now
+# run up to 3 minutes, so this fallback misses longer Shorts. It is unused today
+# (the connector passes no duration); the URL rule decides.
+SHORT_MAX_DURATION_SECONDS = 60
+
+
+def classify_video_type(url: str, duration_seconds: Optional[int] = None) -> VideoType:
+    """Classify a YouTube video as 'short' or 'long'.
+
+    url:              full video URL (youtube.com/watch?v=... or youtube.com/shorts/...)
+    duration_seconds: from the Data API, or None when not known yet. 0 also means
+                      unknown (parse_iso8601_duration's value for a live stream or
+                      bad input), so it never makes a video 'short'.
     """
-    Classify a YouTube video as 'short' or 'long'.
-
-    Args:
-        url:              Full YouTube URL (e.g. youtube.com/watch?v=... or youtube.com/shorts/...)
-        duration_seconds: Video duration from YouTube Data API. Can be None if
-                          API call hasn't completed yet — URL pattern is checked first.
-
-    Returns:
-        'short' or 'long'
-    """
-    # Primary signal — URL pattern is definitive
-    if "/shorts/" in url:
+    # Primary signal — the URL path. Checked on the path only, so "/shorts/"
+    # inside a query string or fragment does not count, and neither does a
+    # channel's Shorts tab (/@name/shorts).
+    if urlsplit(url or "").path.startswith(SHORTS_PATH_PREFIX):
         return "short"
 
-    # Fallback — duration from YouTube Data API
-    if duration_seconds is not None and duration_seconds < 60:
+    # Fallback — duration from the YouTube Data API.
+    if duration_seconds is not None and 0 < duration_seconds < SHORT_MAX_DURATION_SECONDS:
         return "short"
 
     return "long"
-
-
-def extract_video_id(url: str) -> str | None:
-    """
-    Extract the 11-character YouTube video ID from a URL.
-
-    Handles:
-      - youtube.com/watch?v=VIDEO_ID
-      - youtube.com/watch?v=VIDEO_ID&t=30s  (with extra params)
-      - youtube.com/shorts/VIDEO_ID
-      - youtube.com/shorts/VIDEO_ID?feature=share
-
-    Returns:
-        11-character video ID string, or None if URL doesn't match known patterns.
-    """
-    if not url:
-        return None
-
-    # Pattern 1 — Regular video: ?v=VIDEO_ID
-    if "watch?v=" in url:
-        try:
-            # Split on v= and take the first 11 chars (video ID is always 11 chars)
-            video_id = url.split("watch?v=")[1][:11]
-            if len(video_id) == 11:
-                return video_id
-        except IndexError:
-            pass
-
-    # Pattern 2 — Shorts: /shorts/VIDEO_ID
-    if "/shorts/" in url:
-        try:
-            after_shorts = url.split("/shorts/")[1]
-            # Strip any trailing query params
-            video_id = after_shorts.split("?")[0].split("/")[0][:11]
-            if len(video_id) == 11:
-                return video_id
-        except IndexError:
-            pass
-
-    return None
-
-
-def is_youtube_url(url: str) -> bool:
-    """
-    Check if a URL is a trackable YouTube video URL.
-    Filters out non-video pages (homepage, search, channel pages, etc.)
-
-    Args:
-        url: Browser URL string
-
-    Returns:
-        True if this URL should trigger YouTube tracking
-    """
-    if not url:
-        return False
-
-    trackable_patterns = [
-        "youtube.com/watch?v=",
-        "youtube.com/shorts/",
-    ]
-
-    return any(pattern in url for pattern in trackable_patterns)
