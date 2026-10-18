@@ -3,11 +3,22 @@ wellbeing_analytics.py — WBA core: session computation + module facade.
 
 Session model (architecture §11.5, DB Tables 12–13):
   A session is a contiguous block of activity where consecutive items are
-  within 5 minutes of each other. A gap > 5 minutes closes the session.
+  within SESSION_GAP_MINUTES (20) of each other; a longer gap closes the
+  session. DEVIATION: §11.5 says 5 minutes — raised to 20 on the owner's
+  decision (2026-10-18). Each item is ONE point in time (its last access, see
+  below), so a 15-minute read followed by the next page looked like a 15-minute
+  gap and split one sitting into two sessions under the 5-minute rule.
   Stored in sessions + session_memory_map with:
     total_duration_seconds — pre-computed sum (accepted denormalization),
     dominant_group_id      — system group with the most time in the session,
     source_switch_count    — descriptive count of source-type changes.
+
+Item time = COALESCE(last_accessed_at, first_ingested_at): the same single
+point the time totals use (time_aggregator, attribution = last access). Days
+are the user's LOCAL days; timestamps are naive UTC, so each day becomes a UTC
+range (time_aggregator.local_day_range_utc). Sessions are built per local day,
+so a sitting across midnight becomes two sessions. session_start/session_end
+are stored as naive UTC like every other timestamp.
 
 Derived analytics (on-demand, never stored):
   focus_score   = 1 / unique_source_types_in_session
@@ -15,6 +26,11 @@ Derived analytics (on-demand, never stored):
 
 daily_summary() is the facade the dashboard consumes: time totals, category
 breakdown, Shorts stats, regret rate, and focus — all descriptive.
+
+Threading: rebuild_sessions_for_day takes a per-day Postgres advisory lock, so
+two rebuilds of the same day (two requests, or two processes) run one after
+the other instead of both deleting and both inserting (duplicate sessions).
+The reads are pooled, read-only queries.
 """
 from __future__ import annotations
 
@@ -23,6 +39,7 @@ from datetime import date, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import text
+from sqlalchemy.engine import Connection
 
 from ste import postgresql_manager
 from wba import time_aggregator
@@ -30,37 +47,45 @@ from wba.regret_system import regret_rate
 
 logger = logging.getLogger(__name__)
 
-SESSION_GAP_MINUTES = 5
+SESSION_GAP_MINUTES = 20
+
+# First key of pg_advisory_xact_lock(namespace, day): keeps session-rebuild
+# locks apart from any other advisory lock. Second key = date.toordinal().
+_SESSION_REBUILD_LOCK_NAMESPACE = 4201
 
 
-def _fetch_day_activity(day: date) -> list[dict[str, Any]]:
+def _fetch_day_activity(connection: Connection, day: date) -> list[dict[str, Any]]:
     """
-    Engaged items for one day, ordered by activity timestamp. Follows the
+    Engaged items for one local day, ordered by activity timestamp. Follows the
     same inclusion rules as time aggregation (§11.2).
     """
-    return postgresql_manager.fetchall(
-        """
-        SELECT m.memory_id, m.source_type, m.system_group_id,
-               COALESCE(me.last_accessed_at, m.first_ingested_at) AS activity_at,
-               CASE WHEN m.source_type = 'youtube' THEN me.watch_time_seconds
-                    ELSE me.dwell_time_seconds END AS time_seconds
-        FROM memory_items m
-        JOIN memory_engagement me ON m.memory_id = me.memory_id
-        WHERE m.is_deleted = FALSE
-          AND DATE(COALESCE(me.last_accessed_at, m.first_ingested_at)) = :day
-          AND (
-                (m.source_type = 'gmail'   AND me.first_opened_at IS NOT NULL)
-             OR (m.source_type = 'chrome')
-             OR (m.source_type = 'youtube' AND me.watch_time_seconds > 0)
-          )
-        ORDER BY activity_at ASC
-        """,
-        {"day": day},
+    rows = connection.execute(
+        text(
+            """
+            SELECT m.memory_id, m.source_type, m.system_group_id,
+                   COALESCE(me.last_accessed_at, m.first_ingested_at) AS activity_at,
+                   CASE WHEN m.source_type = 'youtube' THEN me.watch_time_seconds
+                        ELSE me.dwell_time_seconds END AS time_seconds
+            FROM memory_items m
+            JOIN memory_engagement me ON m.memory_id = me.memory_id
+            WHERE m.is_deleted = FALSE
+              AND COALESCE(me.last_accessed_at, m.first_ingested_at) >= :start_utc
+              AND COALESCE(me.last_accessed_at, m.first_ingested_at) <  :end_utc
+              AND (
+                    (m.source_type = 'gmail'   AND me.first_opened_at IS NOT NULL)
+                 OR (m.source_type = 'chrome')
+                 OR (m.source_type = 'youtube' AND me.watch_time_seconds > 0)
+              )
+            ORDER BY activity_at ASC, m.memory_id
+            """
+        ),
+        time_aggregator.local_day_range_utc(day, day),
     )
+    return [dict(row) for row in rows.mappings()]
 
 
 def _split_into_sessions(items: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
-    """Group time-ordered items into sessions using the 5-minute gap rule."""
+    """Group time-ordered items into sessions using the SESSION_GAP_MINUTES rule."""
     sessions: list[list[dict[str, Any]]] = []
     current: list[dict[str, Any]] = []
     gap = timedelta(minutes=SESSION_GAP_MINUTES)
@@ -80,7 +105,10 @@ def _split_into_sessions(items: list[dict[str, Any]]) -> list[list[dict[str, Any
 
 
 def _dominant_group_id(items: list[dict[str, Any]]) -> int | None:
-    """System group that accumulated the most time within the session."""
+    """System group that accumulated the most time within the session.
+
+    Equal time goes to the group seen first in the session.
+    """
     totals: dict[int, int] = {}
     for item in items:
         group_id = item.get("system_group_id")
@@ -93,6 +121,7 @@ def _dominant_group_id(items: list[dict[str, Any]]) -> int | None:
 
 
 def _source_switch_count(items: list[dict[str, Any]]) -> int:
+    """Number of times the source type changes between consecutive items."""
     switches = 0
     for previous, current in zip(items, items[1:]):
         if previous["source_type"] != current["source_type"]:
@@ -102,17 +131,23 @@ def _source_switch_count(items: list[dict[str, Any]]) -> int:
 
 def rebuild_sessions_for_day(day: date) -> dict[str, Any]:
     """
-    (Re)compute sessions for one day and persist them. Idempotent: existing
-    sessions starting on that day are deleted first (session_memory_map rows
-    cascade), then rebuilt from current engagement data.
+    (Re)compute sessions for one local day and persist them. Idempotent:
+    existing sessions starting on that day are deleted first
+    (session_memory_map rows cascade), then rebuilt from current engagement
+    data — all in one transaction under the per-day advisory lock.
     """
-    items = _fetch_day_activity(day)
-    session_groups = _split_into_sessions(items)
-
+    day_range = time_aggregator.local_day_range_utc(day, day)
     with postgresql_manager.transaction() as connection:
         connection.execute(
-            text("DELETE FROM sessions WHERE DATE(session_start) = :day"),
-            {"day": day},
+            text("SELECT pg_advisory_xact_lock(:namespace, :day_key)"),
+            {"namespace": _SESSION_REBUILD_LOCK_NAMESPACE, "day_key": day.toordinal()},
+        )
+        items = _fetch_day_activity(connection, day)
+        session_groups = _split_into_sessions(items)
+
+        connection.execute(
+            text("DELETE FROM sessions WHERE session_start >= :start_utc AND session_start < :end_utc"),
+            day_range,
         )
         for session_items in session_groups:
             row = connection.execute(
@@ -134,59 +169,63 @@ def rebuild_sessions_for_day(day: date) -> dict[str, Any]:
                 },
             ).mappings().first()
             session_id = str(row["session_id"])
-            for item in session_items:
-                connection.execute(
-                    text(
-                        """
-                        INSERT INTO session_memory_map (session_id, memory_id)
-                        VALUES (:session_id, :memory_id)
-                        ON CONFLICT DO NOTHING
-                        """
-                    ),
-                    {"session_id": session_id, "memory_id": str(item["memory_id"])},
-                )
+            # One executemany per session instead of one round trip per item.
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO session_memory_map (session_id, memory_id)
+                    VALUES (:session_id, :memory_id)
+                    ON CONFLICT DO NOTHING
+                    """
+                ),
+                [{"session_id": session_id, "memory_id": str(item["memory_id"])} for item in session_items],
+            )
 
-    logger.info("rebuild_sessions_for_day: %s → %d sessions from %d items",
-                day, len(session_groups), len(items))
+    logger.info("Sessions rebuilt for %s: %d sessions from %d items (gap %d min)",
+                day, len(session_groups), len(items), SESSION_GAP_MINUTES)
     return {"day": day.isoformat(), "sessions": len(session_groups), "items": len(items)}
 
 
 def sessions_for_day(day: date) -> list[dict[str, Any]]:
-    """Stored sessions for a day with the derived focus score per session."""
+    """Stored sessions for a local day with the derived focus score per session.
+
+    Items deleted after the session was built are left out of the counts.
+    """
     rows = postgresql_manager.fetchall(
         """
         SELECT s.session_id, s.session_start, s.session_end,
                s.total_duration_seconds, s.source_switch_count,
                sg.group_name AS dominant_group,
-               COUNT(smm.memory_id) AS item_count,
+               COUNT(m.memory_id) AS item_count,
                COUNT(DISTINCT m.source_type) AS unique_sources
         FROM sessions s
         LEFT JOIN system_groups sg ON sg.system_group_id = s.dominant_group_id
         LEFT JOIN session_memory_map smm ON smm.session_id = s.session_id
-        LEFT JOIN memory_items m ON m.memory_id = smm.memory_id
-        WHERE DATE(s.session_start) = :day
+        LEFT JOIN memory_items m ON m.memory_id = smm.memory_id AND m.is_deleted = FALSE
+        WHERE s.session_start >= :start_utc AND s.session_start < :end_utc
         GROUP BY s.session_id, sg.group_name
         ORDER BY s.session_start ASC
         """,
-        {"day": day},
+        time_aggregator.local_day_range_utc(day, day),
     )
     for row in rows:
         row["session_id"] = str(row["session_id"])
         unique = row.get("unique_sources") or 0
         row["focus_score"] = round(1.0 / unique, 3) if unique else None
+    logger.debug("sessions_for_day %s -> %d sessions", day, len(rows))
     return rows
 
 
 def fragmentation_for_day(day: date) -> dict[str, Any]:
-    """fragmentation = sessions_per_day / average_session_duration_minutes."""
+    """fragmentation = sessions_per_day / average_session_duration_minutes (local day)."""
     row = postgresql_manager.fetchone(
         """
         SELECT COUNT(*) AS session_count,
                COALESCE(AVG(total_duration_seconds), 0) AS avg_duration_seconds
         FROM sessions
-        WHERE DATE(session_start) = :day
+        WHERE session_start >= :start_utc AND session_start < :end_utc
         """,
-        {"day": day},
+        time_aggregator.local_day_range_utc(day, day),
     )
     session_count = int(row["session_count"] or 0)
     avg_minutes = float(row["avg_duration_seconds"] or 0) / 60.0
@@ -205,6 +244,7 @@ def daily_summary(day: date | None = None) -> dict[str, Any]:
     regret rate, session fragmentation. Descriptive numbers only.
     """
     day = day or date.today()
+    logger.debug("daily_summary %s", day)
     return {
         "day": day.isoformat(),
         "generated_at": datetime.now().isoformat(),
