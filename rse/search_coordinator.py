@@ -5,24 +5,34 @@ The two branches run in PARALLEL (LangGraph fan-out from resolve_time_anchor)
 and are fused downstream by merge_and_rrf:
 
   postgres_keyword_search — PostgreSQL Full-Text Search (websearch_to_tsquery)
-      over title + raw_text + auto_keywords + email subject, with an ILIKE
-      safety net for partial-token matches. Ordered by ts_rank so the branch
-      rank reflects textual relevance, not recency. Applies deterministic
-      source / time / time-anchor SQL constraints from parsed intent.
+      over title + raw_text + auto_keywords + subject + sender + domain +
+      channel, with an ILIKE safety net for partial-token matches. Ordered by
+      ts_rank so the branch rank reflects textual relevance, not recency.
+      Applies deterministic source / time / time-anchor SQL constraints from
+      the parsed intent.
 
   faiss_semantic_search — embeds every query variant locally with
-      sentence-transformers, searches the FULL FAISS index per variant,
-      deduplicates keeping the best score per memory_id, and reports true
-      cosine similarity (the index is IndexFlatL2 over unnormalized vectors,
-      so cosine is computed here explicitly).
+      sentence-transformers, searches the FULL FAISS index per variant
+      (FAISSManager.search_all, which holds the manager's lock while reading),
+      deduplicates keeping the best cosine per memory_id. MiniLM vectors are
+      unit-length, so the index's L2 order equals cosine order; search_all
+      still reports true cosine.
 
 hydrate_memory_items — fetches full metadata rows for memory_ids that only
 the semantic branch found, so the fused pool is uniformly shaped.
+fetch_recent_items — today's newest items for the fetch_api node.
+
+get_connection — the RSE-wide psycopg2 pool (also used by time_anchor,
+neighborhood and conversation_memory).
+
+Logs carry counts, flags and timings only — never query text or item content.
 """
 import logging
-from typing import Any, Sequence
+import threading
+import time
+from datetime import date, datetime, timezone
+from typing import Any, Optional, Sequence
 
-import numpy as np
 import psycopg2
 import psycopg2.extras
 import psycopg2.pool
@@ -32,11 +42,12 @@ from rse.config import (
     FAISS_TOP_K_PER_VARIANT,
     FULL_SCAN_K_MULTIPLIER,
     PG_KEYWORD_LIMIT,
-    POSTGRES_RESULT_LIMIT,
 )
 from rse.state import EchoState, ParsedIntent
 
 logger = logging.getLogger(__name__)
+
+_ALL_SOURCES: tuple[str, ...] = ("gmail", "chrome", "youtube")
 
 
 # ── Shared SQL fragments ──────────────────────────────────────────────────────
@@ -103,7 +114,20 @@ _FTS_DOCUMENT = (
 )
 
 
-_POOL = None
+# ── Connection pool ───────────────────────────────────────────────────────────
+
+_POOL_MIN = 1
+_POOL_MAX = 10
+# A connection idle longer than this is pinged before use. Neon closes
+# connections when its compute suspends (after ~5 idle minutes), and a dead
+# pooled connection would otherwise fail the first query after a pause.
+_IDLE_PING_SECONDS = 60.0
+
+_POOL: Optional[psycopg2.pool.ThreadedConnectionPool] = None
+_POOL_LOCK = threading.Lock()
+# id(raw connection) → time.monotonic() when it went back to the pool.
+_returned_at: dict[int, float] = {}
+_returned_at_lock = threading.Lock()
 
 
 class _PooledConnection:
@@ -115,39 +139,85 @@ class _PooledConnection:
     including `with conn:` transaction handling -- to the real connection.
     """
 
-    def __init__(self, pool, conn):
+    def __init__(self, pool: psycopg2.pool.ThreadedConnectionPool, conn: Any) -> None:
         self._pool = pool
         self._conn = conn
 
     def close(self) -> None:
         conn, self._conn = self._conn, None
-        if conn is not None:
-            # A connection broken mid-query must not go back into rotation.
-            self._pool.putconn(conn, close=bool(conn.closed))
+        if conn is None:
+            return
+        broken = bool(conn.closed)
+        with _returned_at_lock:
+            if broken:
+                _returned_at.pop(id(conn), None)
+            else:
+                _returned_at[id(conn)] = time.monotonic()
+        # A connection broken mid-query must not go back into rotation.
+        self._pool.putconn(conn, close=broken)
 
-    def __enter__(self):
+    def __enter__(self) -> Any:
         return self._conn.__enter__()
 
-    def __exit__(self, *exc_info):
+    def __exit__(self, *exc_info: Any) -> Any:
         return self._conn.__exit__(*exc_info)
 
-    def __getattr__(self, name):
+    def __getattr__(self, name: str) -> Any:
         return getattr(self._conn, name)
 
 
-def get_connection():
+def _get_pool() -> psycopg2.pool.ThreadedConnectionPool:
+    """Create the pool once (double-checked lock: parallel branches may race here)."""
+    global _POOL
+    if _POOL is None:
+        with _POOL_LOCK:
+            if _POOL is None:
+                if not DATABASE_URL:
+                    raise RuntimeError("DATABASE_URL is not configured for the RSE module.")
+                _POOL = psycopg2.pool.ThreadedConnectionPool(_POOL_MIN, _POOL_MAX, DATABASE_URL)
+                logger.info("RSE connection pool created (min=%d, max=%d)", _POOL_MIN, _POOL_MAX)
+    return _POOL
+
+
+def _is_alive(conn: Any) -> bool:
+    """One cheap round trip; leaves the connection outside any transaction."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1")
+        conn.rollback()
+        return True
+    except psycopg2.Error:
+        return False
+
+
+def get_connection() -> _PooledConnection:
     """Lease a pooled psycopg2 connection to the configured database.
 
     Neon runs in us-east-1, where a fresh TCP+TLS+auth handshake measured
-    ~700ms. The retrieval path opens connections from six call sites and the
-    widen loop repeats them, so connecting per call dominated query latency.
+    ~700ms. The retrieval path opens connections from several call sites and
+    the widen loop repeats them, so connecting per call dominated query latency.
+
+    A connection that sat idle longer than _IDLE_PING_SECONDS is checked with
+    SELECT 1 first; dead ones are discarded and the next one is tried, so the
+    first query after a Neon suspend still succeeds.
+
+    Raises:
+        RuntimeError: DATABASE_URL is not set.
+        psycopg2.pool.PoolError: all _POOL_MAX connections are in use.
     """
-    global _POOL
-    if not DATABASE_URL:
-        raise RuntimeError("DATABASE_URL is not configured for the RSE module.")
-    if _POOL is None:
-        _POOL = psycopg2.pool.ThreadedConnectionPool(1, 10, DATABASE_URL)
-    return _PooledConnection(_POOL, _POOL.getconn())
+    pool = _get_pool()
+    for _ in range(_POOL_MAX + 1):
+        conn = pool.getconn()
+        with _returned_at_lock:
+            returned_at = _returned_at.get(id(conn))
+        idle = returned_at is not None and time.monotonic() - returned_at > _IDLE_PING_SECONDS
+        if not conn.closed and (not idle or _is_alive(conn)):
+            return _PooledConnection(pool, conn)
+        logger.info("get_connection: discarding a dead pooled connection")
+        with _returned_at_lock:
+            _returned_at.pop(id(conn), None)
+        pool.putconn(conn, close=True)
+    raise psycopg2.OperationalError("no live database connection after retries")
 
 
 def normalise_row(row: dict[str, Any]) -> dict[str, Any]:
@@ -155,6 +225,31 @@ def normalise_row(row: dict[str, Any]) -> dict[str, Any]:
     item = dict(row)
     item["memory_id"] = str(item["memory_id"])
     return item
+
+
+def escape_like(text: str) -> str:
+    r"""Escape ILIKE wildcards so '50%' or 'file_v2' match literally (backslash is ILIKE's default escape)."""
+    return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def local_to_utc_naive(value: str) -> datetime:
+    """
+    Convert a parser date/datetime (the user's LOCAL time) to naive UTC.
+
+    memory_items.created_at is stored as naive UTC (ste/storage_engine.py), but
+    "2026-10-18" from the parser means local midnight — in IST that is
+    2026-10-17 18:30 UTC. Comparing the raw date with created_at would drop
+    everything from local midnight to 05:30. A value that already carries a
+    timezone is converted as-is. The backend runs on the user's machine, so
+    the process's local timezone is the user's.
+
+    Raises:
+        ValueError: the value is not an ISO date/datetime.
+    """
+    parsed = datetime.fromisoformat(value)
+    if parsed.tzinfo is None:
+        parsed = parsed.astimezone()  # naive → interpreted as local time
+    return parsed.astimezone(timezone.utc).replace(tzinfo=None)
 
 
 def _anchor_constraint(state: EchoState) -> tuple[list[str], list[Any]]:
@@ -175,31 +270,40 @@ def _dynamic_filters(intent: ParsedIntent) -> tuple[list[str], list[Any]]:
     clauses: list[str] = []
     params: list[Any] = []
 
-    sources = intent.get("sources", ["gmail", "chrome", "youtube"])
-    all_sources = {"gmail", "chrome", "youtube"}
-    if sources and set(sources) != all_sources and "all" not in sources:
+    sources = intent.get("sources", list(_ALL_SOURCES))
+    if sources and set(sources) != set(_ALL_SOURCES) and "all" not in sources:
         placeholders = ", ".join(["%s"] * len(sources))
         clauses.append(f"m.source_type IN ({placeholders})")
         params.extend(sources)
 
     time_filter = intent.get("time_filter")
     if time_filter:
-        clauses.append("m.created_at >= %s::timestamp")
-        params.append(time_filter)
+        try:
+            start_utc = local_to_utc_naive(time_filter)
+        except ValueError:
+            logger.warning("postgres_keyword_search: invalid time_filter ignored (len=%d)", len(str(time_filter)))
+        else:
+            clauses.append("m.created_at >= %s")
+            params.append(start_utc)
 
     return clauses, params
 
 
 # ── postgres_keyword_search ───────────────────────────────────────────────────
 
-def postgres_keyword_search(state: EchoState) -> dict:
+def postgres_keyword_search(state: EchoState) -> dict[str, Any]:
     """
     Keyword branch of the hybrid retrieval (Node 2a).
 
-    Runs PostgreSQL FTS over title/raw_text/auto_keywords/subject with an
-    ILIKE fallback in the same query, ranked by ts_rank. Applies deterministic
-    source, absolute-time, and time-anchor constraints. Result order defines
-    Rank_postgres for Reciprocal Rank Fusion.
+    Runs PostgreSQL FTS over title/raw_text/auto_keywords/subject/sender/
+    domain/channel with an ILIKE fallback in the same query, ranked by ts_rank.
+    Applies deterministic source, absolute-time, and time-anchor constraints —
+    except on widen attempt 3 (skip_postgres_filter), when the same keyword
+    match runs without them. Result order defines Rank_postgres for RRF.
+
+    With no usable keyword the branch returns nothing (the semantic branch
+    still runs). It never falls back to a "most recent items" list: those would
+    enter RRF ranked by recency, which is recency boosting (a prohibited feature).
 
     Args:
         state: EchoState carrying parsed_intent and anchor_time.
@@ -209,118 +313,75 @@ def postgres_keyword_search(state: EchoState) -> dict:
         FTS-rank ordered). Empty list on any database error.
     """
     intent: ParsedIntent = state.get("parsed_intent", {})
-    skip_filter: bool = intent.get("skip_postgres_filter", False)
+    skip_filter: bool = bool(intent.get("skip_postgres_filter", False))
     query_clean: str = (intent.get("query_clean") or "").strip()
 
+    if not query_clean:
+        logger.info("postgres_keyword_search: no keyword — branch skipped")
+        return {"postgres_results": []}
+
+    if skip_filter:
+        clauses: list[str] = []
+        filter_params: list[Any] = []
+        has_anchor = False
+    else:
+        clauses, filter_params = _dynamic_filters(intent)
+        anchor_clauses, anchor_params = _anchor_constraint(state)
+        clauses += anchor_clauses
+        filter_params += anchor_params
+        has_anchor = bool(anchor_clauses)
+
+    where_block = BASE_CONDITIONS
+    if clauses:
+        where_block += "  AND " + "\n  AND ".join(clauses) + "\n"
+
+    sql = f"""
+    SELECT {RESULT_COLUMNS},
+           ts_rank({_FTS_DOCUMENT}, websearch_to_tsquery('english', %s)) AS keyword_rank
+    {RESULT_JOINS}
+    {where_block}
+      AND (
+            {_FTS_DOCUMENT} @@ websearch_to_tsquery('english', %s)
+            OR m.title ILIKE %s
+            OR COALESCE(gm.subject, '') ILIKE %s
+            OR COALESCE(gm.sender, '') ILIKE %s
+            OR COALESCE(cm.domain, '') ILIKE %s
+            OR COALESCE(ym.channel_name, '') ILIKE %s
+            OR EXISTS (SELECT 1 FROM unnest(m.auto_keywords) kw WHERE kw ILIKE %s)
+      )
+    ORDER BY keyword_rank DESC, me.last_accessed_at DESC NULLS LAST
+    LIMIT %s
+    """
+    ilike_pattern = f"%{escape_like(query_clean)}%"
+    # Placeholder order: SELECT's ts_rank, then WHERE filters, then the match block.
+    params = [query_clean] + filter_params + [query_clean] + [ilike_pattern] * 6 + [PG_KEYWORD_LIMIT]
+
+    started = time.perf_counter()
     try:
         conn = get_connection()
         try:
             with conn:
                 with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-                    if skip_filter or not query_clean:
-                        # Widen-scope attempt 3 (or no usable keyword): base
-                        # conditions only, recency-ordered as a last resort.
-                        sql = (
-                            f"SELECT {RESULT_COLUMNS} {RESULT_JOINS} {BASE_CONDITIONS}"
-                            "ORDER BY me.last_accessed_at DESC NULLS LAST LIMIT %s"
-                        )
-                        params: list[Any] = [POSTGRES_RESULT_LIMIT]
-                        logger.info("postgres_keyword_search: base-only query (skip_filter=%s)", skip_filter)
-                    else:
-                        clauses, filter_params = _dynamic_filters(intent)
-                        anchor_clauses, anchor_params = _anchor_constraint(state)
-                        clauses += anchor_clauses
-                        filter_params += anchor_params
-
-                        where_block = BASE_CONDITIONS
-                        if clauses:
-                            where_block += "  AND " + "\n  AND ".join(clauses)
-
-                        ilike_pattern = f"%{query_clean}%"
-                        sql = f"""
-                        SELECT {RESULT_COLUMNS},
-                               ts_rank({_FTS_DOCUMENT}, websearch_to_tsquery('english', %s)) AS keyword_rank
-                        {RESULT_JOINS}
-                        {where_block}
-                          AND (
-                                {_FTS_DOCUMENT} @@ websearch_to_tsquery('english', %s)
-                                OR m.title ILIKE %s
-                                OR COALESCE(gm.subject, '') ILIKE %s
-                                OR COALESCE(gm.sender, '') ILIKE %s
-                                OR COALESCE(cm.domain, '') ILIKE %s
-                                OR COALESCE(ym.channel_name, '') ILIKE %s
-                                OR EXISTS (SELECT 1 FROM unnest(m.auto_keywords) kw WHERE kw ILIKE %s)
-                          )
-                        ORDER BY keyword_rank DESC, me.last_accessed_at DESC NULLS LAST
-                        LIMIT %s
-                        """
-                        params = (
-                            [query_clean]
-                            + filter_params
-                            + [query_clean] + [ilike_pattern] * 6
-                            + [PG_KEYWORD_LIMIT]
-                        )
-                        logger.info(
-                            "postgres_keyword_search: FTS query, %d filters, anchor=%s, sources=%s",
-                            len(clauses),
-                            bool(anchor_clauses),
-                            intent.get("sources"),
-                        )
-
                     cur.execute(sql, params)
                     rows = cur.fetchall()
         finally:
             conn.close()
-
-        results = [normalise_row(row) for row in rows]
-        logger.info("postgres_keyword_search: returned %d rows", len(results))
-        return {"postgres_results": results}
-
     except Exception as exc:
-        logger.error("postgres_keyword_search: database error — %s", exc)
+        logger.error("postgres_keyword_search: database error — %s: %s", type(exc).__name__, exc)
         return {"postgres_results": []}
+
+    results = [normalise_row(row) for row in rows]
+    logger.info(
+        "postgres_keyword_search: %d rows in %.0f ms (filters=%d, anchor=%s, skip_filter=%s, sources=%s)",
+        len(results), (time.perf_counter() - started) * 1000, len(clauses), has_anchor, skip_filter,
+        intent.get("sources"),
+    )
+    return {"postgres_results": results}
 
 
 # ── faiss_semantic_search ─────────────────────────────────────────────────────
 
-def _cosine_similarity(query_vec: np.ndarray, item_vec: np.ndarray) -> float:
-    """True cosine similarity — the FAISS index stores unnormalized vectors."""
-    denom = float(np.linalg.norm(query_vec) * np.linalg.norm(item_vec))
-    if denom == 0.0:
-        return 0.0
-    return float(np.dot(query_vec, item_vec) / denom)
-
-
-def _search_full_index(manager: Any, query_vec: np.ndarray, k: int) -> list[tuple[str, float]]:
-    """
-    Search the entire FAISS index (not candidate-filtered) and return
-    (memory_id, cosine_similarity) pairs, best first.
-
-    Uses the manager's public index/vectors/memory_ids attributes read-only —
-    the STE FAISSManager only exposes a candidate-filtered search, and copying
-    every vector into a temp index per variant would defeat the point.
-    """
-    total = manager.index.ntotal
-    if total == 0:
-        return []
-
-    query = np.asarray(query_vec, dtype=np.float32).reshape(1, -1)
-    limit = min(max(k, 1), total)
-    _, indices = manager.index.search(query, limit)
-
-    results: list[tuple[str, float]] = []
-    flat_query = query[0]
-    for offset in indices[0]:
-        if offset < 0:
-            continue
-        memory_id = manager.memory_ids[offset]
-        similarity = _cosine_similarity(flat_query, manager.vectors[offset])
-        results.append((str(memory_id), similarity))
-    results.sort(key=lambda pair: pair[1], reverse=True)
-    return results
-
-
-def faiss_semantic_search(state: EchoState) -> dict:
+def faiss_semantic_search(state: EchoState) -> dict[str, Any]:
     """
     Semantic branch of the hybrid retrieval (Node 2b) with query expansion.
 
@@ -349,6 +410,7 @@ def faiss_semantic_search(state: EchoState) -> dict:
     if intent.get("full_faiss_scan"):
         k *= FULL_SCAN_K_MULTIPLIER
 
+    started = time.perf_counter()
     try:
         from enp.embedding_generator import generate_embeddings
         from ste.faiss_manager import get_manager
@@ -357,24 +419,23 @@ def faiss_semantic_search(state: EchoState) -> dict:
         embeddings = generate_embeddings(variants)
 
         best_scores: dict[str, float] = {}
-        for variant, vector in zip(variants, embeddings):
-            hits = _search_full_index(manager, vector, k)
-            logger.info("faiss_semantic_search: variant=%r hits=%d", variant, len(hits))
+        hits_per_variant: list[int] = []
+        for vector in embeddings:
+            hits = manager.search_all(vector, k)
+            hits_per_variant.append(len(hits))
             for memory_id, similarity in hits:
                 if similarity > best_scores.get(memory_id, float("-inf")):
                     best_scores[memory_id] = similarity
-
-        merged = sorted(best_scores.items(), key=lambda pair: pair[1], reverse=True)
-        logger.info(
-            "faiss_semantic_search: %d variants pooled into %d unique candidates",
-            len(variants),
-            len(merged),
-        )
-        return {"faiss_results": merged}
-
     except Exception as exc:
-        logger.error("faiss_semantic_search: search failed — %s", exc)
+        logger.error("faiss_semantic_search: search failed — %s: %s", type(exc).__name__, exc)
         return {"faiss_results": []}
+
+    merged = sorted(best_scores.items(), key=lambda pair: pair[1], reverse=True)
+    logger.info(
+        "faiss_semantic_search: %d variants (hits %s, k=%d) pooled into %d candidates in %.0f ms",
+        len(variants), hits_per_variant, k, len(merged), (time.perf_counter() - started) * 1000,
+    )
+    return {"faiss_results": merged}
 
 
 # ── Hydration ─────────────────────────────────────────────────────────────────
@@ -382,10 +443,11 @@ def faiss_semantic_search(state: EchoState) -> dict:
 def hydrate_memory_items(memory_ids: Sequence[str]) -> list[dict[str, Any]]:
     """
     Fetch full metadata rows for the given memory_ids (semantic-branch hits
-    the keyword branch didn't return). Order of the result is not guaranteed.
+    the keyword branch didn't return). Order of the result is not guaranteed;
+    deleted or unprocessed items are left out.
 
     Args:
-        memory_ids: memory_id strings to hydrate.
+        memory_ids: memory_id strings (UUIDs) to hydrate.
 
     Returns:
         List of normalized result dicts; empty on error or empty input.
@@ -394,10 +456,8 @@ def hydrate_memory_items(memory_ids: Sequence[str]) -> list[dict[str, Any]]:
     if not ids:
         return []
 
-    sql = (
-        f"SELECT {RESULT_COLUMNS} {RESULT_JOINS} {BASE_CONDITIONS}"
-        "  AND m.memory_id::text = ANY(%s)"
-    )
+    # Compare as uuid[] (not memory_id::text) so the primary-key index is used.
+    sql = f"SELECT {RESULT_COLUMNS} {RESULT_JOINS} {BASE_CONDITIONS}  AND m.memory_id = ANY(%s::uuid[])"
     try:
         conn = get_connection()
         try:
@@ -407,10 +467,11 @@ def hydrate_memory_items(memory_ids: Sequence[str]) -> list[dict[str, Any]]:
                     rows = cur.fetchall()
         finally:
             conn.close()
-        return [normalise_row(row) for row in rows]
     except Exception as exc:
-        logger.error("hydrate_memory_items: database error — %s", exc)
+        logger.error("hydrate_memory_items: database error — %s: %s", type(exc).__name__, exc)
         return []
+    logger.info("hydrate_memory_items: %d of %d ids hydrated", len(rows), len(ids))
+    return [normalise_row(row) for row in rows]
 
 
 def fetch_recent_items(sources: Sequence[str], limit: int = 10) -> list[dict[str, Any]]:
@@ -426,11 +487,16 @@ def fetch_recent_items(sources: Sequence[str], limit: int = 10) -> list[dict[str
     Returns:
         Normalized result dicts, newest first; empty on error.
     """
-    wanted = [s for s in sources if s in ("gmail", "chrome", "youtube")] or ["gmail", "chrome", "youtube"]
+    wanted = [s for s in sources if s in _ALL_SOURCES] or list(_ALL_SOURCES)
+    # "Today" = since the user's local midnight, as naive UTC (created_at is UTC;
+    # the database's CURRENT_DATE would be the UTC day instead).
+    today_start_utc = local_to_utc_naive(date.today().isoformat())
+    # Each fragment ends with a newline: "CURRENT_DATE" + "ORDER BY" used to
+    # concatenate into "CURRENT_DATEORDER BY" (a syntax error).
     sql = (
         f"SELECT {RESULT_COLUMNS} {RESULT_JOINS} {BASE_CONDITIONS}"
-        "  AND m.source_type = ANY(%s)"
-        "  AND m.created_at >= CURRENT_DATE"
+        "  AND m.source_type = ANY(%s)\n"
+        "  AND m.created_at >= %s\n"
         "ORDER BY m.created_at DESC LIMIT %s"
     )
     try:
@@ -438,11 +504,12 @@ def fetch_recent_items(sources: Sequence[str], limit: int = 10) -> list[dict[str
         try:
             with conn:
                 with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-                    cur.execute(sql, (wanted, limit))
+                    cur.execute(sql, (wanted, today_start_utc, limit))
                     rows = cur.fetchall()
         finally:
             conn.close()
-        return [normalise_row(row) for row in rows]
     except Exception as exc:
-        logger.error("fetch_recent_items: database error — %s", exc)
+        logger.error("fetch_recent_items: database error — %s: %s", type(exc).__name__, exc)
         return []
+    logger.info("fetch_recent_items: %d rows for %s", len(rows), wanted)
+    return [normalise_row(row) for row in rows]

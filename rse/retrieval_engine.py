@@ -18,19 +18,28 @@ Graph topology (hybrid redesign):
         ↓
     evaluate_quality                   ← 5 deterministic checks, no LLM
         ↓
-    [strong]      → rerank_cross_encoder  ← local ms-marco cross-encoder + effort score
-    [weak/empty]  → widen_scope (≤3)      → loops back to BOTH search branches
-    [exhausted]   → no_results_found      → END
+    [strong]            → rerank_cross_encoder  ← local ms-marco cross-encoder + effort score
+    [weak/empty]        → widen_scope (≤3)      → loops back to BOTH search branches
+    [weak, exhausted]   → rerank_cross_encoder  (closest matches, answered honestly)
+    [empty, exhausted]  → no_results_found      → END
         ↓
     extend_neighborhood                ← thread / session context for top 3
         ↓
-    check_attachments → [fetch_attachment] → synthesize   ← LLM Call 2
-                                                ↓
-                                               END
+    check_attachments → [fetch_attachment | fetch_api] → synthesize   ← LLM Call 2
+                                                            ↓
+                                                           END
 
 LLM calls per query: exactly 2, regardless of loop iterations.
+
+run_query output (A27): final_answer (readable chat answer, citations as text
+pills), answer_markdown (validated ⟦n⟧ markers for the pill UI),
+answer_sources (cited items with their links), plus the rest of the state.
+The compiled graph is built once at import and is safe to invoke from several
+request threads at once (each invoke gets its own state).
+Logs carry the session id, counts and timings only — never the query or answer.
 """
 import logging
+import time
 import uuid
 from typing import Any
 
@@ -188,22 +197,32 @@ def run_query(
         "result_quality":       "empty",
         "attempt_count":        0,
         "final_answer":         "",
+        "answer_markdown":      "",
+        "answer_sources":       [],
         "no_results":           False,
     }
 
-    logger.info("run_query: starting graph for query=%r session=%s", user_query, session_id)
+    logger.info("run_query: starting graph (session=%s, history=%d messages)",
+                session_id, len(conversation_history))
+    started = time.perf_counter()
 
+    graph_failed = False
     try:
         final_state = _COMPILED_GRAPH.invoke(initial_state)
     except Exception as exc:
-        logger.error("run_query: graph execution failed — %s", exc)
+        # Full detail goes to the log only; the user gets a plain message (an
+        # exception text can carry hostnames or SQL).
+        logger.exception("run_query: graph execution failed — %s", type(exc).__name__)
+        graph_failed = True
         final_state = dict(initial_state)
-        final_state["final_answer"] = f"An error occurred during retrieval: {exc}"
-        final_state["no_results"] = True
+        message = "Something went wrong while searching your memories. Please try again in a moment."
+        final_state.update({"final_answer": message, "answer_markdown": message,
+                            "answer_sources": [], "no_results": True})
 
-    # Persist turn to conversation history
+    # Persist the turn — but not a failure message, which would only confuse
+    # the next question's history.
     answer = final_state.get("final_answer", "")
-    if answer:
+    if answer and not graph_failed:
         save_turn(session_id, user_query, answer)
 
     result_count = len(
@@ -211,10 +230,14 @@ def run_query(
     )
 
     logger.info(
-        "run_query: complete — no_results=%s answer_length=%d result_count=%d",
+        "run_query: complete in %.0f ms — no_results=%s answer_length=%d result_count=%d sources=%d "
+        "attempts=%d",
+        (time.perf_counter() - started) * 1000,
         final_state.get("no_results"),
         len(answer),
         result_count,
+        len(final_state.get("answer_sources") or []),
+        final_state.get("attempt_count", 0),
     )
 
     return {
@@ -224,13 +247,15 @@ def run_query(
     }
 
 
-# ── Module-level smoke test ───────────────────────────────────────────────────
+# ── Command-line smoke test (python -m rse.retrieval_engine "query") ──────────
+# Talks to the live database and LLM. The print() calls are the command's
+# output for the developer at the terminal, not logging.
 if __name__ == "__main__":
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    )
     import sys
+
+    from backend.logging_config import setup_logging
+
+    setup_logging()
 
     query = sys.argv[1] if len(sys.argv) > 1 else "find my TechCorp interview email"
     result = run_query(query)
@@ -251,5 +276,7 @@ if __name__ == "__main__":
             f"rrf={row.get('rrf_score', 0):.4f})"
         )
 
-    print(f"\n── FINAL ANSWER ───────────────────────────────────────────")
+    print("\n── FINAL ANSWER ───────────────────────────────────────────")
     print(result.get("final_answer", "(no answer)"))
+    for source in result.get("answer_sources", []):
+        print(f"  ⟦{source['n']}⟧ {source['anchor']} · {source['date_label']} → {source['link']}")

@@ -1,40 +1,63 @@
 """
-RSE module configuration.
-To switch LLM provider, change 'provider' and update the model strings below.
-Supported providers: 'google_genai' | 'anthropic' | 'ollama'
+RSE module configuration — every tunable number and the LLM choice live here.
+
+Nothing in this file runs logic; it only defines constants. Other modules import
+what they need (`from rse.config import RRF_K`). Outside rse/, two modules read it:
+`enp/embedding_generator.py` (CROSS_ENCODER_MODEL) and the LLM callers
+`enp/system_group_classifier.py` + `wba/insight_generator.py` (LLM_CONFIG).
+
+LLM rule (decision A25, 2026-10-18): plug-in for every provider, specialised for
+OpenAI. All LLM calls go through LangChain's `init_chat_model`, so switching
+provider means changing only LLM_CONFIG below. When provider == "openai" the
+OpenAI-only extras (Responses API, reasoning effort) are used; other providers
+take the generic path and ignore those keys.
+Providers with an installed LangChain package: 'openai' | 'anthropic' |
+'google_genai'. ('ollama' needs `pip install langchain-ollama` first.)
+
+The .env file is loaded here so `python -m rse.retrieval_engine` works on its own;
+when the backend has already loaded it, this is a no-op (existing values win).
 """
 import os
 from pathlib import Path
+from types import MappingProxyType
+from typing import Any, Mapping
+
 from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
-# ── Single change point to swap LLM provider ─────────────────────────────────
-LLM_CONFIG: dict = {
-    # 2026-07-09: switched google_genai → openai. The Google key's free tier
-    # allows only 20 requests/day PER MODEL (each query = 2 calls, each ENP
-    # item classification = 1 more), which made the system unusable within
-    # minutes of real use. The OpenAI key is a funded paid account;
-    # gpt-4.1-mini costs ~$0.003/query at Echo's token sizes, handles strict
-    # JSON (Call 1) and grounded prose (Call 2) well, and accepts the
-    # temperature overrides below (reasoning models don't).
-    # GOOGLE_API_KEY stays in .env — switch back by flipping these 3 strings.
+# ── LLM — the single change point to swap provider or model ──────────────────
+# Read-only mapping: it is shared by every request thread, so nothing may
+# change it at runtime (assigning a key raises TypeError).
+LLM_CONFIG: Mapping[str, Any] = MappingProxyType({
+    # History: google_genai → openai gpt-4.1-mini on 2026-07-09 (Google free tier
+    # allowed only 20 requests/day per model). gpt-4.1-mini → gpt-5.6-luna on
+    # 2026-10-18 (A25): cheaper per token ($0.20 / $1.20 per 1M in/out vs
+    # $0.40 / $1.60) and much stronger on reasoning benchmarks.
+    # GOOGLE_API_KEY stays in .env — switch back by changing these strings.
     "provider": "openai",
-    "parser_model": "gpt-4.1-mini",
-    "synthesizer_model": "gpt-4.1-mini",
-    # temperature overrides (optional — init_chat_model accepts these as kwargs)
+    "parser_model": "gpt-5.6-luna",
+    "synthesizer_model": "gpt-5.6-luna",
+    # OpenAI-only extras (A25). Luna is a reasoning model: "medium" effort for
+    # both calls (better answers over faster ones), and the Responses API so the
+    # model's reasoning carries across tool rounds. Wired into the callers as
+    # each one is reviewed (query_parser, llm_synthesizer, ENP Stage 4, WBA).
+    "reasoning_effort": "medium",
+    "use_responses_api": True,
+    # Temperatures apply to non-reasoning models only (other providers, or
+    # gpt-4.1-mini). For gpt-5.x with any effort other than "none", LangChain
+    # drops them before the request (langchain_openai ChatOpenAI temperature check).
     "parser_temperature": 0.0,
     "synthesizer_temperature": 0.3,
-    # Quota errors (429 RESOURCE_EXHAUSTED on a DAILY limit) are not transient:
-    # langchain's default ~6 exponential-backoff retries burned ~70s per LLM
-    # call before failing. Fail fast instead — the graph has deterministic
-    # fallbacks for both calls.
+    # Fail fast: quota errors (429 on a DAILY limit) are not transient, and
+    # LangChain's default ~6 backoff retries burned ~70 s per call. The graph
+    # has deterministic fallbacks for both calls.
     "max_retries": 2,
-}
+})
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Read by rse/search_coordinator.py (psycopg2 pool) and rse/conversation_memory.py.
 DATABASE_URL: str = os.getenv("DATABASE_URL", "")
-REDIS_URL: str = os.getenv("REDIS_URL", "")
 
 # ── Hybrid retrieval ──────────────────────────────────────────────────────────
 # Keyword branch: candidates returned by postgres_keyword_search, FTS-rank ordered.
@@ -43,10 +66,16 @@ PG_KEYWORD_LIMIT = 200
 FAISS_TOP_K_PER_VARIANT = 30
 # Multiplier applied to FAISS k when widen_scope sets full_faiss_scan (attempt 3).
 FULL_SCAN_K_MULTIPLIER = 3
+# Row cap for the keyword branch's fallback query: no keyword filter, newest
+# first. Used on widen attempt 3 (skip_postgres_filter) or when the query has
+# no usable keyword.
+POSTGRES_RESULT_LIMIT = 1000
 # Reciprocal Rank Fusion constant: score = Σ 1 / (RRF_K + rank).
 RRF_K = 60
 # Fused candidates kept after merge_and_rrf — this pool feeds the cross-encoder.
 RRF_POOL_SIZE = 50
+# widen_scope retries before giving up with no_results_found.
+MAX_WIDEN_ATTEMPTS = 3
 
 # ── Cross-encoder re-ranking ──────────────────────────────────────────────────
 CROSS_ENCODER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
@@ -73,8 +102,5 @@ ANCHOR_CANDIDATE_LIMIT = 5    # keyword candidates inspected when resolving anch
 SYNTHESIS_TOP_RESULTS = 10    # ranked results included in LLM Call 2 context
 SNIPPET_CHAR_LIMIT = 500      # raw-text excerpt length per result (plain truncation)
 
-# ── Legacy / shared constants ─────────────────────────────────────────────────
-POSTGRES_RESULT_LIMIT = 1000  # used only by skip_postgres_filter fallback path
-FAISS_TOP_K = 20
-MAX_WIDEN_ATTEMPTS = 3
-CONVERSATION_HISTORY_DAYS = 30
+# ── Conversation memory ───────────────────────────────────────────────────────
+CONVERSATION_HISTORY_DAYS = 30  # cleanup deletes message_store rows older than this

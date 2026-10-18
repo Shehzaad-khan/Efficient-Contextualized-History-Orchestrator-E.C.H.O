@@ -15,19 +15,22 @@ retrieval_engine.py. Node inventory:
   extend_neighborhood     thread/session context — neighborhood.py
   check_attachments       routing point for on-demand attachment fetch
   fetch_attachment        on-demand Tier-2 extraction — enp/attachment_processor.py
+  fetch_api               live Gmail poll + today's items ("just received")
   synthesize              LLM Call 2 — llm_synthesizer.py
-  no_results_found        structured no-results message
+  no_results_found        friendly no-results chat message
 
 Total LLM calls per query: exactly 2 (parse_intent + synthesize), regardless
 of widen_scope loop iterations.
+Logs carry node names, counts, flags and dates only — never query text or titles.
 """
 import logging
 from datetime import datetime, timedelta
+from typing import Any
 
 from rse.config import MIN_RESULT_COUNT, MIN_TOP_SIMILARITY
 from rse.state import EchoState
 from rse.query_parser import parse_intent
-from rse.search_coordinator import postgres_keyword_search, faiss_semantic_search
+from rse.search_coordinator import faiss_semantic_search, local_to_utc_naive, postgres_keyword_search
 from rse.fusion import merge_and_rrf
 from rse.time_anchor import resolve_time_anchor
 from rse.reranker import rerank_cross_encoder
@@ -36,7 +39,7 @@ from rse.llm_synthesizer import synthesize
 
 logger = logging.getLogger(__name__)
 
-_ALL_SOURCES = ["gmail", "chrome", "youtube"]
+_ALL_SOURCES: list[str] = ["gmail", "chrome", "youtube"]
 
 # When parse_intent falls back (LLM unavailable), query_clean is the verbatim
 # user question — so "trim to the first keyword" must skip question/filler
@@ -60,37 +63,42 @@ def _core_keyword(query_clean: str) -> str:
     return tokens[0] if tokens else query_clean
 
 
-def node_parse_intent(state: EchoState) -> dict:
+def _is_all_sources(sources: Any) -> bool:
+    """True when the intent covers every source (order-independent)."""
+    return not sources or "all" in sources or set(sources) == set(_ALL_SOURCES)
+
+
+def node_parse_intent(state: EchoState) -> dict[str, Any]:
     """Node 1 — parse_intent (LLM Call 1). See query_parser.parse_intent."""
     logger.info("NODE: parse_intent")
     return parse_intent(state)
 
 
-def node_resolve_time_anchor(state: EchoState) -> dict:
+def node_resolve_time_anchor(state: EchoState) -> dict[str, Any]:
     """Node 1b — resolve_time_anchor. No-op when the intent has no anchor."""
     logger.info("NODE: resolve_time_anchor")
     return resolve_time_anchor(state)
 
 
-def node_postgres_keyword_search(state: EchoState) -> dict:
+def node_postgres_keyword_search(state: EchoState) -> dict[str, Any]:
     """Node 2a — keyword branch (runs in parallel with 2b)."""
     logger.info("NODE: postgres_keyword_search")
     return postgres_keyword_search(state)
 
 
-def node_faiss_semantic_search(state: EchoState) -> dict:
+def node_faiss_semantic_search(state: EchoState) -> dict[str, Any]:
     """Node 2b — semantic branch with query expansion (parallel with 2a)."""
     logger.info("NODE: faiss_semantic_search")
     return faiss_semantic_search(state)
 
 
-def node_merge_and_rrf(state: EchoState) -> dict:
+def node_merge_and_rrf(state: EchoState) -> dict[str, Any]:
     """Node 3 — Reciprocal Rank Fusion of both branches."""
     logger.info("NODE: merge_and_rrf")
     return merge_and_rrf(state)
 
 
-def node_evaluate_quality(state: EchoState) -> dict:
+def node_evaluate_quality(state: EchoState) -> dict[str, Any]:
     """
     Node 4 — evaluate_quality. Deterministic, five sequential checks, no LLM.
 
@@ -105,7 +113,7 @@ def node_evaluate_quality(state: EchoState) -> dict:
       Otherwise                                  → 'strong'
     """
     logger.info("NODE: evaluate_quality")
-    candidates = state.get("merged_candidates", [])
+    candidates: list[dict[str, Any]] = state.get("merged_candidates", [])
     intent = state.get("parsed_intent", {})
 
     # Check 1 — any results at all?
@@ -115,25 +123,27 @@ def node_evaluate_quality(state: EchoState) -> dict:
 
     # Check 2 — source match when a specific source was requested.
     sources = intent.get("sources", _ALL_SOURCES)
-    if sources and set(sources) != set(_ALL_SOURCES) and "all" not in sources:
+    if not _is_all_sources(sources):
         if not any(c.get("source_type") in sources for c in candidates):
             logger.info("evaluate_quality: no candidate from requested sources %s", sources)
             return {"result_quality": "empty"}
 
-    # Check 3 — time window match when a time filter is set.
+    # Check 3 — time window match when a time filter is set. The filter is the
+    # user's local date; created_at is naive UTC, so convert before comparing.
     time_filter = intent.get("time_filter")
     if time_filter:
         try:
-            filter_dt = datetime.fromisoformat(time_filter)
+            filter_utc = local_to_utc_naive(time_filter)
+        except ValueError:
+            logger.warning("evaluate_quality: unparseable time_filter — check skipped")
+        else:
             in_window = [
                 c for c in candidates
-                if isinstance(c.get("created_at"), datetime) and c["created_at"] >= filter_dt
+                if isinstance(c.get("created_at"), datetime) and c["created_at"] >= filter_utc
             ]
             if not in_window:
-                logger.info("evaluate_quality: nothing within time window %s", time_filter)
+                logger.info("evaluate_quality: nothing within time window (since %s local)", time_filter)
                 return {"result_quality": "weak"}
-        except ValueError:
-            logger.warning("evaluate_quality: unparseable time_filter %r — check skipped", time_filter)
 
     # Check 4 — minimum candidate count.
     if len(candidates) < MIN_RESULT_COUNT:
@@ -153,11 +163,11 @@ def node_evaluate_quality(state: EchoState) -> dict:
     return {"result_quality": "strong"}
 
 
-def node_widen_scope(state: EchoState) -> dict:
+def node_widen_scope(state: EchoState) -> dict[str, Any]:
     """
     Node 5 — widen_scope. Called on weak/empty quality while attempts remain.
     Each attempt widens one dimension, then the graph loops back to BOTH
-    search branches.
+    search branches. The intent is copied, never changed in place.
 
       Attempt 1: extend time window by 4 days, or open all sources,
                  or trim query to its first keyword.
@@ -169,7 +179,7 @@ def node_widen_scope(state: EchoState) -> dict:
     logger.info("NODE: widen_scope")
     attempt = state.get("attempt_count", 0)
     intent = dict(state.get("parsed_intent", {}))
-    updates: dict = {}
+    updates: dict[str, Any] = {}
 
     if attempt == 0:
         if intent.get("time_filter"):
@@ -180,14 +190,15 @@ def node_widen_scope(state: EchoState) -> dict:
             except ValueError:
                 intent["time_filter"] = None
                 logger.info("widen_scope attempt 1: invalid time_filter cleared")
-        elif intent.get("sources") not in [_ALL_SOURCES, ["all"]]:
+        elif not _is_all_sources(intent.get("sources")):
             intent["sources"] = list(_ALL_SOURCES)
             logger.info("widen_scope attempt 1: sources opened to all")
         else:
             query_clean = intent.get("query_clean", "")
             core = _core_keyword(query_clean) if query_clean else query_clean
             intent["query_clean"] = core
-            logger.info("widen_scope attempt 1: query trimmed to core keyword %r", core)
+            logger.info("widen_scope attempt 1: query trimmed to its core keyword (%d → %d words)",
+                        len(query_clean.split()), len(core.split()))
 
     elif attempt == 1:
         intent["time_filter"] = None
@@ -204,7 +215,7 @@ def node_widen_scope(state: EchoState) -> dict:
         updates["anchor_item"] = None
         logger.info("widen_scope attempt 2: all filters and anchor removed, core keyword only")
 
-    elif attempt >= 2:
+    else:
         intent["skip_postgres_filter"] = True
         intent["full_faiss_scan"] = True
         logger.info("widen_scope attempt 3: skip_postgres_filter and full_faiss_scan enabled")
@@ -214,19 +225,19 @@ def node_widen_scope(state: EchoState) -> dict:
     return updates
 
 
-def node_rerank_cross_encoder(state: EchoState) -> dict:
+def node_rerank_cross_encoder(state: EchoState) -> dict[str, Any]:
     """Node 6 — cross-encoder re-ranking. See reranker.rerank_cross_encoder."""
     logger.info("NODE: rerank_cross_encoder")
     return rerank_cross_encoder(state)
 
 
-def node_extend_neighborhood(state: EchoState) -> dict:
+def node_extend_neighborhood(state: EchoState) -> dict[str, Any]:
     """Node 7 — neighborhood extension. See neighborhood.extend_neighborhood."""
     logger.info("NODE: extend_neighborhood")
     return extend_neighborhood(state)
 
 
-def node_check_attachments(state: EchoState) -> dict:
+def node_check_attachments(state: EchoState) -> dict[str, Any]:
     """
     Node 8 — check_attachments.
 
@@ -237,7 +248,7 @@ def node_check_attachments(state: EchoState) -> dict:
     return {}
 
 
-def node_fetch_attachment(state: EchoState) -> dict:
+def node_fetch_attachment(state: EchoState) -> dict[str, Any]:
     """
     Node 9 — fetch_attachment.
 
@@ -267,7 +278,7 @@ def node_fetch_attachment(state: EchoState) -> dict:
     return {"attachment_content": None}
 
 
-def node_fetch_api(state: EchoState) -> dict:
+def node_fetch_api(state: EchoState) -> dict[str, Any]:
     """
     Node 9b — fetch_api (architecture §10.3 Node 6 routing target).
 
@@ -288,50 +299,41 @@ def node_fetch_api(state: EchoState) -> dict:
             from ingestion.gmail.router import poll_once
 
             result = poll_once()
-            logger.info("NODE: fetch_api — gmail poll: %s", result)
+            logger.info("NODE: fetch_api — gmail poll status=%s processed=%s",
+                        result.get("status"), result.get("processed"))
         except Exception as exc:
             # Live poll is best-effort; today's already-ingested items still flow.
-            logger.error("NODE: fetch_api — gmail poll failed: %s", exc)
+            logger.error("NODE: fetch_api — gmail poll failed: %s: %s", type(exc).__name__, exc)
 
     api_results = fetch_recent_items(sources, limit=10)
     logger.info("NODE: fetch_api — %d fresh items loaded", len(api_results))
     return {"api_results": api_results}
 
 
-def node_synthesize(state: EchoState) -> dict:
+def node_synthesize(state: EchoState) -> dict[str, Any]:
     """Node 10 — synthesize (LLM Call 2). See llm_synthesizer.synthesize."""
     logger.info("NODE: synthesize")
     return synthesize(state)
 
 
-def node_no_results_found(state: EchoState) -> dict:
+def node_no_results_found(state: EchoState) -> dict[str, Any]:
     """
     Node 11 — no_results_found.
 
-    Triggered after 3 failed widen_scope attempts. Returns a structured
-    descriptive message explaining what was searched and suggesting alternatives.
+    Reached when every widen_scope attempt still found nothing usable. Returns
+    a friendly chat message (A27 style) in the same output shape as synthesize:
+    final_answer, answer_markdown, answer_sources (empty), no_results=True.
+    By now the intent has been widened (filters and anchor dropped), so the
+    message speaks about the original question, not the widened filters.
     """
     logger.info("NODE: no_results_found")
-    intent = state.get("parsed_intent", {})
-    query = intent.get("original_query", state.get("user_query", ""))
-    sources = intent.get("sources", [])
-    time_filter = intent.get("time_filter")
-    anchor = state.get("anchor_item")
-
-    sources_str = ", ".join(sources) if sources else "all sources"
-    time_str = f" from around {time_filter}" if time_filter else ""
-    anchor_str = ""
-    if anchor:
-        anchor_str = (
-            f" (anchored {intent.get('time_relation', '')} "
-            f"'{anchor.get('title', 'the anchor item')}')"
-        )
-
+    query = state.get("user_query", "")
     message = (
-        f"No results found for '{query}'{time_str}{anchor_str} across {sources_str}. "
-        "Echo searched progressively broader filters across 3 attempts, combining "
-        "keyword and semantic retrieval. Suggestions: try a shorter keyword, remove "
-        "the time constraint, or check that the relevant content has been ingested "
-        "and processed."
+        f"I couldn't find anything about \"{query}\" in your emails, pages or videos — "
+        "even after widening the search (longer time range, all sources, no time anchor).\n\n"
+        "A few things that might help:\n"
+        "- try a shorter or different keyword (a name, a site, a subject word)\n"
+        "- leave out the date if you're not sure when it happened\n"
+        "- if it's very recent, it may still be processing — try again in a minute"
     )
-    return {"final_answer": message, "no_results": True}
+    return {"final_answer": message, "answer_markdown": message, "answer_sources": [], "no_results": True}
