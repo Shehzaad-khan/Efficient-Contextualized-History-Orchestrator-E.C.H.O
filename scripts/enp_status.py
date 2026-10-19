@@ -32,9 +32,10 @@ def _connect():
 
 
 def _faiss_meta_count() -> int | None:
+    """Vectors listed in the FAISS meta file; None when there is no index yet."""
     meta_path = DEFAULT_INDEX.with_suffix(f"{DEFAULT_INDEX.suffix}.meta.json")
     if not meta_path.exists():
-        return 0
+        return None
     data = json.loads(meta_path.read_text(encoding="utf-8"))
     return len(data.get("memory_ids", []))
 
@@ -155,10 +156,18 @@ def main() -> None:
     print("Drift checks:")
     print(f"  preprocessed=TRUE but no embedding_index: {processed_no_embedding}")
     print(f"  embedding_index active but not preprocessed: {embedding_not_preprocessed}")
-    if processed_no_embedding or embedding_not_preprocessed:
-        print("  -> run enp_reprocess.py or re-run pipeline for affected rows")
+    if faiss_count is not None and faiss_count != embedding_rows:
+        print(f"  FAISS vectors ({faiss_count}) != embedding_index active rows ({embedding_rows})")
+    if processed_no_embedding:
+        # ENP only picks rows with preprocessed = FALSE, so these are never re-embedded on their own.
+        print("  -> reset them so ENP re-embeds them on its next batches (backend running):")
+        print("     UPDATE memory_items mi SET preprocessed = FALSE")
+        print("     WHERE preprocessed = TRUE AND is_deleted = FALSE AND NOT EXISTS (")
+        print("       SELECT 1 FROM embedding_index ei WHERE ei.memory_id = mi.memory_id AND ei.is_active = TRUE);")
+    if embedding_not_preprocessed:
+        print("  -> nothing to do: they are pending, and ENP replaces their vectors when it processes them")
     if failed:
-        print("  failed rows are skipped by default; rerun with ENP_RETRY_FAILED=true or enp_run_once.py --retry-failed")
+        print("  failed rows are skipped by default; restart the backend with ENP_RETRY_FAILED=true to retry them")
 
     if samples:
         print()

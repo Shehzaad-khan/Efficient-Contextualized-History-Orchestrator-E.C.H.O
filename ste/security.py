@@ -5,7 +5,7 @@ Token encryption (Fernet = AES-128-CBC + HMAC-SHA256, from `cryptography`):
     The Gmail and YouTube OAuth tokens are stored on disk only in encrypted form
     (token_gmail.enc, token_youtube.enc). The key comes from the env variable
     ECHO_TOKEN_ENCRYPTION_KEY. Callers: ingestion/gmail/gmail_api.py,
-    ingestion/youtube/youtube_api_client.py, scripts/test_*_auth.py.
+    ingestion/youtube/youtube_api_client.py.
     Older installs stored plaintext token_*.json; migrate_plaintext_file()
     converts them once and deletes the plaintext copy.
 

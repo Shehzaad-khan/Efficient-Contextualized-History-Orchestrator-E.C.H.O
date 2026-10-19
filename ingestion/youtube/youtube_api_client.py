@@ -2,6 +2,7 @@
 youtube_api_client.py — YouTube Data API metadata + transcript (architecture §7, YTC module)
 Echo Personal Memory System
 
+    sign_in_youtube()             once at backend startup: browser sign-in if no usable token
     get_youtube_client()          OAuth -> YouTube Data API service object
     fetch_video_metadata(id)      videos.list (snippet, contentDetails) + transcript -> dict
     fetch_video_transcript(id)    best-effort caption text, "" when none
@@ -14,11 +15,15 @@ Caller: ingestion/youtube/youtube_connector._fill_metadata, after the
 
 Token storage — same scheme as ingestion/gmail/gmail_api.authenticate_gmail:
 encrypted local file token_youtube.enc (a plaintext token_youtube.json is migrated
-into it once), an expired token is refreshed and saved back. One difference on
-purpose: with no usable token this module never opens the browser sign-in. Gmail
-signs in once, in its poller thread at startup; here the call runs inside a
-per-video background job, and run_local_server() would block that thread forever
-waiting for a redirect. Mint a token with scripts/test_youtube_auth.py instead.
+into it once), an expired token is refreshed and saved back.
+
+Sign-in: like Gmail, the browser sign-in happens once, at backend startup.
+backend/main.py runs sign_in_youtube() on its own daemon thread; it opens the
+browser only when the stored token is missing or can't be refreshed. The
+per-video path (get_youtube_client -> _load_credentials) never opens the browser:
+it runs inside a background job, and run_local_server() would block that thread
+until the user finishes signing in. Until the sign-in completes, video jobs get
+YouTubeAuthError and skip the metadata fetch.
 
 Threads: get_youtube_client() is blocking and runs in asyncio.to_thread worker
 threads, several at once when videos arrive together. The credentials are cached
@@ -46,6 +51,7 @@ from typing import Any, Optional
 import httpx
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
@@ -56,6 +62,7 @@ logger = logging.getLogger(__name__)
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 TOKEN_PATH = PROJECT_ROOT / "token_youtube.enc"
 LEGACY_TOKEN_PATH = PROJECT_ROOT / "token_youtube.json"
+CREDENTIALS_PATH = PROJECT_ROOT / "credentials.json"
 
 SCOPES = ["https://www.googleapis.com/auth/youtube.readonly"]
 YOUTUBE_VIDEO_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
@@ -79,8 +86,8 @@ _creds_lock = threading.Lock()
 
 
 class YouTubeAuthError(RuntimeError):
-    """No usable YouTube token. The fix is always the same: run
-    scripts/test_youtube_auth.py to sign in and write token_youtube.enc."""
+    """No usable YouTube token. The fix is always the same: finish the browser
+    sign-in that sign_in_youtube() opens at backend startup (or restart the backend)."""
 
 
 def is_valid_video_id(video_id: str) -> bool:
@@ -128,13 +135,47 @@ def _load_credentials() -> Credentials:
         if creds is None:
             _creds = None
             raise YouTubeAuthError(
-                "No usable YouTube token — run scripts/test_youtube_auth.py to sign in "
-                "(the backend never opens the browser sign-in itself)."
+                "No usable YouTube token — finish the browser sign-in opened at backend "
+                "startup, or restart the backend to open it again."
             )
 
         write_encrypted_text(TOKEN_PATH, creds.to_json())
         _creds = creds
         return creds
+
+
+def sign_in_youtube() -> None:
+    """Make sure a usable YouTube token exists; open the browser sign-in if not.
+
+    Called once, by backend/main.py at startup, on its own daemon thread. Blocks
+    that thread until the user finishes (or abandons) the sign-in; a daemon
+    thread never holds up backend shutdown. Never raises: failures are logged,
+    and video jobs keep raising YouTubeAuthError until the next startup.
+    _creds_lock is NOT held while the browser is open, so video jobs fail fast
+    instead of queueing behind the sign-in.
+    """
+    global _creds
+    try:
+        _load_credentials()
+        return
+    except YouTubeAuthError:
+        pass  # expected: no token, or one that can't be refreshed -> sign in below
+    except Exception:
+        logger.exception("YouTube token check failed; skipping the sign-in")
+        return
+
+    logger.warning("No usable YouTube token — starting the browser sign-in flow")
+    try:
+        flow = InstalledAppFlow.from_client_secrets_file(str(CREDENTIALS_PATH), SCOPES)
+        # port=0: the OS picks a free port, so it can't clash with Gmail's sign-in.
+        creds = flow.run_local_server(port=0)
+        with _creds_lock:
+            write_encrypted_text(TOKEN_PATH, creds.to_json())
+            _creds = creds
+    except Exception:
+        logger.exception("YouTube sign-in failed; video metadata stays off until the next backend start")
+        return
+    logger.info("YouTube sign-in completed")
 
 
 def get_youtube_client():

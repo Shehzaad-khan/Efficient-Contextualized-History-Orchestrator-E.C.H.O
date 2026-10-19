@@ -15,6 +15,8 @@ Background work started by the lifespan (one process):
     enp-worker       the enrichment pipeline, a blocking loop in its own thread;
                      stopped with a threading.Event, between batches
     message-cleanup  one-off at startup: deletes chat history older than 30 days
+    youtube-sign-in  one-off daemon thread at startup: opens the browser sign-in
+                     only when there is no usable YouTube token
 
 Shutdown order: stop the Gmail poller, ask ENP to stop and wait for its current
 batch, then close the shared async Redis client.
@@ -57,6 +59,7 @@ from backend.logging_config import setup_logging
 setup_logging()
 logger = logging.getLogger(__name__)
 
+from ingestion.youtube.youtube_api_client import sign_in_youtube
 from ingestion.youtube.youtube_connector import router as ytc_router
 from ingestion.chrome.chrome_connector import router as chc_router
 from ingestion.gmail.router import poll_forever as gmail_poll_forever
@@ -67,6 +70,7 @@ from rse.conversation_memory import cleanup_old_sessions
 from ste.redis_manager import get_async_client
 
 ENP_THREAD_NAME = "enp-worker"
+YOUTUBE_SIGN_IN_THREAD_NAME = "youtube-sign-in"
 
 # How long shutdown waits for ENP to finish its current batch (10 items by
 # default). If it takes longer, shutdown carries on; Python's exit still waits
@@ -156,6 +160,12 @@ async def lifespan(app: FastAPI):
     # One DB round trip; run it in a worker thread so startup doesn't wait for it.
     # cleanup_old_sessions logs its own result and never raises.
     cleanup_task = asyncio.create_task(asyncio.to_thread(cleanup_old_sessions), name="message-cleanup")
+
+    # A plain daemon thread, not asyncio.to_thread: the sign-in can wait in the
+    # browser for as long as the user takes, and Python's exit waits for
+    # to_thread workers but drops daemon threads, so shutdown never hangs on it.
+    # sign_in_youtube logs its own result and never raises.
+    threading.Thread(target=sign_in_youtube, name=YOUTUBE_SIGN_IN_THREAD_NAME, daemon=True).start()
 
     try:
         yield
