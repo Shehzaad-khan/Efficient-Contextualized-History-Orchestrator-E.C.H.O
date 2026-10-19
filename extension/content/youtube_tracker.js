@@ -33,10 +33,32 @@
  *   Option B: completion_rate >= 0.5 (watch_time / duration)
  *   Option C: revisit (checked by backend via Redis)
  *   Extra:    manual interaction detected (pause/seek/speed)
+ *   Thresholds MUST match ingestion/youtube/youtube_connector.py.
+ *
+ * Manual interaction must come from the user. YouTube itself pauses, seeks and
+ * changes speed: it resumes a video at the saved position, applies the saved
+ * playback speed, and pauses the old video when the next one loads. So a
+ * pause/seek/speed event counts only when (1) a click or key press came within
+ * MANUAL_INPUT_WINDOW_MS before it, and (2) after MANUAL_CONFIRM_DELAY_MS the
+ * same video is still on the same URL (it was not a navigation).
+ *
+ * Ads: while an ad plays (the player has the "ad-showing" class) watch time is
+ * not counted, the ad's length is not taken as the video's duration, and
+ * pause/seek/speed events are ignored.
+ *
+ * Incognito: skipped here; background.js re-checks sender.tab.incognito, which
+ * is the authoritative gate.
+ * Logging: only when DEBUG is true (page console; video ids and paths only).
  */
 
 (function () {
   "use strict";
+
+  // chrome.extension is a legacy namespace and is not guaranteed to exist in an
+  // MV3 content script; optional chaining keeps a missing namespace from throwing.
+  if (chrome.extension?.inIncognitoContext === true) {
+    return;
+  }
 
   // Flip to true to trace injection / activation / watch-time in the page
   // console — the only way to see inside a content script's isolated world.
@@ -54,11 +76,11 @@
     isPlaying: false,
     isTabForeground: document.visibilityState === "visible",
     isWindowFocused: document.hasFocus(),
-    lastActivityTime: Date.now(),
+    lastActivityTime: Date.now(),  // any activity, incl. playback progress (idle gate)
+    lastInputTime: 0,              // last real click / key press (manual-interaction gate)
     intentFired: false,          // true once we've sent video-detected to backend
     heartbeatInterval: null,
-    manualInteractionDetected: false,
-    interactionType: null,
+    lastSentWatchTime: -1,       // watch time in the last heartbeat (skip unchanged ones)
     durationSeconds: 0,          // total video length, from the <video> element
   };
 
@@ -70,11 +92,14 @@
   const INTENT_WATCH_SHORT = 15;            // Option A — Shorts threshold (seconds)
   const INTENT_WATCH_REGULAR = 20;          // Option A — architecture §7.3
   const INTENT_COMPLETION_THRESHOLD = 0.5;  // Option B — completion ratio
+  const MANUAL_INPUT_WINDOW_MS = 1500;      // a manual event needs a click/key this recently
+  const MANUAL_CONFIRM_DELAY_MS = 500;      // then must survive this long without a navigation
 
   let currentUrl = window.location.href;
   let trackedVideo = null;      // the <video> element we attached listeners to
   let lookupTries = 0;
   let lookupTimer = null;
+  let navigationsStarted = 0;   // bumped on yt-navigate-start (manual-interaction check)
 
 
   // ---------------------------------------------------------------------------
@@ -95,25 +120,34 @@
   // ---------------------------------------------------------------------------
   // Video ID extraction from current URL
   // ---------------------------------------------------------------------------
+  // /watch?v=ID (v may come after other parameters) or /shorts/ID.
   function extractVideoId(url) {
-    if (!url) return null;
-
-    if (url.includes("watch?v=")) {
-      const id = new URLSearchParams(new URL(url).search).get("v");
-      return id && id.length === 11 ? id : null;
+    let parsed;
+    try {
+      parsed = new URL(url);
+    } catch (error) {
+      return null;
     }
 
-    if (url.includes("/shorts/")) {
-      const parts = url.split("/shorts/")[1];
-      const id = parts ? parts.split("?")[0].split("/")[0] : null;
-      return id && id.length === 11 ? id : null;
+    let id = null;
+    if (parsed.pathname === "/watch") {
+      id = parsed.searchParams.get("v");
+    } else if (parsed.pathname.startsWith("/shorts/")) {
+      id = parsed.pathname.split("/")[2] || null;
     }
-
-    return null;
+    return id && id.length === 11 ? id : null;
   }
 
   function isShortUrl(url) {
-    return url.includes("/shorts/");
+    try {
+      return new URL(url).pathname.startsWith("/shorts/");
+    } catch (error) {
+      return false;
+    }
+  }
+
+  function isAdPlaying() {
+    return document.querySelector(".html5-video-player.ad-showing") !== null;
   }
 
 
@@ -126,7 +160,8 @@
       state.isPlaying &&
       state.isTabForeground &&
       state.isWindowFocused &&
-      notIdle
+      notIdle &&
+      !isAdPlaying()
     );
   }
 
@@ -168,13 +203,16 @@
 
   // ---------------------------------------------------------------------------
   // Heartbeat — sends cumulative watch_time to backend every 5 seconds
-  // Only runs after intent has fired (video is being saved)
+  // Only runs after intent has fired (video is being saved), and only when the
+  // watch time moved (a paused or hidden video sends nothing).
   // ---------------------------------------------------------------------------
   function startHeartbeat() {
     if (state.heartbeatInterval) return;
 
     state.heartbeatInterval = setInterval(() => {
       if (!state.videoId || !state.intentFired) return;
+      if (state.watchTimeSeconds === state.lastSentWatchTime) return;
+      state.lastSentWatchTime = state.watchTimeSeconds;
 
       send("YTC_HEARTBEAT", {
         video_id: state.videoId,
@@ -221,12 +259,34 @@
     if (!state.videoId || !state.intentFired) return;
 
     stopHeartbeat();
+    // Unlatch: beforeunload and pagehide both call this, and only the first
+    // may send. If the page comes back from the back/forward cache and plays
+    // on, the next tick re-fires video-detected and the heartbeat restarts.
+    state.intentFired = false;
 
     send("YTC_VIDEO_CLOSED", {
       video_id: state.videoId,
       final_watch_time_seconds: state.watchTimeSeconds,
       timestamp: new Date().toISOString(),
     });
+  }
+
+  // Manual-interaction shortcut (see header): only for real user input, and
+  // only if no navigation follows (YouTube pauses the old video when the next
+  // one loads, right after the user's click on it).
+  function onPossibleManualInteraction(interactionType) {
+    if (state.intentFired || !state.videoId || isAdPlaying()) return;
+    if (Date.now() - state.lastInputTime > MANUAL_INPUT_WINDOW_MS) return;
+
+    const videoIdAtEvent = state.videoId;
+    const urlAtEvent = window.location.href;
+    const navigationsAtEvent = navigationsStarted;
+    setTimeout(() => {
+      const navigated = navigationsStarted !== navigationsAtEvent || window.location.href !== urlAtEvent;
+      if (state.videoId === videoIdAtEvent && !navigated) {
+        fireVideoDetected("manual_interaction", interactionType);
+      }
+    }, MANUAL_CONFIRM_DELAY_MS);
   }
 
 
@@ -237,6 +297,7 @@
     // readyState < HAVE_METADATA means duration still belongs to the previous
     // video on an SPA navigation — using it would let Option B fire against
     // the wrong length.
+    if (isAdPlaying()) return; // the ad's length is not the video's
     if (video.readyState >= 1 && video.duration && isFinite(video.duration)) {
       state.durationSeconds = Math.round(video.duration);
     }
@@ -267,11 +328,9 @@
     video.addEventListener("pause", () => {
       state.isPlaying = false;
 
-      // Option B — manual pause (not autoplay end)
-      if (!video.ended && !state.intentFired && state.videoId) {
-        state.manualInteractionDetected = true;
-        state.interactionType = "pause";
-        fireVideoDetected("manual_interaction", "pause");
+      // Extra — manual pause (not the end of the video)
+      if (!video.ended) {
+        onPossibleManualInteraction("pause");
       }
     });
 
@@ -280,16 +339,14 @@
     });
 
     video.addEventListener("seeked", () => {
-      // Option B — user seeked to a timestamp
-      if (!state.intentFired && state.videoId) {
-        fireVideoDetected("manual_interaction", "seek");
-      }
+      // Extra — user seeked to a timestamp
+      onPossibleManualInteraction("seek");
     });
 
     video.addEventListener("ratechange", () => {
-      // Option B — user changed playback speed
-      if (!state.intentFired && state.videoId && video.playbackRate !== 1) {
-        fireVideoDetected("manual_interaction", "speed_change");
+      // Extra — user changed playback speed
+      if (video.playbackRate !== 1) {
+        onPossibleManualInteraction("speed_change");
       }
     });
 
@@ -325,12 +382,20 @@
     }, { passive: true });
   });
 
+  // Real input for the manual-interaction check. Capture phase: the player
+  // stops some events from bubbling up to the document.
+  ["pointerdown", "keydown"].forEach((evt) => {
+    document.addEventListener(evt, () => {
+      state.lastInputTime = Date.now();
+    }, { passive: true, capture: true });
+  });
+
 
   // ---------------------------------------------------------------------------
   // Page unload — fire video-closed to finalize watch time
   // beforeunload does not fire reliably on mobile-style unloads or bfcache
-  // eviction, so pagehide backs it up. fireVideoClosed is idempotent-safe:
-  // deactivate() clears videoId, so a second call is a no-op.
+  // eviction, so pagehide backs it up. fireVideoClosed sends at most once:
+  // it clears intentFired, so the second call is a no-op.
   // ---------------------------------------------------------------------------
   window.addEventListener("beforeunload", fireVideoClosed);
   window.addEventListener("pagehide", fireVideoClosed);
@@ -352,6 +417,10 @@
   }
 
   document.addEventListener("yt-navigate-finish", handleUrlChange);
+  // Starts before the URL changes; cancels a pending manual-interaction check.
+  document.addEventListener("yt-navigate-start", () => {
+    navigationsStarted += 1;
+  });
   window.addEventListener("popstate", handleUrlChange);
 
 
@@ -372,8 +441,7 @@
     state.watchTimeSeconds = 0;
     state.isPlaying = false;
     state.intentFired = false;
-    state.manualInteractionDetected = false;
-    state.interactionType = null;
+    state.lastSentWatchTime = -1;
     state.durationSeconds = 0;
     state.lastActivityTime = Date.now();
   }

@@ -29,6 +29,9 @@
  *     idle gate above and stop the timer mid-read. So when an email stays in
  *     focus (foreground + window focused) for FOCUS_CREDIT_SECONDS uninterrupted
  *     — even with zero input — one full minute is added to the reading time.
+ *     Once per idle stretch only: the next credit needs new mouse/keyboard
+ *     input first, so an email left open while the user is away does not
+ *     gain a minute every minute.
  *
  *   Engagement is held PENDING and only sent once accumulated reading time
  *   crosses MIN_VISIT_SECONDS — an accidental 1-second open is never recorded.
@@ -36,15 +39,22 @@
  * Session semantics:
  *   The backend accumulates dwell and bumps play_sessions_count by 1 per call,
  *   so we send exactly ONCE per open-email session (when the user switches
- *   emails or leaves the tab), never on a repeating heartbeat.
+ *   emails, goes back to the list, or closes / leaves the page), never on a
+ *   repeating heartbeat.
+ *
+ * Logging: none. A content script's console is the page's console.
  */
 
-// chrome.extension is a legacy namespace and is not guaranteed to exist in an
-// MV3 content script; optional chaining keeps a missing namespace from
-// throwing and killing the whole tracker. background.js re-checks
-// sender.tab.incognito, which is the authoritative gate.
-if (chrome.extension?.inIncognitoContext !== true) {
+(function () {
   "use strict";
+
+  // chrome.extension is a legacy namespace and is not guaranteed to exist in an
+  // MV3 content script; optional chaining keeps a missing namespace from
+  // throwing. background.js re-checks sender.tab.incognito, which is the
+  // authoritative gate.
+  if (chrome.extension?.inIncognitoContext === true) {
+    return;
+  }
 
   const IDLE_THRESHOLD_MS = 30000;   // user considered idle after 30s of no input
   const MIN_VISIT_SECONDS = 3;       // below this, the open was not a "proper" visit
@@ -55,11 +65,11 @@ if (chrome.extension?.inIncognitoContext !== true) {
     emailId: null,          // legacy (hex API) id of the currently open email
     dwellSeconds: 0,        // foreground reading time accumulated this session
     focusStreakSeconds: 0,  // uninterrupted in-focus seconds while idle (passive read)
+    passiveCreditGiven: false, // true once this idle stretch earned its minute
     sent: false,            // true once this session's engagement was reported
     isTabForeground: document.visibilityState === "visible",
     isWindowFocused: document.hasFocus(),
     lastActivityTime: Date.now(),
-    timerHandle: null,
   };
 
   // ---------------------------------------------------------------------------
@@ -109,6 +119,7 @@ if (chrome.extension?.inIncognitoContext !== true) {
     state.emailId = emailId;
     state.dwellSeconds = 0;
     state.focusStreakSeconds = 0;
+    state.passiveCreditGiven = false;
     state.sent = false;
   }
 
@@ -151,16 +162,18 @@ if (chrome.extension?.inIncognitoContext !== true) {
       // Active reading — input within the last 30s. Count each second.
       state.dwellSeconds += 1;
       state.focusStreakSeconds = 0;   // active path handles this second
-    } else if (state.emailId && state.isTabForeground && state.isWindowFocused) {
-      // Idle but the email is still on screen — genuine passive reading.
-      // Credit a full minute once it has held focus for FOCUS_CREDIT_SECONDS.
+    } else if (state.emailId && state.isTabForeground && state.isWindowFocused && !state.passiveCreditGiven) {
+      // Idle but the email is still on screen — passive reading.
+      // Credit a full minute once it has held focus for FOCUS_CREDIT_SECONDS,
+      // then stop until the user is active again.
       state.focusStreakSeconds += 1;
       if (state.focusStreakSeconds >= FOCUS_CREDIT_SECONDS) {
         state.dwellSeconds += FOCUS_CREDIT_SECONDS;
         state.focusStreakSeconds = 0;
+        state.passiveCreditGiven = true;
       }
     } else {
-      // Tab/window lost focus — the passive streak breaks.
+      // Tab/window lost focus, or this idle stretch was already credited.
       state.focusStreakSeconds = 0;
     }
   }
@@ -182,16 +195,19 @@ if (chrome.extension?.inIncognitoContext !== true) {
       evt,
       () => {
         state.lastActivityTime = Date.now();
+        state.passiveCreditGiven = false; // the user is back: a new idle stretch may earn credit
       },
       { passive: true }
     );
   });
 
-  // Closing the tab / navigating away — flush the open email.
-  window.addEventListener("beforeunload", finalizeSession);
+  // Closing the tab / navigating away — flush the open email. pagehide fires on
+  // every unload, including back/forward-cache pages, where beforeunload can be
+  // skipped; finalizeSession is safe to call twice (state.sent).
+  window.addEventListener("pagehide", finalizeSession);
 
   // ---------------------------------------------------------------------------
   // Start
   // ---------------------------------------------------------------------------
-  state.timerHandle = setInterval(tick, 1000);
-}
+  setInterval(tick, 1000);
+})();

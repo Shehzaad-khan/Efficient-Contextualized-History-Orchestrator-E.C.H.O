@@ -1,8 +1,55 @@
 /**
- * background.js - Echo Chrome Extension
+ * background.js - Echo Chrome Extension (MV3 service worker)
+ *
+ * The only place where captured data leaves the extension. Two jobs:
+ *
+ * 1. Relay for the YouTube and Gmail content scripts.
+ *    YTC_VIDEO_DETECTED / YTC_HEARTBEAT / YTC_VIDEO_CLOSED -> /ytc/...
+ *    GMC_ENGAGEMENT                                        -> /gmail/engagement
+ *    Their intent gates run on the server; this file only forwards.
+ *
+ * 2. The Chrome page intent gate (architecture §6.2), run here per tab:
+ *    Phase 1: tab in the foreground >= 5 s -> ask /chrome/revisit-check
+ *    Phase 2: one of >= 10 s, scroll >= 25 %, >= 1 interaction, or a revisit
+ *    Pass -> one POST /chrome/ingest per page. The thresholds and the
+ *    app-domain / sensitive-term lists MUST match ingestion/chrome/
+ *    intent_filter.py and chrome_connector.py, which re-check every page.
+ *    Dwell time is counted here (1 s ticks, active tab of the focused window,
+ *    user not idle). chrome_tracker.js adds scroll depth, interactions and the
+ *    readable text through CHROME_PAGE_SIGNAL every 5 s, and
+ *    CHROME_PAGE_UNLOAD when the page goes away.
+ *
+ * Privacy rules enforced here:
+ *    - Every request goes through postToBackend(), which checks the pause flag
+ *      (chrome.storage.local.echo_tracking_paused) before each send.
+ *    - Incognito tabs are never captured (§13); this is the authoritative check.
+ *    - Only http(s) pages; sensitive pages (login, payment, account...) are skipped.
+ *    - App pages (Slack, Notion, Jira...) send engagement only, never text (§6.7).
+ *    - console output carries endpoints and status codes only, never URLs,
+ *      titles or page text (anyone can open the service-worker console).
+ *
+ * MV3 lifecycle: Chrome stops an idle service worker and starts it again on
+ * the next event, so all state below lives in memory and can be lost. The
+ * pause flag is therefore read from storage on every send, and the active tab
+ * is looked up again at start-up. A page whose worker restarted mid-visit
+ * starts counting its dwell time from zero.
  */
 
 const BACKEND_URL = "http://localhost:8000";
+const PAUSE_KEY = "echo_tracking_paused";
+
+// §6.2 thresholds — keep equal to ingestion/chrome/intent_filter.py.
+const PHASE1_MIN_SECONDS = 5;
+const PHASE2_MIN_SECONDS = 10;
+const PHASE2_MIN_SCROLL = 0.25;
+const PHASE2_MIN_INTERACTIONS = 1;
+const APP_PAGE_MIN_SECONDS = 5;
+
+// After a failed /chrome/ingest, wait this long before the next try, so a
+// stopped backend is not hit every second. Tab close / unload always tries once more.
+const SEND_RETRY_DELAY_MS = 30000;
+
+// tabId -> state of the page currently open in that tab.
 const activeChromeTabs = new Map();
 let windowFocused = true;
 let userIdle = false;
@@ -53,60 +100,28 @@ const CHROME_IGNORED_QUERY_PARAMS = new Set([
   "yclid"
 ]);
 
+// Content-script message type -> backend route (job 1).
+const RELAY_ROUTES = {
+  YTC_VIDEO_DETECTED: "/ytc/video-detected",
+  YTC_HEARTBEAT: "/ytc/heartbeat",
+  YTC_VIDEO_CLOSED: "/ytc/video-closed",
+  GMC_ENGAGEMENT: "/gmail/engagement"
+};
+
 chrome.idle.setDetectionInterval(30);
 
-// Pause/resume tracking (popup toggle). While paused, no event leaves the
-// extension — every backend call funnels through postToBackend below.
-let trackingPaused = false;
+// ── Backend egress ───────────────────────────────────────────────────────────
 
-chrome.storage.local.get({ echo_tracking_paused: false }, (stored) => {
-  trackingPaused = Boolean(stored.echo_tracking_paused);
-});
+async function isTrackingPaused() {
+  // Read on every call, not cached: after a worker restart a cached value
+  // would be `false` until storage answered, and events could leak while paused.
+  const stored = await chrome.storage.local.get({ [PAUSE_KEY]: false });
+  return Boolean(stored[PAUSE_KEY]);
+}
 
-chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === "local" && changes.echo_tracking_paused) {
-    trackingPaused = Boolean(changes.echo_tracking_paused.newValue);
-  }
-});
-
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  const { type, payload } = message;
-
-  if (type === "CHROME_PAGE_SIGNAL" || type === "CHROME_PAGE_UNLOAD") {
-    return;
-  }
-
-  // Incognito is never captured (architecture §13). This is the authoritative
-  // check — the content-script guard is only a first line of defence.
-  if (sender.tab && sender.tab.incognito) {
-    return;
-  }
-
-  if (!type || !payload) {
-    return;
-  }
-
-  const routes = {
-    YTC_VIDEO_DETECTED: "/ytc/video-detected",
-    YTC_HEARTBEAT: "/ytc/heartbeat",
-    YTC_VIDEO_CLOSED: "/ytc/video-closed",
-    GMC_ENGAGEMENT: "/gmail/engagement"
-  };
-
-  const endpoint = routes[type];
-  if (!endpoint) {
-    return;
-  }
-
-  postToBackend(endpoint, payload)
-    .then((response) => sendResponse({ ok: true, data: response }))
-    .catch((err) => sendResponse({ ok: false, error: err.message }));
-
-  return true;
-});
-
+/** The single exit point for captured data. Keep every new network path behind it. */
 async function postToBackend(endpoint, payload) {
-  if (trackingPaused) {
+  if (await isTrackingPaused()) {
     return { paused: true };
   }
 
@@ -123,16 +138,21 @@ async function postToBackend(endpoint, payload) {
   return response.json();
 }
 
+// ── URL checks ───────────────────────────────────────────────────────────────
+
 function shouldSkipChromeUrl(url, incognito = false) {
   if (!url || incognito) {
     return true;
   }
 
-  if (
-    url.startsWith("chrome://") ||
-    url.startsWith("chrome-extension://") ||
-    url.startsWith("https://www.youtube.com/")
-  ) {
+  // Only web pages. This also drops chrome://, chrome-extension://, about:,
+  // and file:// (local files can be private documents).
+  if (!url.startsWith("http://") && !url.startsWith("https://")) {
+    return true;
+  }
+
+  // YouTube has its own tracker (youtube_tracker.js).
+  if (url.startsWith("https://www.youtube.com/")) {
     return true;
   }
 
@@ -158,6 +178,8 @@ function isAppDomain(host) {
   return CHROME_APPLICATION_DOMAINS.some((domain) => host === domain || host.endsWith(`.${domain}`));
 }
 
+/** Same rule as chrome_connector.is_sensitive_page: a term is a path segment,
+ *  starts a path segment, or is a query key. An unparsable URL counts as sensitive. */
 function isSensitiveChromeUrl(url) {
   try {
     const parsed = new URL(url);
@@ -175,17 +197,21 @@ function isSensitiveChromeUrl(url) {
   }
 }
 
-function ensureChromeTabState(tab) {
-  if (!tab || !tab.id || shouldSkipChromeUrl(tab.url, tab.incognito)) {
-    return null;
+// ── Per-tab page state ───────────────────────────────────────────────────────
+
+function newChromePageState(url, canonicalUrl, title) {
+  let domain = "";
+  try {
+    domain = new URL(canonicalUrl).hostname.toLowerCase();
+  } catch (error) {
+    domain = "";
   }
 
-  const canonicalUrl = canonicalizeChromeUrl(tab.url);
-  const existing = activeChromeTabs.get(tab.id) || {
-    url: tab.url,
+  return {
+    url,
     canonicalUrl,
-    title: tab.title || "",
-    domain: "",
+    title: title || canonicalUrl,
+    domain,
     dwellSeconds: 0,
     scrollDepth: 0,
     interactionCount: 0,
@@ -194,27 +220,51 @@ function ensureChromeTabState(tab) {
     revisitSignal: false,
     revisitCount: 0,
     sentToBackend: false,
+    sendInFlight: false,
+    nextSendAttemptAt: 0,
     contentExtract: "",
     wordCount: 0,
     referrer: "",
-    isAppPage: false,
-    isSensitivePage: false
+    isAppPage: isAppDomain(domain)
   };
+}
 
-  try {
-    existing.domain = new URL(canonicalUrl).hostname.toLowerCase();
-  } catch (error) {
-    existing.domain = "";
+/**
+ * Return the state for the page now open in `tab`, creating it when needed.
+ * When the tab has moved to a different page (normal or single-page-app
+ * navigation), the old page is finalised first and the new one starts from
+ * zero, so it never inherits the old page's dwell time or "already sent" flag.
+ * Returns null (and finalises any old page) when the new URL must be skipped.
+ */
+function ensureChromeTabState(tab) {
+  if (!tab || !tab.id) {
+    return null;
   }
 
-  existing.url = tab.url;
-  existing.canonicalUrl = canonicalUrl;
-  existing.title = tab.title || existing.title || canonicalUrl;
-  existing.isAppPage = isAppDomain(existing.domain);
-  existing.isSensitivePage = isSensitiveChromeUrl(canonicalUrl);
-  activeChromeTabs.set(tab.id, existing);
-  return existing;
+  const existing = activeChromeTabs.get(tab.id);
+  if (shouldSkipChromeUrl(tab.url, tab.incognito)) {
+    if (existing) {
+      retireChromeTab(tab.id);
+    }
+    return null;
+  }
+
+  const canonicalUrl = canonicalizeChromeUrl(tab.url);
+  if (existing && existing.canonicalUrl === canonicalUrl) {
+    existing.url = tab.url;
+    existing.title = tab.title || existing.title;
+    return existing;
+  }
+
+  if (existing) {
+    retireChromeTab(tab.id);
+  }
+  const state = newChromePageState(tab.url, canonicalUrl, tab.title);
+  activeChromeTabs.set(tab.id, state);
+  return state;
 }
+
+// ── Intent gate and sending ──────────────────────────────────────────────────
 
 async function checkChromeRevisitSignal(tabState) {
   const response = await postToBackend("/chrome/revisit-check", {
@@ -224,80 +274,98 @@ async function checkChromeRevisitSignal(tabState) {
   tabState.revisitCount = tabState.revisitSignal ? 1 : 0;
 }
 
+/**
+ * POST the page once. The in-flight flag stops the 1 s ticker from sending a
+ * second copy while the first request is still running. A failure leaves
+ * sentToBackend false, so a later tick (after the retry delay) or the final
+ * flush on close tries again; the error goes back to the caller.
+ */
 async function sendChromePageToBackend(tabState) {
-  if (tabState.sentToBackend || !tabState.phase2Passed) {
+  if (tabState.sentToBackend || tabState.sendInFlight || !tabState.phase2Passed) {
     return;
   }
 
-  await postToBackend("/chrome/ingest", {
-    url: tabState.url,
-    canonical_url: tabState.canonicalUrl,
-    title: tabState.title,
-    domain: tabState.domain,
-    dwell_seconds: tabState.dwellSeconds,
-    scroll_depth: tabState.scrollDepth,
-    interaction_count: tabState.interactionCount,
-    revisit_count: tabState.revisitCount,
-    content_extract: tabState.isAppPage || tabState.isSensitivePage ? "" : tabState.contentExtract,
-    word_count: tabState.isAppPage || tabState.isSensitivePage ? null : tabState.wordCount,
-    referrer: tabState.referrer,
-    is_app_page: tabState.isAppPage
-  });
-
-  tabState.sentToBackend = true;
+  tabState.sendInFlight = true;
+  try {
+    // When paused, postToBackend sends nothing; the page still counts as
+    // handled, so it is not sent later after a resume.
+    await postToBackend("/chrome/ingest", {
+      url: tabState.url,
+      canonical_url: tabState.canonicalUrl,
+      title: tabState.title,
+      domain: tabState.domain,
+      dwell_seconds: tabState.dwellSeconds,
+      scroll_depth: tabState.scrollDepth,
+      interaction_count: tabState.interactionCount,
+      revisit_count: tabState.revisitCount,
+      content_extract: tabState.isAppPage ? "" : tabState.contentExtract,
+      word_count: tabState.isAppPage ? null : tabState.wordCount,
+      referrer: tabState.referrer,
+      is_app_page: tabState.isAppPage
+    });
+    tabState.sentToBackend = true;
+  } catch (error) {
+    tabState.nextSendAttemptAt = Date.now() + SEND_RETRY_DELAY_MS;
+    throw error;
+  } finally {
+    tabState.sendInFlight = false;
+  }
 }
 
-async function evaluateChromeIntent(tabId) {
-  const tabState = activeChromeTabs.get(tabId);
-  if (!tabState || tabState.sentToBackend) {
+/** Advance the two-phase gate for one page (§6.2). */
+async function evaluateChromeIntent(tabState) {
+  if (tabState.sentToBackend) {
     return;
   }
 
-  if (!tabState.phase1Passed && tabState.dwellSeconds >= 5) {
+  if (!tabState.phase1Passed && tabState.dwellSeconds >= PHASE1_MIN_SECONDS) {
     tabState.phase1Passed = true;
     try {
       await checkChromeRevisitSignal(tabState);
     } catch (error) {
-      console.warn("[Echo background] Chrome revisit check failed:", error);
+      // Without the answer the page simply has no revisit signal.
+      console.warn("[Echo background] Chrome revisit check failed:", error.message);
     }
   }
 
   if (tabState.isAppPage) {
-    tabState.phase2Passed = tabState.dwellSeconds >= 5 || tabState.interactionCount >= 1;
+    // App pages skip the content-based gate: time or one interaction is enough.
+    tabState.phase2Passed =
+      tabState.dwellSeconds >= APP_PAGE_MIN_SECONDS || tabState.interactionCount >= PHASE2_MIN_INTERACTIONS;
   } else if (tabState.phase1Passed && !tabState.phase2Passed) {
-    const phase2 =
-      tabState.dwellSeconds >= 10 ||
-      tabState.scrollDepth >= 0.25 ||
-      tabState.interactionCount >= 1 ||
+    tabState.phase2Passed =
+      tabState.dwellSeconds >= PHASE2_MIN_SECONDS ||
+      tabState.scrollDepth >= PHASE2_MIN_SCROLL ||
+      tabState.interactionCount >= PHASE2_MIN_INTERACTIONS ||
       tabState.revisitSignal === true;
-
-    if (phase2) {
-      tabState.phase2Passed = true;
-    }
-  }
-
-  if (tabState.phase2Passed) {
-    try {
-      await sendChromePageToBackend(tabState);
-    } catch (error) {
-      console.error("[Echo background] Chrome ingest failed:", error);
-    }
   }
 }
 
-async function finalizeChromeTab(tabId) {
+/** Last chance for a page that is going away: evaluate, then send ignoring the retry delay. */
+async function finalizeChromePage(tabState) {
+  try {
+    await evaluateChromeIntent(tabState);
+    await sendChromePageToBackend(tabState);
+  } catch (error) {
+    console.error("[Echo background] Chrome ingest failed on page close:", error.message);
+  }
+}
+
+/**
+ * Remove the tab's page from the map first (synchronously), then finalise it.
+ * Removing first means a new page that the same tab opens meanwhile is never
+ * deleted by this old page's cleanup.
+ */
+function retireChromeTab(tabId) {
   const tabState = activeChromeTabs.get(tabId);
   if (!tabState) {
-    return;
+    return Promise.resolve();
   }
-  try {
-    await evaluateChromeIntent(tabId);
-    await sendChromePageToBackend(tabState);
-  } finally {
-    activeChromeTabs.delete(tabId);
-  }
+  activeChromeTabs.delete(tabId);
+  return finalizeChromePage(tabState);
 }
 
+// Dwell clock: one tick per second for the active tab of the focused window.
 setInterval(async () => {
   if (!windowFocused || userIdle || currentActiveChromeTabId === null) {
     return;
@@ -309,17 +377,51 @@ setInterval(async () => {
   }
 
   tabState.dwellSeconds += 1;
-  await evaluateChromeIntent(currentActiveChromeTabId);
+  await evaluateChromeIntent(tabState);
+  if (tabState.phase2Passed && Date.now() >= tabState.nextSendAttemptAt) {
+    try {
+      await sendChromePageToBackend(tabState);
+    } catch (error) {
+      console.error("[Echo background] Chrome ingest failed, retrying in 30 s:", error.message);
+    }
+  }
 }, 1000);
+
+// ── Tab, window and idle events ──────────────────────────────────────────────
+
+async function trackActiveTabOfWindow(query) {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, ...query });
+    // No tab found (e.g. a devtools window): keep the current one rather than
+    // overwrite a tab that a newer event has already set.
+    if (tab) {
+      currentActiveChromeTabId = tab.id;
+      ensureChromeTabState(tab);
+    }
+  } catch (error) {
+    console.warn("[Echo background] Active tab lookup failed:", error.message);
+  }
+}
+
+// Worker (re)start: pick up the tab the user is on right now.
+trackActiveTabOfWindow({ lastFocusedWindow: true });
 
 chrome.tabs.onActivated.addListener(async ({ tabId }) => {
   currentActiveChromeTabId = tabId;
-  const tab = await chrome.tabs.get(tabId);
-  ensureChromeTabState(tab);
+  try {
+    ensureChromeTabState(await chrome.tabs.get(tabId));
+  } catch (error) {
+    // The tab closed before we could read it.
+    console.warn("[Echo background] Activated tab not readable:", error.message);
+  }
 });
 
 chrome.windows.onFocusChanged.addListener((windowId) => {
   windowFocused = windowId !== chrome.windows.WINDOW_ID_NONE;
+  // Switching windows fires no onActivated, so look up that window's active tab.
+  if (windowFocused) {
+    trackActiveTabOfWindow({ windowId });
+  }
 });
 
 chrome.idle.onStateChanged.addListener((state) => {
@@ -327,14 +429,16 @@ chrome.idle.onStateChanged.addListener((state) => {
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
-  finalizeChromeTab(tabId);
   if (currentActiveChromeTabId === tabId) {
     currentActiveChromeTabId = null;
   }
+  retireChromeTab(tabId);
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  if (changeInfo.status === "complete") {
+  // changeInfo.url covers single-page-app navigation, which may never
+  // reach status "complete" again.
+  if (changeInfo.status === "complete" || changeInfo.url) {
     ensureChromeTabState(tab);
     if (tab.active) {
       currentActiveChromeTabId = tabId;
@@ -342,48 +446,73 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   }
 });
 
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.type !== "CHROME_PAGE_SIGNAL" && message.type !== "CHROME_PAGE_UNLOAD") {
-    return;
-  }
+// ── Messages from content scripts ────────────────────────────────────────────
 
-  const tabId = sender.tab && sender.tab.id;
-  if (!tabId) {
-    sendResponse?.({ ok: false, error: "missing_tab_id" });
+/** CHROME_PAGE_SIGNAL / CHROME_PAGE_UNLOAD from chrome_tracker.js. */
+function handleChromePageMessage(message, sender, sendResponse) {
+  const tab = sender.tab;
+  if (!tab || !tab.id) {
+    sendResponse({ ok: false, error: "missing_tab_id" });
     return false;
-  }
-
-  if (sender.tab.incognito) {
-    sendResponse?.({ ok: false, error: "incognito" });
-    return false;
-  }
-
-  const tabState = activeChromeTabs.get(tabId) || ensureChromeTabState(sender.tab);
-  if (!tabState) {
-    sendResponse?.({ ok: false, error: "tab_skipped" });
-    return false;
-  }
-
-  if (message.type === "CHROME_PAGE_SIGNAL") {
-    tabState.url = message.url || tabState.url;
-    tabState.canonicalUrl = canonicalizeChromeUrl(tabState.url);
-    tabState.title = message.title || tabState.title;
-    tabState.isSensitivePage = isSensitiveChromeUrl(tabState.canonicalUrl);
-    tabState.scrollDepth = Math.max(tabState.scrollDepth, Number(message.scrollDepth || 0));
-    tabState.interactionCount = Math.max(tabState.interactionCount, Number(message.interactionCount || 0));
-    tabState.contentExtract = tabState.isSensitivePage ? "" : message.contentExtract || tabState.contentExtract;
-    tabState.wordCount = tabState.isSensitivePage ? 0 : Math.max(tabState.wordCount, Number(message.wordCount || 0));
-    tabState.referrer = message.referrer || tabState.referrer;
-    tabState.isAppPage = Boolean(message.isAppPage || tabState.isAppPage);
-    sendResponse?.({ ok: true });
   }
 
   if (message.type === "CHROME_PAGE_UNLOAD") {
-    finalizeChromeTab(tabId)
-      .then(() => sendResponse?.({ ok: true }))
-      .catch((err) => sendResponse?.({ ok: false, error: err.message }));
+    // The unload can arrive after onUpdated already opened the next page in
+    // this tab; only retire the state if it still belongs to the unloading page.
+    const current = activeChromeTabs.get(tab.id);
+    if (!current || (message.url && current.canonicalUrl !== canonicalizeChromeUrl(message.url))) {
+      sendResponse({ ok: true });
+      return false;
+    }
+    retireChromeTab(tab.id).then(() => sendResponse({ ok: true }));
     return true;
   }
 
+  // The content script reports the live URL, which is newer than tab.url
+  // after a single-page-app navigation.
+  const tabState = ensureChromeTabState({ ...tab, url: message.url || tab.url, title: message.title || tab.title });
+  if (!tabState) {
+    sendResponse({ ok: false, error: "tab_skipped" });
+    return false;
+  }
+
+  tabState.scrollDepth = Math.max(tabState.scrollDepth, Number(message.scrollDepth || 0));
+  tabState.interactionCount = Math.max(tabState.interactionCount, Number(message.interactionCount || 0));
+  tabState.contentExtract = message.contentExtract || tabState.contentExtract;
+  tabState.wordCount = Math.max(tabState.wordCount, Number(message.wordCount || 0));
+  tabState.referrer = message.referrer || tabState.referrer;
+  tabState.isAppPage = Boolean(message.isAppPage || tabState.isAppPage);
+  sendResponse({ ok: true });
   return false;
+}
+
+/** YouTube / Gmail events: forward the payload to its backend route. */
+function relayToBackend(message, sendResponse) {
+  const endpoint = RELAY_ROUTES[message.type];
+  if (!endpoint || !message.payload) {
+    return false;
+  }
+
+  postToBackend(endpoint, message.payload)
+    .then((response) => sendResponse({ ok: true, data: response }))
+    .catch((err) => sendResponse({ ok: false, error: err.message }));
+  return true; // the response is sent asynchronously
+}
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (!message || !message.type) {
+    return false;
+  }
+
+  // Incognito is never captured (architecture §13). This is the authoritative
+  // check — the content-script guard is only a first line of defence.
+  if (sender.tab && sender.tab.incognito) {
+    sendResponse({ ok: false, error: "incognito" });
+    return false;
+  }
+
+  if (message.type === "CHROME_PAGE_SIGNAL" || message.type === "CHROME_PAGE_UNLOAD") {
+    return handleChromePageMessage(message, sender, sendResponse);
+  }
+  return relayToBackend(message, sendResponse);
 });

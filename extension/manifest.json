@@ -3,16 +3,14 @@
   "name": "Echo",
   "version": "0.1.0",
   "description": "Echo Personal Memory System — local-first digital memory capture",
+  "incognito": "not_allowed",
   "permissions": [
     "tabs",
     "storage",
-    "idle",
-    "webNavigation"
+    "idle"
   ],
   "host_permissions": [
-    "https://www.youtube.com/*",
-    "http://localhost:8000/*",
-    "<all_urls>"
+    "http://localhost:8000/*"
   ],
   "background": {
     "service_worker": "background.js",
