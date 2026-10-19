@@ -7,9 +7,17 @@ Routers mounted:
     /chrome     — Chrome Connector (CHC)
     /gmail      — Gmail Connector (GMC)
     /retrieval  — Retrieval & Synthesis Engine (RSE)
+    /wellbeing  — Digital Wellbeing (WBA), only when ECHO_WBA_ENABLED=1
+    (no prefix) — DELETE /items/{id}, GET /export, GET|POST /settings (backend/items.py)
 
-Background workers:
-    Gmail polling and the enrichment pipeline start with the API process.
+Background work started by the lifespan (one process):
+    gmail-poller     asyncio task on the event loop; each poll runs in a worker thread
+    enp-worker       the enrichment pipeline, a blocking loop in its own thread;
+                     stopped with a threading.Event, between batches
+    message-cleanup  one-off at startup: deletes chat history older than 30 days
+
+Shutdown order: stop the Gmail poller, ask ENP to stop and wait for its current
+batch, then close the shared async Redis client.
 """
 
 import asyncio
@@ -18,10 +26,9 @@ import logging
 import os
 import sys
 import threading
+from contextlib import asynccontextmanager
 from pathlib import Path
 
-import redis.asyncio as aioredis
-from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -29,6 +36,11 @@ from fastapi.middleware.cors import CORSMiddleware
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+
+# Load .env before importing any project module, so modules that read
+# DATABASE_URL / REDIS_URL at import time see them. The explicit path makes it
+# work whatever directory uvicorn was started from.
+load_dotenv(PROJECT_ROOT / ".env")
 
 # Ingested email/page text is arbitrary Unicode (currency signs, CJK, emoji).
 # On Windows stdout defaults to cp1252, so printing such text raises
@@ -45,23 +57,24 @@ from backend.logging_config import setup_logging
 setup_logging()
 logger = logging.getLogger(__name__)
 
-from ste.security import validate_redis_tls_url
 from ingestion.youtube.youtube_connector import router as ytc_router
 from ingestion.chrome.chrome_connector import router as chc_router
 from ingestion.gmail.router import poll_forever as gmail_poll_forever
 from ingestion.gmail.router import router as gmail_router
 from backend.retrieval import router as retrieval_router
 from backend.items import router as items_router
-
-load_dotenv()
-
-REDIS_URL = os.getenv("REDIS_URL") or os.getenv("UPSTASH_REDIS_URL") or "redis://localhost:6379"
-
+from rse.conversation_memory import cleanup_old_sessions
+from ste.redis_manager import get_async_client
 
 ENP_THREAD_NAME = "enp-worker"
 
+# How long shutdown waits for ENP to finish its current batch (10 items by
+# default). If it takes longer, shutdown carries on; Python's exit still waits
+# for the thread, which ends as soon as the batch is done.
+ENP_STOP_TIMEOUT_SECONDS = 60
 
-def _run_enp_in_named_thread() -> None:
+
+def _run_enp_in_named_thread(stop_event: threading.Event) -> None:
     """Run the ENP loop with a readable thread name, so its log lines show
     [enp-worker] instead of the default executor name [asyncio_0]."""
     thread = threading.current_thread()
@@ -70,50 +83,92 @@ def _run_enp_in_named_thread() -> None:
     try:
         from enp.enrichment_pipeline import run_pipeline
 
-        run_pipeline()
+        run_pipeline(stop_event=stop_event)
     finally:
         # The thread belongs to asyncio's default executor; give its name back
-        # if run_pipeline ever returns, so later executor work isn't mislabelled.
+        # when run_pipeline returns, so later executor work isn't mislabelled.
         thread.name = original_name
 
 
-def start_enp_worker() -> asyncio.Task:
+def start_enp_worker(stop_event: threading.Event) -> asyncio.Task:
     async def runner() -> None:
-        await asyncio.to_thread(_run_enp_in_named_thread)
+        await asyncio.to_thread(_run_enp_in_named_thread, stop_event)
 
     return asyncio.create_task(runner(), name="enp-worker")
 
 
+async def _stop_enp_worker(enp_task: asyncio.Task, stop_event: threading.Event) -> None:
+    """Ask ENP to stop and wait for its current batch to finish.
+
+    Cancelling the asyncio task would not stop the thread (a running thread
+    can't be cancelled), so the stop goes through the Event. shield() keeps a
+    timeout from cancelling the task itself.
+    """
+    stop_event.set()
+    try:
+        await asyncio.wait_for(asyncio.shield(enp_task), timeout=ENP_STOP_TIMEOUT_SECONDS)
+        logger.info("ENP background worker stopped")
+    except asyncio.TimeoutError:
+        logger.warning(
+            "ENP still finishing its batch after %d s; exit will wait for it",
+            ENP_STOP_TIMEOUT_SECONDS,
+        )
+    except Exception:
+        logger.exception("ENP background worker ended with an error")
+
+
+async def _connect_redis() -> bool:
+    """Create the shared async Redis client and check it answers.
+
+    Redis is optional at startup: every Redis caller already handles a failure
+    (YouTube revisit -> first visit, settings -> defaults, reminders -> none).
+    """
+    try:
+        await get_async_client().ping()
+        logger.info("Redis connected")
+        return True
+    except Exception as exc:
+        # The error text carries host:port at most, never the password.
+        logger.warning("Redis not reachable at startup; Redis features fall back until it is: %s", exc)
+        return False
+
+
+async def _close_redis() -> None:
+    try:
+        await get_async_client().aclose()
+        logger.info("Redis async client closed")
+    except Exception:
+        logger.exception("Closing the Redis async client failed")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup — connect Redis
-    import ingestion.youtube.youtube_connector as ytc_module
-    background_tasks: list[asyncio.Task] = []
-    try:
-        ytc_module.redis_client = aioredis.from_url(validate_redis_tls_url(REDIS_URL), decode_responses=True)
-        await ytc_module.redis_client.ping()
-        logger.info("Redis connected")
-    except Exception as e:
-        logger.warning(f"Redis not available — revisit detection disabled: {e}")
-        ytc_module.redis_client = None
+    # Startup
+    redis_connected = await _connect_redis()
 
-    background_tasks.append(asyncio.create_task(gmail_poll_forever(), name="gmail-poller"))
+    gmail_task = asyncio.create_task(gmail_poll_forever(), name="gmail-poller")
     logger.info("Gmail background polling started")
 
-    background_tasks.append(start_enp_worker())
+    enp_stop_event = threading.Event()
+    enp_task = start_enp_worker(enp_stop_event)
     logger.info("ENP background worker started")
+
+    # One DB round trip; run it in a worker thread so startup doesn't wait for it.
+    # cleanup_old_sessions logs its own result and never raises.
+    cleanup_task = asyncio.create_task(asyncio.to_thread(cleanup_old_sessions), name="message-cleanup")
 
     try:
         yield
     finally:
-        for task in background_tasks:
+        # Shutdown
+        for task in (gmail_task, cleanup_task):
             task.cancel()
-        if background_tasks:
-            await asyncio.gather(*background_tasks, return_exceptions=True)
+        await asyncio.gather(gmail_task, cleanup_task, return_exceptions=True)
 
-        # Shutdown — close Redis
-        if ytc_module.redis_client:
-            await ytc_module.redis_client.close()
+        await _stop_enp_worker(enp_task, enp_stop_event)
+
+        if redis_connected:
+            await _close_redis()
 
 
 app = FastAPI(
@@ -152,6 +207,7 @@ if os.getenv("ECHO_WBA_ENABLED", "0") == "1" and importlib.util.find_spec("wba")
     from backend.wellbeing import router as wellbeing_router
 
     app.include_router(wellbeing_router)
+    logger.info("Wellbeing module enabled")
 else:
     logger.info("Wellbeing module disabled (set ECHO_WBA_ENABLED=1 to enable)")
 app.include_router(items_router)
@@ -160,4 +216,3 @@ app.include_router(items_router)
 @app.get("/health")
 async def health():
     return {"status": "ok", "service": "echo-backend", "version": "0.2.0"}
-
