@@ -9,7 +9,7 @@
 | As of | Wed 21 Oct 2026 |
 | Replaces | `Echo_Architecture_Design.md` (v2.1, Mar 2026) and `Echo_DB_Design.md` (v5.0, Mar 2026). Both stay recoverable: `git checkout HEAD -- docs/Timeless_docs/<file>` |
 | Owner | Mohammed Shehzaad Khan. Owner-maintained: change this file only on his request |
-| Decision record | `docs/review/ste_open_items.md` (ids A1–A45, B, C, D, E); measured briefs for A16/A40/A42/A43 in `docs/review/pending_answers_A16_A40_A42_A43.md` |
+| Decision record | `docs/review/ste_open_items.md` (ids A1–A45, B, C, D, E); measured briefs for A16/A40/A42/A43 are folded into their entries in `ste_open_items.md` |
 | Schema source | `scripts/setup_db.py` |
 | Build window | Thu 22 – Sun 25 Oct 2026. Final review: Wed 28 Oct 2026 |
 
