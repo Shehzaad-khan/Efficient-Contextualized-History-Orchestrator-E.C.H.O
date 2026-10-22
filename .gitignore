@@ -48,3 +48,17 @@ logs/
 
 # Temp file from ste/security.py atomic token writes (left behind only by a crash)
 *.enc.tmp
+
+# LaTeX build output for the paper drafts (the .tex and the final main.pdf are kept)
+*.aux
+*.fdb_latexmk
+*.fls
+*.synctex.gz
+docs/Research Paper/**/*.log
+
+# Review working files: decision log + open items (its own header says "not committed")
+docs/review/
+
+# Analysis of the owner's own writing style (personal working notes for the paper drafts)
+docs/Research Paper/**/STYLE_PROFILE.md
+docs/Research Paper/**/VOCAB_MAP.md

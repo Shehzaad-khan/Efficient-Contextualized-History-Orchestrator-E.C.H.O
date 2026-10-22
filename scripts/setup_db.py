@@ -269,7 +269,8 @@ CREATE TABLE IF NOT EXISTS embedding_index (
 
 -- =============================================================================
 -- TABLE 12: sessions
--- Contiguous activity blocks. Items within 5 minutes = same session.
+-- Contiguous activity blocks. Items within 20 minutes = same session
+-- (wba/wellbeing_analytics.py SESSION_GAP_MINUTES; owner's decision 2026-10-18).
 -- total_duration_seconds is accepted denormalization for fast SUM queries.
 -- =============================================================================
 CREATE TABLE IF NOT EXISTS sessions (
