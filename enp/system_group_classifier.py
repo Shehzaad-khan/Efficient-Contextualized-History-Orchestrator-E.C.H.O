@@ -452,15 +452,10 @@ def _get_stage4_llm():
     if _llm_client is not None or _llm_unavailable:
         return _llm_client
     try:
-        from langchain.chat_models import init_chat_model
+        from rse.llm_factory import build_chat_model
         from rse.config import LLM_CONFIG
 
-        _llm_client = init_chat_model(
-            model=LLM_CONFIG["parser_model"],
-            model_provider=LLM_CONFIG["provider"],
-            temperature=LLM_CONFIG.get("parser_temperature", 0.0),
-            max_retries=LLM_CONFIG.get("max_retries", 2),
-        )
+        _llm_client = build_chat_model("parser_model", "parser_temperature")
         logger.info("Stage 4 LLM ready: %s / %s", LLM_CONFIG["provider"], LLM_CONFIG["parser_model"])
     except Exception as exc:
         logger.warning("Stage 4 LLM unavailable, falling back to 'misc': %s", exc)
@@ -493,9 +488,12 @@ def stage4_llm_fallback(item):
         logger.warning("Stage 4 LLM call failed (%s); using 'misc'", type(exc).__name__)
         return _FALLBACK
 
-    category = _parse_category(getattr(response, "content", ""))
+    # .text, not .content: with the Responses API (LLM_CONFIG use_responses_api)
+    # .content is a list of blocks, whose repr starts with the word "type".
+    reply = response.text
+    category = _parse_category(reply)
     if category is None:
-        logger.warning("Stage 4 LLM reply is not a category (%r); using 'misc'", str(response.content)[:40])
+        logger.warning("Stage 4 LLM reply is not a category (%r); using 'misc'", reply[:40])
         return _FALLBACK
     return category, "llm", 0.90
 

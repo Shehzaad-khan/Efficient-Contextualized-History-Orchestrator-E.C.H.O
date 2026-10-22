@@ -93,6 +93,17 @@ def get_engine() -> Engine:
     return _engine
 
 
+def dispose_engine() -> None:
+    """Dispose the process-wide engine and its connection pool, if created."""
+    global _engine
+    with _engine_lock:
+        if _engine is None:
+            return
+        _engine.dispose()
+        _engine = None
+    logger.info("PostgreSQL engine disposed")
+
+
 def _log_query(helper: str, query: str, started_at: float) -> None:
     """Log how long one query took; WARNING when slow, DEBUG otherwise."""
     elapsed = time.perf_counter() - started_at

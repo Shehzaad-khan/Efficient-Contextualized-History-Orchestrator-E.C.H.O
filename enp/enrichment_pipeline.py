@@ -8,7 +8,7 @@ worker turns those rows into searchable memories:
   1. fetch_unprocessed_items   next batch, oldest first (skips 'failed' rows and
                                YouTube rows still waiting for their metadata)
   2. load_item_context         per-source metadata (gmail / chrome / youtube tables)
-  3. clean_item_text           text_cleaner: HTML, quotes, signatures -> clean text
+  3. clean_item_text           text_cleaner: HTML, quotes -> clean text
   4. build_embeddable_text     topic_extractor: the text to embed + auto_keywords
   5. generate_embeddings       embedding_generator: MiniLM, whole batch at once
   6. classify_system_group     system_group_classifier: 4-stage system group
@@ -169,6 +169,7 @@ def _fetch_thread_history(conn, item: dict[str, Any]) -> list[str]:
             WHERE gm.thread_id = %s
               AND mi.memory_id != %s
               AND mi.is_deleted = FALSE
+              AND mi.preprocessed = TRUE
               AND mi.created_at <= %s
             ORDER BY mi.created_at ASC
             LIMIT 5
@@ -331,7 +332,6 @@ def prepare_item_for_embedding(conn, base_item: dict[str, Any]) -> dict[str, Any
 
     item["clean_text"] = cleaned.clean_text
     item["headings"] = cleaned.headings
-    item["content_snippet"] = cleaned.snippet
     item["embeddable_text"] = embeddable_text
     item["auto_keywords"] = auto_keywords
     if item.get("source") == "chrome":

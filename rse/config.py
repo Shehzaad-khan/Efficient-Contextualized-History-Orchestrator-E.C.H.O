@@ -53,6 +53,10 @@ LLM_CONFIG: Mapping[str, Any] = MappingProxyType({
     # LangChain's default ~6 backoff retries burned ~70 s per call. The graph
     # has deterministic fallbacks for both calls.
     "max_retries": 2,
+    # Seconds per attempt (C13). Without it the OpenAI client waits up to ~10 min,
+    # which would stall the ENP thread or a /query on one hung request. Worst case
+    # per call: (max_retries + 1) x timeout = 180 s, then the node's fallback runs.
+    "timeout": 60,
 })
 # ─────────────────────────────────────────────────────────────────────────────
 

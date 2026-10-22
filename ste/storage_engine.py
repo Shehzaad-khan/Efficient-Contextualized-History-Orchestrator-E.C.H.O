@@ -537,9 +537,10 @@ def store_chrome_page(payload) -> dict[str, Any]:
 def store_youtube_detection(video_id: str, is_short: bool, detected_at: datetime) -> str:
     """Store a detected video before its Data API metadata arrives. Returns memory_id.
 
-    A new row has an empty title and NULL raw_text — the ENP worker waits for the
-    backfill (enrichment_pipeline._awaiting_hydration). On a re-watch, raw_text
-    None keeps the stored description/transcript.
+    A new row has an empty title and NULL raw_text. The ENP fetch query
+    (enrichment_pipeline.fetch_unprocessed_items) skips such a row until the Data
+    API backfill fills it, or HYDRATION_GRACE_SECONDS pass. On a re-watch,
+    raw_text None keeps the stored description/transcript.
     """
     with postgresql_manager.transaction() as connection:
         memory_id, inserted = _upsert_memory_item(

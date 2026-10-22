@@ -3,8 +3,8 @@ text_cleaner.py — text cleaning before embedding (architecture §5.2, §6.4, �
 Echo Personal Memory System
 
 Caller: enrichment_pipeline.prepare_item_for_embedding -> clean_item_text(item).
-Returns CleanedContent(clean_text, headings, snippet); topic_extractor builds the
-embeddable text from it.
+Returns CleanedContent(clean_text, headings); topic_extractor builds the
+embeddable text from it (and does its own length capping with truncate()).
 
 What arrives here (raw_text as stored by each connector):
   gmail    plain text. ingestion/gmail/gmail_api.py already turned HTML into text
@@ -18,7 +18,7 @@ What arrives here (raw_text as stored by each connector):
   youtube  title + description (+ transcript, empty today — decision A11).
 
 Steps per source:
-  gmail    [HTML -> text] -> drop quoted replies -> drop signature -> normalize
+  gmail    [HTML -> text] -> drop quoted replies -> normalize
   chrome   [HTML -> Readability -> text + headings] or normalize
   youtube  join title, description, transcript -> normalize
 
@@ -61,7 +61,7 @@ HTML_TAG_RE = re.compile(r"<[^>]+>")
 DROP_BLOCK_RE = re.compile(r"<(script|style|noscript|head|title)\b[^>]*>.*?</\1\s*>", flags=re.IGNORECASE | re.DOTALL)
 COMMENT_RE = re.compile(r"<!--.*?-->", flags=re.DOTALL)
 # Tags that end a visual line. Same set as gmail_api, so both produce the
-# line structure the quote and signature steps rely on.
+# line structure the quote-removal step relies on.
 LINE_BREAK_TAG_RE = re.compile(
     r"<br\s*/?>|</(?:p|div|tr|li|h[1-6]|table|blockquote|ul|ol)\s*>|<(?:hr|li)\b[^>]*>",
     flags=re.IGNORECASE,
@@ -73,32 +73,18 @@ INVISIBLE_RE = re.compile("[­͏​-‏⁠﻿]")
 INLINE_SPACE_RE = re.compile(r"[^\S\n]+")
 MULTINEWLINE_RE = re.compile(r"\n{3,}")
 
-SIGNATURE_MARKERS = (
-    "best regards",
-    "thanks",
-    "thank you",
-    "regards",
-    "warm regards",
-    "kind regards",
-    "cheers",
-    "sincerely",
-    "sent from my",
-)
 # "On <date>, <name> <address> wrote:" on one line (Apple Mail, Gmail when short) ...
 REPLY_HEADER_RE = re.compile(r"^on .+wrote:$", flags=re.IGNORECASE)
 # ... or wrapped by Gmail's ~78-char plain-text line limit, with "wrote:" alone
 # on the next line.
 REPLY_HEADER_START_RE = re.compile(r"^on .+", flags=re.IGNORECASE)
 REPLY_HEADER_END_RE = re.compile(r"^(?:.+ )?wrote:$", flags=re.IGNORECASE)
-EMAIL_ONLY_RE = re.compile(r"^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$", flags=re.IGNORECASE)
-NAME_ONLY_RE = re.compile(r"^[A-Za-z][A-Za-z .'-]{1,50}$")
 
 
 @dataclass(slots=True)
 class CleanedContent:
     clean_text: str
     headings: list[str] = field(default_factory=list)
-    snippet: str = ""
 
 
 def normalize_text(text: str) -> str:
@@ -162,56 +148,18 @@ def remove_quoted_replies(text: str) -> str:
     return "\n".join(cleaned_lines)
 
 
-def _looks_like_signature_line(line: str) -> bool:
-    # Heuristic under review (decision A12): it also matches ordinary short
-    # lines ("Deploy is done") and sentences starting with "Thanks"/"Regards".
-    lowered = line.strip().lower()
-    if not lowered:
-        return False
-    if lowered in SIGNATURE_MARKERS:
-        return True
-    if lowered.startswith(SIGNATURE_MARKERS):
-        return True
-    if EMAIL_ONLY_RE.match(line.strip()):
-        return True
-    if NAME_ONLY_RE.match(line.strip()) and len(line.split()) <= 4:
-        return True
-    return False
-
-
-def remove_email_signature(text: str) -> str:
-    """Cut the mail at the first signature-looking line in its last 6 lines
-    (never line 0). Decision A12 covers replacing or removing this step."""
-    if not text:
-        return ""
-
-    lines = [line.rstrip() for line in text.splitlines()]
-    signature_start: int | None = None
-
-    for index, line in enumerate(lines):
-        if _looks_like_signature_line(line):
-            # Only treat it as a signature if it appears in the tail of the mail.
-            if index >= max(1, len(lines) - 6):
-                signature_start = index
-                break
-
-    if signature_start is None:
-        return "\n".join(lines)
-
-    return "\n".join(lines[:signature_start]).rstrip()
-
-
 def clean_gmail_text(raw_text: str) -> CleanedContent:
     text = raw_text or ""
     if looks_like_html(text):
         logger.debug("Gmail body still holds HTML (pre-connector-fix row); converting")
         text = html_to_text(text)
     else:
+        # Before the quote step: a zero-width character in front of ">" or
+        # "On ... wrote:" would otherwise hide the marker from remove_quoted_replies.
         text = normalize_text(text)
     no_quotes = remove_quoted_replies(text)
-    no_signature = remove_email_signature(no_quotes)
-    cleaned = normalize_text(no_signature)
-    return CleanedContent(clean_text=cleaned, snippet=truncate(cleaned))
+    cleaned = normalize_text(no_quotes)
+    return CleanedContent(clean_text=cleaned)
 
 
 def _extract_headings_from_soup(soup: Any) -> list[str]:
@@ -256,8 +204,7 @@ def clean_chrome_text(raw_text: str) -> CleanedContent:
 
     if not looks_like_html(raw_text):
         # The normal case: the extension already sent the main text.
-        clean_text = normalize_text(raw_text)
-        return CleanedContent(clean_text=clean_text, snippet=truncate(clean_text))
+        return CleanedContent(clean_text=normalize_text(raw_text))
 
     if Document is not None:
         try:
@@ -269,8 +216,7 @@ def clean_chrome_text(raw_text: str) -> CleanedContent:
         article_html = _fallback_extract_article_html(raw_text)
 
     if BeautifulSoup is None:
-        clean_text = html_to_text(article_html)
-        return CleanedContent(clean_text=clean_text, snippet=truncate(clean_text))
+        return CleanedContent(clean_text=html_to_text(article_html))
 
     soup = BeautifulSoup(article_html, "html.parser")
     for tag in soup(["script", "style", "noscript", "form", "button", "iframe", "svg"]):
@@ -278,16 +224,12 @@ def clean_chrome_text(raw_text: str) -> CleanedContent:
 
     headings = _extract_headings_from_soup(soup)
     clean_text = normalize_text(soup.get_text("\n", strip=True))
-    return CleanedContent(
-        clean_text=clean_text,
-        headings=headings,
-        snippet=truncate(clean_text),
-    )
+    return CleanedContent(clean_text=clean_text, headings=headings)
 
 
 def clean_youtube_text(title: str = "", description: str = "", transcript: str = "") -> CleanedContent:
     combined = " ".join(part.strip() for part in (title, description, transcript) if part and part.strip())
-    return CleanedContent(clean_text=normalize_text(combined), snippet=truncate(transcript or combined))
+    return CleanedContent(clean_text=normalize_text(combined))
 
 
 def clean_item_text(item: dict[str, Any]) -> CleanedContent:
@@ -309,5 +251,4 @@ def clean_item_text(item: dict[str, Any]) -> CleanedContent:
             transcript=item.get("transcript_text", ""),
         )
 
-    fallback = normalize_text(str(item.get("raw_text") or item.get("title") or ""))
-    return CleanedContent(clean_text=fallback, snippet=truncate(fallback))
+    return CleanedContent(clean_text=normalize_text(str(item.get("raw_text") or item.get("title") or "")))

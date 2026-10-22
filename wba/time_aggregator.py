@@ -90,7 +90,7 @@ def local_day_range_utc(start_day: date, end_day: date) -> dict[str, datetime]:
     }
 
 
-def _utc_offset_seconds() -> int:
+def utc_offset_seconds() -> int:
     """This machine's current UTC offset in seconds (IST = 19800).
 
     Used to turn UTC timestamps into local hours for the heatmap. A DST change
@@ -197,7 +197,7 @@ def activity_heatmap(start_day: date, end_day: date) -> list[dict[str, Any]]:
     """
     params: dict[str, Any] = {
         **local_day_range_utc(start_day, end_day),
-        "utc_offset_seconds": _utc_offset_seconds(),
+        "utc_offset_seconds": utc_offset_seconds(),
     }
     activity = postgresql_manager.fetchall(
         f"""

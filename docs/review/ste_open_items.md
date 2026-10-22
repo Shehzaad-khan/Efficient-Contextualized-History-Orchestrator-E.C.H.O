@@ -312,6 +312,10 @@ Still open — decide each:
     `SIGNATURE_MARKERS`, `EMAIL_ONLY_RE`, `NAME_ONLY_RE` (no other users — grep 2026-10-21); `clean_gmail_text`
     goes quotes → normalize; update the pipeline comment at line 21.
   - B5 re-embed (Thursday) picks up the change for old mails.
+  - **Built 2026-10-22:** `remove_email_signature`, `_looks_like_signature_line`, `SIGNATURE_MARKERS`, `EMAIL_ONLY_RE`,
+    `NAME_ONLY_RE` deleted; `clean_gmail_text` is now quotes -> normalize; pipeline docstring updated. Kept the
+    normalize-before-quotes step for non-HTML mail (a zero-width character in front of ">" or "On ... wrote:" hid the
+    marker without it). Checked on 7 inputs: same output as before minus the signature cut.
 
 ### A13. Chrome headings never reach ENP; ENP's Readability runs on nothing — [x] decided 2026-10-21 (found 2026-10-17) — DISCUSS AT THE END
 - Doc §6.4: "Readability … Headings are preserved", and embeddable text = title + **headings** + snippet + domain.
@@ -1300,7 +1304,7 @@ Still open — decide each:
   comment ("backend/main.py still sets and closes it") are now stale. Delete those 3 lines (already-reviewed file).
   Two stale comments too: `ingestion/gmail/config.py` lines 19–21 (main.py now loads .env first; keep the call,
   fix the reason) and `rse/conversation_memory.py` `cleanup_old_sessions` docstring ("Not called anywhere yet").
-- D1 (engine dispose) is NOT done: it needs a `dispose_engine()` helper in `ste/postgresql_manager.py` first.
+- D1 (engine dispose): done 2026-10-22 — see D1.
 - Remove the dead `ytc_module.redis_client`.
 - Close `redis_manager`'s async client on shutdown.
 - Replace the f-string inside `logger.warning` with `%s` args.
@@ -1322,14 +1326,14 @@ Still open — decide each:
       31 Aug, already exists in the project root).
 - **Done when:** `git grep -i gmail_memory` returns only the `.gitignore` line.
 
-### C11. Small follow-ups from `enp/enrichment_pipeline.py` (2026-10-17) — [ ]
-- [ ] `ste/storage_engine.py` `store_youtube_detection` docstring names `enrichment_pipeline._awaiting_hydration`;
+### C11. Small follow-ups from `enp/enrichment_pipeline.py` (2026-10-17) — [x] 2026-10-22
+- [x] 2026-10-22 `ste/storage_engine.py` `store_youtube_detection` docstring names `enrichment_pipeline._awaiting_hydration`;
       that check is now SQL inside `fetch_unprocessed_items`. Fix the comment.
 - [x] ~~`scripts/enp_run_once.py`: call `setup_logging()`~~ — moot: script deleted 2026-10-19.
-- [ ] `CleanedContent.snippet` -> `item["content_snippet"]` in `enrichment_pipeline.py` is never read (topic_extractor
+- [x] 2026-10-22 (`snippet` field and every `snippet=` call removed from `text_cleaner.py`; `truncate()` stays, topic_extractor uses it) `CleanedContent.snippet` -> `item["content_snippet"]` in `enrichment_pipeline.py` is never read (topic_extractor
       cuts the text itself, now with `truncate`). Decided at topic_extractor's review: topic_extractor keeps the
       caps (one place for the token budget) -> drop `snippet` from text_cleaner + `content_snippet` from the pipeline.
-- [ ] `enp/enrichment_pipeline.py` `_fetch_thread_history`: add `AND mi.preprocessed = TRUE` — a failed earlier
+- [x] 2026-10-22 (SQL not run against Postgres) `enp/enrichment_pipeline.py` `_fetch_thread_history`: add `AND mi.preprocessed = TRUE` — a failed earlier
       message has its ERROR TEXT in auto_keywords, which would become thread keywords of the reply.
 
 ### C12. `import sentence_transformers` takes 16–23 s on this machine — investigate later — [ ]
@@ -1342,7 +1346,7 @@ Still open — decide each:
   cumulative column; then test a Defender exclusion for the .venv folder, and whether an import-time-heavy
   submodule can be avoided.
 
-### C13. LLM calls have no timeout — `rse/config.py` (+ synthesizer, parse_intent) — [ ]
+### C13. LLM calls have no timeout — `rse/config.py` (+ synthesizer, parse_intent) — [x] 2026-10-22 (`LLM_CONFIG["timeout"] = 60`, passed by `rse/llm_factory.py`, which all 4 callers use; checked on ChatOpenAI: timeout 60.0. ChatAnthropic and ChatGoogleGenerativeAI accept `timeout` (fields checked); ChatOllama is not installed, so unchecked)
 - Found 2026-10-17 in `enp/system_group_classifier.py`. Stage 4 now uses LLM_CONFIG's `max_retries` (fail fast),
   but no call sets a timeout. Likely (openai client default, not checked): 600 s per attempt, so a hung request
   can stall the ENP thread for many minutes, and a /query for the same.
@@ -1414,7 +1418,7 @@ Still open — decide each:
   Without it, in IST, items from local midnight to 05:30 are treated as the previous day.
 - [x] `fusion.py` done 2026-10-18. [x] `graph_nodes.py` evaluate_quality done 2026-10-18.
 
-### C21. One shared LLM factory instead of four copies — `rse/llm_factory.py` — [~] (his OK 2026-10-18; created, used by query_parser + llm_synthesizer + wba/insight_generator (2026-10-18); left: ENP Stage 4, and the factory docstring's caller list)
+### C21. One shared LLM factory instead of four copies — `rse/llm_factory.py` — [x] 2026-10-22 (his OK 2026-10-18; used by query_parser + llm_synthesizer + wba/insight_generator (2026-10-18); ENP Stage 4 switched 2026-10-22, with a fix: Stage 4 read `.content`, which is a block list under the Responses API, so every reply would have fallen back to 'misc' — it now reads `.text`; factory docstring caller list updated)
 - The "OpenAI + reasoning_effort → reasoning + Responses API, else temperature" builder now exists in
   `rse/query_parser.py` and `rse/llm_synthesizer.py`; `enp/system_group_classifier.py` and
   `wba/insight_generator.py` still build their own (temperature only, no reasoning/Responses wiring).
@@ -1431,7 +1435,7 @@ Still open — decide each:
   query, and existing rows need a one-time `- 5:30` repair (new B item, his go + snapshot). Or keep local and
   document it as the one local-time column.
 
-### C23. Shared WBA helpers are imported by their private names — `wba/time_aggregator.py`, `wba/regret_system.py` — [ ] (found 2026-10-18, wba/pattern_detector.py review)
+### C23. Shared WBA helpers are imported by their private names — `wba/time_aggregator.py`, `wba/regret_system.py` — [x] 2026-10-22 (4 names now public: `utc_offset_seconds`, `CURRENTLY_REGRETTED_CTE`, `MARK_EVENTS_CTE`, `standing_marks_sql`; the first three renamed by him, `standing_marks_sql` + `insight_generator.py` import by Claude; checked in 3 import orders) (found 2026-10-18, wba/pattern_detector.py review)
 - `pattern_detector` imports `time_aggregator._utc_offset_seconds` and `regret_system._CURRENTLY_REGRETTED_CTE` /
   `_MARK_EVENTS_CTE` (one source of truth instead of copies). Rename them public (`utc_offset_seconds`,
   `CURRENTLY_REGRETTED_CTE`, `MARK_EVENTS_CTE`) and update the imports. Pure rename, no behaviour change.
@@ -1494,7 +1498,7 @@ Still open — decide each:
 
 ## D. Missing-10% — build after the review
 
-### D1. Dispose the DB pool on shutdown — [ ]
+### D1. Dispose the DB pool on shutdown — [x] 2026-10-22 (`postgresql_manager.dispose_engine()`, called in the `backend/main.py` lifespan after ENP stops; idempotent, engine is re-created on next use; the RSE psycopg2 pool in `rse/search_coordinator.py` is NOT closed — not part of this item)
 - Backend shutdown never calls `engine.dispose()`; pooled connections wait for Neon's idle timeout.
 
 ### D2. Full attachment support — [ ]

@@ -55,7 +55,7 @@ _DISABLED_KEY = "echo:regret:reminders:disabled"
 _COOLDOWN_KEY = "echo:regret:reminder:cooldown"
 
 # Items whose regret still stands: odd event count, not deleted.
-_CURRENTLY_REGRETTED_CTE = """
+CURRENTLY_REGRETTED_CTE = """
     regretted AS (
         SELECT re.memory_id
         FROM regret_events re
@@ -67,7 +67,7 @@ _CURRENTLY_REGRETTED_CTE = """
 """
 
 # Mark events only: the odd-numbered rows of each item in time order.
-_MARK_EVENTS_CTE = """
+MARK_EVENTS_CTE = """
     mark_events AS (
         SELECT numbered.*
         FROM (
@@ -147,7 +147,7 @@ def latest_note_for_type(source_type: str) -> Optional[str]:
     shown back to the user.
     """
     row = postgresql_manager.fetchone(
-        "WITH " + _CURRENTLY_REGRETTED_CTE + """
+        "WITH " + CURRENTLY_REGRETTED_CTE + """
         SELECT re.regret_note
         FROM regret_events re
         JOIN regretted r     ON r.memory_id = re.memory_id
@@ -174,7 +174,7 @@ def regret_rate(day: date) -> dict[str, Any]:
     """
     total_seconds = total_time(day, day)
     regretted_seconds = postgresql_manager.scalar(
-        "WITH " + _CURRENTLY_REGRETTED_CTE + """
+        "WITH " + CURRENTLY_REGRETTED_CTE + """
         SELECT COALESCE(SUM(
             CASE WHEN m.source_type = 'youtube' THEN me.watch_time_seconds
                  ELSE me.dwell_time_seconds END), 0)
@@ -199,7 +199,7 @@ def regret_rate(day: date) -> dict[str, Any]:
 def regret_by_hour() -> list[dict[str, Any]]:
     """Mark events of standing regrets, grouped by local hour of day (pattern input)."""
     return postgresql_manager.fetchall(
-        "WITH " + _CURRENTLY_REGRETTED_CTE + "," + _MARK_EVENTS_CTE + """
+        "WITH " + CURRENTLY_REGRETTED_CTE + "," + MARK_EVENTS_CTE + """
         SELECT mk.regret_hour AS hour, COUNT(*) AS regret_count
         FROM mark_events mk
         JOIN regretted r ON r.memory_id = mk.memory_id
@@ -219,7 +219,7 @@ def regret_by_category() -> list[dict[str, Any]]:
     of toggles.)
     """
     return postgresql_manager.fetchall(
-        "WITH " + _CURRENTLY_REGRETTED_CTE + """
+        "WITH " + CURRENTLY_REGRETTED_CTE + """
         SELECT sg.group_name,
                COUNT(*) AS regret_count,
                COALESCE(SUM(
@@ -238,7 +238,7 @@ def regret_by_category() -> list[dict[str, Any]]:
 def regretted_items(limit: int = 50) -> list[dict[str, Any]]:
     """Currently regretted items with their latest note, for the analytics view."""
     return postgresql_manager.fetchall(
-        "WITH " + _CURRENTLY_REGRETTED_CTE + """
+        "WITH " + CURRENTLY_REGRETTED_CTE + """
         SELECT m.memory_id, m.source_type, m.title, m.created_at,
                (SELECT re.regret_note FROM regret_events re
                 WHERE re.memory_id = m.memory_id AND re.regret_note IS NOT NULL

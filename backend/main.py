@@ -68,6 +68,7 @@ from backend.retrieval import router as retrieval_router
 from backend.items import router as items_router
 from rse.conversation_memory import cleanup_old_sessions
 from ste.redis_manager import get_async_client
+from ste import postgresql_manager
 
 ENP_THREAD_NAME = "enp-worker"
 YOUTUBE_SIGN_IN_THREAD_NAME = "youtube-sign-in"
@@ -176,6 +177,7 @@ async def lifespan(app: FastAPI):
         await asyncio.gather(gmail_task, cleanup_task, return_exceptions=True)
 
         await _stop_enp_worker(enp_task, enp_stop_event)
+        postgresql_manager.dispose_engine()
 
         if redis_connected:
             await _close_redis()

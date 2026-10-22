@@ -25,7 +25,7 @@ from datetime import date, datetime, time, timedelta
 from typing import Any
 
 from ste import postgresql_manager
-from wba.time_aggregator import _utc_offset_seconds, local_day_range_utc
+from wba.time_aggregator import local_day_range_utc, utc_offset_seconds
 
 logger = logging.getLogger(__name__)
 
@@ -38,16 +38,16 @@ HABITUAL_LOOKBACK_DAYS = 30
 _DOW_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 
 
-def _standing_marks_sql() -> str:
+def standing_marks_sql() -> str:
     """WITH clause defining `standing_marks`: mark events of currently regretted items.
 
     Imported here, not at module top: regret_system imports this module at load
     time, so a top-level import back would be circular.
     """
-    from wba.regret_system import _CURRENTLY_REGRETTED_CTE, _MARK_EVENTS_CTE
+    from wba.regret_system import CURRENTLY_REGRETTED_CTE, MARK_EVENTS_CTE
 
     return (
-        "WITH " + _CURRENTLY_REGRETTED_CTE + "," + _MARK_EVENTS_CTE + """,
+        "WITH " + CURRENTLY_REGRETTED_CTE + "," + MARK_EVENTS_CTE + """,
         standing_marks AS (
             SELECT mk.*
             FROM mark_events mk
@@ -69,7 +69,7 @@ def regret_time_patterns(lookback_days: int = HABITUAL_LOOKBACK_DAYS) -> dict[st
     """
     params = {"since": _lookback_start(lookback_days)}
     by_hour = postgresql_manager.fetchall(
-        _standing_marks_sql() + """
+        standing_marks_sql() + """
         SELECT regret_hour AS hour, COUNT(*) AS regret_count
         FROM standing_marks
         WHERE regret_hour IS NOT NULL AND marked_at >= :since
@@ -79,7 +79,7 @@ def regret_time_patterns(lookback_days: int = HABITUAL_LOOKBACK_DAYS) -> dict[st
         params,
     )
     by_day = postgresql_manager.fetchall(
-        _standing_marks_sql() + """
+        standing_marks_sql() + """
         SELECT regret_day_of_week AS day_of_week, COUNT(*) AS regret_count
         FROM standing_marks
         WHERE regret_day_of_week IS NOT NULL AND marked_at >= :since
@@ -104,7 +104,7 @@ def has_habitual_regret_pattern(source_type: str, hour: int) -> bool:
     late-night habit spanning midnight is still one band.
     """
     count = postgresql_manager.scalar(
-        _standing_marks_sql() + """
+        standing_marks_sql() + """
         SELECT COUNT(*)
         FROM standing_marks sm
         JOIN memory_items m ON m.memory_id = sm.memory_id
@@ -146,7 +146,7 @@ def peak_activity_hours(start_day: date, end_day: date, top_n: int = 3) -> list[
         """,
         {
             **local_day_range_utc(start_day, end_day),
-            "utc_offset_seconds": _utc_offset_seconds(),
+            "utc_offset_seconds": utc_offset_seconds(),
             "top_n": top_n,
         },
     )

@@ -10,9 +10,11 @@ temperature is sent (reasoning models do not take one). Any other provider,
 or OpenAI with reasoning_effort unset, gets the configured temperature.
 Provider-specific extras for other vendors can be added here later the same way.
 
-Callers: rse/query_parser.py (parser_model), rse/llm_synthesizer.py
-(synthesizer_model); enp/system_group_classifier.py and
-wba/insight_generator.py move here when they are reviewed.
+Callers: rse/query_parser.py and enp/system_group_classifier.py (Stage 4)
+(parser_model); rse/llm_synthesizer.py and wba/insight_generator.py
+(synthesizer_model).
+
+Every model gets LLM_CONFIG["max_retries"] and ["timeout"] (C13).
 
 Each (model, temperature) pair is built once and cached: the client keeps its
 HTTP connection warm, and LangChain chat models are safe to share between
@@ -50,6 +52,7 @@ def build_chat_model(model_key: str, temperature_key: str) -> Any:
         "model": LLM_CONFIG[model_key],
         "model_provider": provider,
         "max_retries": LLM_CONFIG.get("max_retries", 2),
+        "timeout": LLM_CONFIG.get("timeout"),
     }
     effort = LLM_CONFIG.get("reasoning_effort")
     if provider == "openai" and effort:

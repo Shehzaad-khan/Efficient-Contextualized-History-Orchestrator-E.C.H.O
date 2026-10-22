@@ -32,7 +32,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from rse.llm_factory import build_chat_model
 from ste import postgresql_manager
 from wba import time_aggregator
-from wba.pattern_detector import _standing_marks_sql, peak_activity_hours, session_source_sequences
+from wba.pattern_detector import standing_marks_sql, peak_activity_hours, session_source_sequences
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +67,7 @@ def _weekly_regrets(start_day: date, end_day: date) -> dict[str, Any]:
         "until": datetime.combine(end_day + timedelta(days=1), time.min),
     }
     by_category = postgresql_manager.fetchall(
-        _standing_marks_sql() + """
+        standing_marks_sql() + """
         SELECT sg.group_name AS category, COUNT(*) AS regret_count
         FROM standing_marks sm
         JOIN memory_items m   ON m.memory_id = sm.memory_id
@@ -79,7 +79,7 @@ def _weekly_regrets(start_day: date, end_day: date) -> dict[str, Any]:
         params,
     )
     top_hours = postgresql_manager.fetchall(
-        _standing_marks_sql() + """
+        standing_marks_sql() + """
         SELECT regret_hour AS hour, COUNT(*) AS regret_count
         FROM standing_marks
         WHERE regret_hour IS NOT NULL AND marked_at >= :since AND marked_at < :until
