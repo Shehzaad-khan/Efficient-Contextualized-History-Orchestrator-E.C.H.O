@@ -1,0 +1,1576 @@
+# STE Review — Open Items
+
+Source: the `ste/` file review, committed as `f555d9a` on branch `phase3-review2` (2026-10-14).
+Working file — committed to the repo from 2026-10-22 so Claude web can read it from GitHub. Tick a box when an item is done, and write the date + commit next to it.
+
+**How to work through it**
+1. Section A is ON HOLD until the first review pass of every file is finished (his decision, 2026-10-17). Then decide A first — it changes what B, C and D look like.
+2. Section C items are done only when we review that file (one-file-at-a-time rule).
+3. Section B needs a Neon snapshot or branch before any statement runs.
+4. Section D is built after the whole review is finished.
+
+Summary: 45 decisions · 5 live-DB repairs · 29 cross-file fixes · 5 build items + 2 later items = **86** (C29 delete the pending-answers file added 2026-10-22; A44 auto-retry of failed ENP items + A45 fresh Gmail poll added 2026-10-21 as stretch; A42 auto-accept confident group suggestions + A43 user groups under system groups added 2026-10-21; A41 Gmail open tracking added 2026-10-21; A40 model choice added 2026-10-21; E2 personal-data import added 2026-10-21; A37–A39 added 2026-10-21: panel retention + spam suggestions, timings review; A5, A6 added 2026-10-15; A7–A24 added 2026-10-17 — all decisions on hold until the review pass ends; A25–A28 added 2026-10-18 and DECIDED, build in Step 2; A25 dependency upgrade DONE 2026-10-18; E1 MCP added 2026-10-18 for after completion).
+
+---
+
+## A. Decisions waiting on you
+
+### A1. Time filters ignore when the user opened things — [x] decided 2026-10-21
+- **Problem:** retrieval time filters use `memory_items.created_at` only.
+  Gmail = received date, Chrome/YouTube = first capture. `first_opened_at` / `last_accessed_at` are used
+  only for sorting. Opens between the first and the last are not stored at all (no visit-history table).
+- **Where:** `rse/search_coordinator.py` `_dynamic_filters` (`m.created_at >= time_filter`, start date only,
+  no end date) and `_anchor_constraint` (`m.created_at > / < anchor`).
+- **Example:** email received 5 Oct, opened 12 Nov and 20 Dec. "The mail I saw in November" → filter starts
+  1 Nov → the email is dropped.
+- **Options:**
+  1. Visit-history table (`memory_id`, `opened_at`). Fully correct. Breaks the 16-table lock.
+  2. Filter on `created_at` OR `first_opened_at` OR `last_accessed_at`, and add an end date.
+     No schema change. Still misses a month where only a middle open happened. **(Recommended.)**
+  3. Accept as a known limitation.
+- **A1.1 decided 2026-10-21 (his proposal):** the filter depends on the source.
+  - Gmail: filter on when the mail **arrived** (`created_at`), as today.
+  - Chrome + YouTube: a new **visit table**, one row per gated visit (`memory_id`, `visited_at`). The item
+    matches if ANY visit falls in the range.
+  - Write points: `ste/storage_engine.py` `store_chrome_page` and `store_youtube_detection` (both run once per
+    gated visit). Backfill old rows with one visit at `first_opened_at`/`created_at` and one at `last_accessed_at`.
+  - Filter changes: `rse/search_coordinator.py` (EXISTS on the visit table), `rse/fusion.py`,
+    `rse/graph_nodes.py` evaluate_quality.
+  - Known gap: "the mail I read yesterday" matches by arrival date, not open date.
+  - **A1.1b decided 2026-10-21: option b.** Chrome + YouTube visit rows also store `dwell_seconds`; wellbeing
+    sums visits by day. YouTube heartbeats (`update_youtube_watch_time`) update the latest visit row (ties to A2).
+    Gmail keeps today's rule (time lands on the last-opened day) — and see A41, which may remove Gmail opens.
+    This settles A30.
+- **A1.2 decided 2026-10-21: option a, keep start-only (his pick).** Claude flagged: "yesterday" also returns today's
+  items and "last month" also returns this month's; the cheap fix if it shows in testing is option b (parser returns
+  an exclusive `time_filter_end`, null for open-ended asks).
+  - **His addition (2026-10-21):** code returns everything from the start date on; the answering LLM keeps only
+    items inside the asked period (prompt change). Build needs: (1) a `TODAY: <date> (<weekday>)` line + the rule
+    "if the question names a period, use only items inside it" in `rse/llm_synthesizer.py`; (2) Chrome/YouTube
+    item lines also show the visit times inside the range (the line shows `created_at` = first capture today,
+    line 185). Known risk: only the top 10 (`SYNTHESIS_TOP_RESULTS`, `rse/config.py:102`) reach the LLM — on a
+    busy day today's items can fill all 10 and "yesterday" comes back empty → then switch to option b.
+    Check again after A26 (Luna tool rounds may change the prompt layout).
+- **Decision:** A1 fully decided 2026-10-21 (A1.1 source-based filter + visit table, A1.1b dwell per visit, A1.2 start-only).
+
+### A2. Meaning of YouTube watch time — [x] decided 2026-10-21
+- **Today:** `watch_time_seconds = GREATEST(stored, session_total)` → the longest single session.
+  10 min today + 10 min tomorrow = 10 min.
+- **Options:** "total time spent" (adds across re-watches) or "how far into the video" (keep as is).
+- **Decides:** C6.
+- **Decision (2026-10-21): keep "how far" (longest session).** Total time comes from the per-visit rows (A1.1b).
+  Keeps `completion_rate` honest (5 × first 2 min of a 10-min video stays 20%, not 100%). C6 → no change.
+
+### A3. Re-embed a Chrome page when a revisit brings new text? — [x] decided 2026-10-21
+- **Today:** a revisit with new page text updates `raw_text`, but the FAISS vector stays the old one.
+- **If yes:** goes to Section D.
+- **Decision (2026-10-21): yes, re-embed when text changes.** Build: in `ste/storage_engine.py` `_upsert_memory_item`
+  update branch, Chrome only, set `preprocessed = FALSE` when `raw_text IS DISTINCT FROM` the new text. ENP re-embeds;
+  `FAISSManager.add` already replaces in place. Accepted side effects: re-classification (group may change, Stage 4
+  may call the LLM once); always-changing pages re-embed on every revisit (small CPU cost).
+
+### A4. Should attachment text be embedded? — [x] decided 2026-10-21
+- **Today:** Tier-2 extracts attachment text only at query time (`enp/attachment_processor.py`); it never
+  reaches FAISS. Schema: `gmail_attachments.is_processed = TRUE` only once merged into embeddable text.
+- **Decides:** part of D2.
+- **Decision (2026-10-21, his idea, revised): extract at ingestion, merge into the email's embedded text.**
+  - Every A22 type (PDF, DOCX, TXT/CSV/MD/JSON/ICS, HTML, XLSX, PPTX, EML, images via Tesseract OCR); inline
+    logos skipped (A22). Extraction runs in the ENP background worker.
+  - Text stored in a new column `gmail_attachments.extracted_text` (NOT inside `raw_text` — that stays the real
+    body). `is_processed = TRUE` once merged.
+  - Semantic: embedded text uses a shared 800-char budget (A24): body takes up to ~500, attachments fill the rest
+    up to 800, each attachment's start in turn. A "PFA" mail gives nearly all 800 to its PDF.
+  - Keyword: the stored tsvector (A24) includes the FULL extracted text.
+  - Answers: A23 query-matched passages read the stored text; no Gmail download at query time.
+  - Limit: semantic sees only each attachment's start; deep content is found by keyword only.
+  - Build: B5 (Thursday re-embed) must also extract + backfill attachments for the test mailbox.
+
+### A5. Replace Gmail polling with something incremental — [x] decided 2026-10-21 (found 2026-10-15, `gmail_api.py`) — DISCUSS AT THE END
+- **Today:** every 30 s, `fetch_and_store_new_emails` pages through ALL message ids in the mailbox (100 per
+  Gmail call). The DB check is now batched, but a 10,000-email mailbox is still 100 Gmail list calls per poll,
+  forever, even when nothing arrived.
+- **Your direction:** move away from "pull 100 every 30 s" to something more optimal; a webhook is the front
+  runner, not decided yet.
+- **Options:**
+  1. **Webhook / push** — Gmail `users.watch` + Google Cloud Pub/Sub. Gmail notifies us when the mailbox
+     changes, with a `historyId`; we then fetch only the changes via `history.list`. Near-instant, zero idle
+     calls. Needs: a GCP Pub/Sub topic, Gmail granted publish rights on it, and either a public HTTPS endpoint
+     (push subscription — hard for a local backend; needs a tunnel) or a pull subscription (the backend asks
+     Pub/Sub for messages; no public URL). `watch` expires every 7 days and must be renewed.
+  2. **Incremental polling** — keep a timer, but call `history.list` from the last saved `historyId` instead
+     of listing the mailbox. One cheap call per poll; no GCP setup. Needs a full re-sync fallback when the
+     `historyId` is too old (Gmail returns 404).
+  3. **Stop paging early** — stop once a whole page is already stored. Smallest change; can miss an older
+     email whose store failed earlier.
+  4. Keep it as is (only fine for a small mailbox).
+- **Note:** 1 and 2 both need somewhere to keep the last `historyId` (no new table allowed — Redis or a
+  file, like the settings store).
+- **Decision (2026-10-21): option 2, incremental polling with `history.list`.** Keep the 30 s timer; ask only for
+  changes since the saved `historyId` (Redis key `echo:gmail:history_id`). Fallback: on 404 (id too old) or a
+  missing key, one full listing, then save the new id. Dedup (`UNIQUE(source_type, source_id)`) makes the fallback
+  safe. Why not the webhook: needs GCP Pub/Sub + a tunnel, and puts a cloud piece in the local privacy story.
+
+### A6. Gmail HTML/body cleaning gaps — [x] decided 2026-10-21 (found 2026-10-15, `gmail_api.py`) — DISCUSS AT THE END
+Fixed already: HTML keeps line breaks (ENP can now strip quotes/signatures), script/style/head/comments/
+tracking pixels removed, entities and zero-width characters cleaned, charset honoured, drafts skipped.
+Still open — decide each:
+- [ ] **Hidden preview text.** Marketing mail hides a preview line in a `display:none` span; it survives into
+      `raw_text` and the embedding. Fix: drop hidden elements with BeautifulSoup (as ENP's pixel remover does).
+- [ ] **Body split into several text parts.** Some mail apps split one body around an inline image; only the
+      first text part is kept. Fix: join all non-attachment text parts inside `multipart/mixed`.
+- [ ] **Signature logos counted as attachments.** Inline images (`logo.png`, `Content-ID`) are stored in
+      `gmail_attachments`. Fix: skip inline images under a size limit, or mark them. Affects D2.
+- **Decision (2026-10-21):**
+  1. Hidden preview text: **drop hidden elements** — BeautifulSoup in `_html_to_text` removes elements whose inline
+     style is display:none / visibility:hidden / max-height:0 / font-size:0 / opacity:0. Class-based hiding not caught.
+  2. Split body: **join all body text parts in order**; inside multipart/alternative pick one (plain, else HTML);
+     parts with a filename stay attachments; test a forwarded (nested message) mail so nothing is joined twice.
+  3. Signature logos: already settled by A22 (skip inline logos).
+
+### A7. How to detect sensitive Chrome pages — [x] decided 2026-10-21 (found 2026-10-17, `chrome_connector.py`) — DISCUSS AT THE END
+- **Today:** a fixed list of 14 words (`login`, `auth`, `payment`, ...) matched as plain substrings of the URL,
+  in 3 copies that must stay equal: `chrome_connector.py`, `extension/background.js`,
+  `extension/content/chrome_tracker.js`.
+- **Offline probe (2026-10-17):**
+  - Wrongly dropped: `/authentication-explained`, `/oauth-2-in-plain-english`, `/accounting-basics`,
+    `stripe.com/docs/payments`, `/author/jane` (`/auth` is a prefix of `/author`).
+  - Wrongly kept: `/reset?token=abc`, `/verify-email?code=999`, `bank.com/netbanking/home`. The token or code
+    is then stored in `source_id` and `url`.
+  - GitHub skip is broken too: `"github.com/issues"` never matches a real repo issue
+    (`github.com/owner/repo/issues/12`) or PR (`/pull/3`).
+- **Options:**
+  1. Keep the list (known false positives and misses).
+  2. Layered check **(recommended):** (a) the page's own form fields decide first — the content script's
+     `hasPrivateFormSurface` (password / card / email inputs) already exists; send it as an `is_sensitive_page`
+     flag; (b) URL words matched as whole tokens only (split the path on `/ - _ .`), plus `token`, `reset`,
+     `verify`, `2fa`, `mfa`, `sso`; (c) strip secret-looking query keys (`token`, `code`, `state`, `key`, `sig`,
+     `session`) before the URL is stored; (d) the user's own `excluded_domains` for banks.
+  3. An LLM classifies each page. Rejected by the rules: the LLM may only see query text and snippets (§2.6),
+     and it would add a paid call to every page view.
+- **Touches:** the 3 files above → do together, in one change.
+- **Owner note (2026-10-19, background.js review): the list is too short — decide the full list.** 14 words cover
+  login and payment only. Candidate additions to discuss (not decided):
+  - Account recovery / one-time codes: `token`, `reset`, `verify`, `otp`, `2fa`, `mfa`, `sso`, `session`.
+  - Money: `bank`, `banking`, `netbanking`, `wallet`, `upi`, `invoice`, `order`, `orders`, `cart`, `tax`.
+  - Personal records: `admin`, `dashboard`, `inbox`, `messages`, `health`, `patient`, `medical`, `insurance`.
+  - Watch-outs: whole-token matching is needed first (see the probe above); otherwise `order` drops
+    `/ordering-pizza-guide` and `admin` drops `/administration-history`.
+- **Form check is too eager too — likely, read from code (2026-10-19, chrome_tracker.js review):**
+  `hasPrivateFormSurface` drops a page's text when it has ANY `input[type=email]` / `tel` / `number`. Most blogs
+  and news sites have a newsletter box ("Your email"), so their text is never captured — the same class of bug
+  as the Wikipedia checkbox fix. Option for 2(a): count only VISIBLE fields inside the main content, or require
+  a password field / 2+ personal fields in one `<form>`.
+- **A7.1 decided 2026-10-21: whole-token matching.** Split host + path on `/ - _ .`; match words against the pieces
+  only. The 3 copies (`chrome_connector.py`, `background.js`, `chrome_tracker.js`) change together. Known gap:
+  glued words (`/userlogin`) — covered by the form check (A7.4).
+- **A7.2 decided 2026-10-21: the 38-word list, written by hand once** (no learning).
+  - Keep 14: account, auth, billing, callback, checkout, login, logout, oauth, password, payment, profile, settings,
+    signin, signup. Plurals (2): accounts, payments.
+  - Recovery / codes (9): reset, verify, verification, otp, 2fa, mfa, sso, recover, recovery.
+  - Money (9): bank, banking, netbanking, wallet, upi, invoice, invoices, orders, cart.
+  - Personal areas (4): admin, dashboard, inbox, messages.
+  - Left out on purpose (common in article URLs): health, medical, insurance, tax, order, token, session — query
+    secrets go to A7.3; health / bank / tax portals go in `excluded_domains` (`ste/settings_store.py:59`).
+  - Build: also check each path segment with separators removed (`sign-in` → `signin`); bank hostnames
+    (`hdfcbank.com`) need the domain list.
+- **A7.3 decided 2026-10-21: strip secret query keys on the server** from both `url` and `canonical_url` before
+  storing (one function in `chrome_connector.py`). Keys: token, access_token, id_token, code, state, key, sig,
+  signature, session, sid, pwd, otp, rlkey. Accepted: two URLs differing only by one of these keys merge into one
+  item. Also keep the existing query-KEY check in `is_sensitive_page` (`?password=`) in the whole-token rewrite.
+  Build order: run `is_sensitive_page` on the URL BEFORE stripping the keys (`chrome_connector.py:157` today),
+  or the query-key check never sees them.
+- **A7.4 decided 2026-10-21: option a, with the count raised (his ask) to 3.** In `chrome_tracker.js`
+  `hasPrivateFormSurface`: (1) a VISIBLE password box → private; (2) 3+ visible email/tel boxes in the same
+  `<form>` → private; (3) `type=number` ignored; (4) the 5-field rule counts visible fields only. Hidden sign-in
+  pop-ups no longer count. Checkout forms (usually 2 email/tel) are caught by rule 4 (name, address, pincode…)
+  and the URL words (A7.2), not by rule 2.
+- **Decision:** A7 fully decided 2026-10-21 (A7.1–A7.4).
+
+### A8. App pages (Slack, Notion, Jira) are stored as memory items — [x] decided 2026-10-21 (found 2026-10-17) — DISCUSS AT THE END
+- **Doc §6.5:** session duration only, "not in canonical memory_items, not semantically indexed".
+- **Code:** `chrome_connector.py` stores them in `memory_items` with `raw_text = NULL`, skipping the intent gate.
+  The title is stored and may carry private text (a Notion page name, a Jira ticket title).
+  Not listed as an approved deviation in CLAUDE.md §3.
+- **Options:** keep (and record it as a deviation), or store only dwell for wellbeing and skip the title.
+- **Also:** the extension sends an app page after 5 s or 1 interaction; the server skips the gate for app pages
+  entirely (accepts 0 s). Harmless today, but the two rules differ.
+- **A8.1 decided 2026-10-21: option a, keep app pages as per-page items with their title; recorded as a deviation
+  (CLAUDE.md §3).** Claude flagged: ENP embeds the title alone (`enrichment_pipeline.py:313`), so a Slack DM / Notion
+  page title is searchable and can reach the LLM as a snippet. Cheap safer add-on if wanted later: in
+  `rse/llm_synthesizer.py` send app-page items as "<app> page" instead of their title.
+- **A8.2 decided 2026-10-21: the server enforces it too** — in `chrome_connector.py`, discard an app page with
+  `dwell_seconds < 5` and `interaction_count == 0`. Add this second copy of the 5 s value to A39's timing list.
+- **Decision:** A8 fully decided 2026-10-21 (A8.1 keep items + titles as a deviation; A8.2 server minimum).
+
+### A9. Which domains count as "application pages" — [x] decided 2026-10-21 (found 2026-10-17, `intent_filter.py`) — DISCUSS AT THE END
+- **Today:** 11 domains, whole domain + all subdomains, in 3 copies (`intent_filter.py`, `background.js`,
+  `chrome_tracker.js`).
+- **Too broad:** the public help/blog/docs pages of these companies count as app pages, so their text is dropped
+  (`slack.com/help/...`, `figma.com/blog/...`, `asana.com/guide/...`).
+- **Missing private apps** (their text IS captured today, unless the content script's form check happens to
+  catch them): `docs.google.com`, `drive.google.com`, `calendar.google.com`, `outlook.office.com` /
+  `outlook.live.com`, `teams.microsoft.com`, `web.whatsapp.com`, `discord.com`, `chatgpt.com`, `claude.ai`.
+- **Gmail web is captured twice — likely (read from the code, not run live):** `mail.google.com` is an app
+  domain, but `background.js` does not skip it, so Gmail web is also stored as a *Chrome* row, titled with the
+  tab title (the open email's subject, or "Inbox (3) - <address> - Gmail"). Correction 2026-10-19: Gmail's URLs
+  differ only after `#` (`/mail/u/0/#inbox/<id>`), and canonicalisation drops the `#` part, so it is likely ONE
+  row per account, re-sent with whatever email was open. Gmail engagement already comes from
+  `gmail_tracker.js`. Option: skip `mail.google.com` in Chrome capture entirely.
+- **Self-capture (found 2026-10-19, background.js review):** Echo's own pages are captured as memories:
+  the dashboard (`localhost:3000`) and the API docs (`localhost:8000/docs`) pass the gate like any page.
+  Option: skip `localhost` / `127.0.0.1` in `shouldSkipChromeUrl` (and the server check).
+- **Owner note (2026-10-19, background.js review): the list is too short — decide the full list.** 11 domains
+  (2 redundant) cover work chat and trackers only. Candidate additions to discuss (not decided), on top of the
+  "Missing private apps" above:
+  - Mail and calendars: `mail.yahoo.com`, `outlook.office365.com`, `proton.me`.
+  - Chat and calls: `web.telegram.org`, `meet.google.com`, `zoom.us`, `messenger.com`.
+  - Social inboxes (path, not domain): `linkedin.com/messaging`, `instagram.com/direct`, `x.com/messages`.
+  - Docs and notes: `docs.google.com`, `onedrive.live.com`, `dropbox.com`, `evernote.com`.
+  - Path-level entries need option (3) above (match app paths, not whole domains).
+- **Redundant entries:** `app.slack.com`, `confluence.atlassian.net` (covered by `slack.com`, `atlassian.net`).
+  `jira.com` only redirects; Jira Cloud lives on `atlassian.net`.
+- **Options:** (1) keep; (2) extend the list + skip Gmail web; (3) match app paths, not whole domains
+  (e.g. `app.asana.com`, `www.figma.com/file/...`); (4) move the list into the Redis settings so the user can
+  edit it, and have the extension fetch it (one copy instead of three).
+- **A9.1 decided 2026-10-21: skip Gmail web** — `mail.google.com` skipped in Chrome capture (`background.js`
+  `shouldSkipChromeUrl` + the same server check); remove it from the app-domain lists. Gmail comes from its API.
+- **A9.2 decided 2026-10-21: c, keep as is** (his words: "if it causes issues we will see that time"). Claude flagged
+  the demo risk (the dashboard page with Luna's answer gets stored and can outrank the real source). Zero-code
+  fallback if it shows up: add `localhost` in Settings → excluded domains (`settings_store.is_domain_excluded`,
+  checked at `chrome_connector.py:151`; likely works — the server compares the hostname without the port; not tested).
+- **A9.3 decided 2026-10-21: whole domain minus public sections.** App domains still match whole-domain + subdomains,
+  but pages under `/help`, `/blog`, `/guide`, `/docs`, `/learn`, `/resources` are normal pages (text captured).
+  Fails closed: an unknown path stays private.
+  - **Extended 2026-10-21 (his ask): 38 public paths**, matched as the FIRST path piece, exact:
+    help, support, guide, guides, docs, learn, resources, articles, tutorials, academy, templates (11);
+    features, pricing, plans, product, solutions, enterprise, integrations, apps, customers, download, about,
+    security (12); blog, news, press, changelog, events, webinars, community, forum, developers (9);
+    careers, jobs, legal, privacy, terms, api (6).
+  - Known gap (fails closed): language prefixes (`slack.com/intl/en-in/help`) stay text-less.
+  - Public SUBDOMAINS (help., support., blog., docs., developers., developer., community., academy., learn.,
+    status.; exception atlassian.net): **yes, added (his pick, 2026-10-21)** — match the first hostname label.
+- **A9.4 decided 2026-10-21: lenient — no additions (his words: keep the same or decrease, no need to increase).**
+  The list becomes 7: slack.com, atlassian.net, notion.so, figma.com, linear.app, trello.com, asana.com
+  (removed: mail.google.com per A9.1; app.slack.com, confluence.atlassian.net redundant; jira.com redirect only).
+  Claude flagged: ChatGPT / claude.ai / Google Docs / Outlook / Teams / WhatsApp Web text stays captured as normal
+  pages. Zero-code fallback per site: Settings → excluded domains (blocks the site fully, time included).
+- **A9.5 decided 2026-10-21: b, one copy on the server; the extension fetches it.** New `GET /chrome/rules`
+  (app domains, public paths + subdomains, sensitive words, secret query keys); `background.js` fetches at startup
+  into `chrome.storage`; `chrome_tracker.js` reads it from there. Build detail: until the rules have loaded, the
+  content script extracts no text (fail closed); no built-in fallback list (backend down = nothing stored anyway).
+- **Decision:** A9 fully decided 2026-10-21 (A9.1–A9.5).
+
+### A10. A brief (< 5 s) visit never counts as a revisit — doc conflict — [x] decided 2026-10-21 (found 2026-10-17) — DISCUSS AT THE END
+- **Doc §6.2 contradicts itself.** The Phase 1 rule says "if NOT met → nothing written to Redis". The example
+  table says "open page 4 s → Redis notes brief visit → SAVED on revisit".
+- **Code follows the rule:** the revisit flag is written only after 5 s (extension `checkChromeRevisitSignal`,
+  server `record_visit`). So the table's 4-s example can never happen.
+- **Options:** keep the rule (stricter, less Redis writes), or write the flag on any visit (matches the table).
+  Touches `background.js` and `chrome_connector.py`, not `intent_filter.py`.
+- **Decision (2026-10-21): keep the rule as the code does today** — the revisit flag is written only after 5 s.
+  The doc's §6.2 example table (4 s → saved on revisit) is wrong; fixing the doc is his (doc is his to change).
+
+### A11. YouTube transcripts are never fetched — pick a new source — [x] decided 2026-10-21 (found 2026-10-17) — DISCUSS AT THE END
+- **Checked live 2026-10-17 (read-only GETs, no DB):** `youtube.com/api/timedtext?v=…&lang=en` returns an empty
+  `200` for every video. Even the signed caption URL taken from the watch page returns empty: YouTube now wants a
+  proof-of-origin (PO) token. So `transcript_text` is always empty; videos embed on title + description + tags.
+- Doc §7 calls the transcript "best-effort", so nothing crashes — but the "richest embedding source" is gone.
+- **Options:**
+  1. `youtube-transcript-api` library (new dependency; uses YouTube's internal player API; breaks when YouTube
+     changes; can get IP-blocked).
+  2. Extension reads the caption track inside the page (the browser already has the PO token) and sends the text
+     with `/ytc/video-detected`. Public content only, so privacy rule §2.6 holds. Most reliable; extension work.
+  3. Data API `captions.download` — Likely (API docs, not checked): only works for videos you own. Not usable.
+  4. Accept: no transcripts. Drop the dead fetch code.
+- **Also:** today only `lang=en` is tried, so non-English videos would get nothing even if fetching worked.
+- **Decision (2026-10-21): option 1 (`youtube-transcript-api`), tested first, fallback = option 4.** Thursday
+  morning: try the library on 3 videos from his laptop. Works → wire it into the server (English first, then
+  auto-generated captions). Fails → no transcripts: delete the dead `timedtext` fetch code and say "title +
+  description + tags" in the paper. Final by Thursday noon. Note: under A24 the transcript reaches the vector only
+  when the description is short; its full text always goes to keyword search + answer passages.
+
+### A12. Email signature removal destroys real content — remove it or replace it — [x] decided 2026-10-21 (found 2026-10-17) — DISCUSS AT THE END
+- Doc §5.2 / §9.1 require it. Code: `enp/text_cleaner.py` `remove_email_signature` (left unchanged in review).
+- **How it works:** in the last 6 lines (never line 0), cut at the first line that (a) starts with a fixed word
+  (thanks, regards, cheers, sent from my…), (b) is an email address alone, or (c) is any ≤ 4-word line of letters
+  ("looks like a name"). (c) and the "starts with" rule match ordinary sentences.
+- **Simulation (2026-10-17, 8 realistic mails):** correct on 2 ("Thanks,\nPriya" and "Sent from my iPhone");
+  destroyed content on 6. Words kept: "Hi team,\nDeploy is done\nSee you tomorrow" → 2/8 · "Hi,\nThanks for
+  sending the contract, signed and returned." → 1/9 · "Hi Ana,\n…Regards to your family, we must meet again in
+  June." → 2/16 · "Status update\nServer is down again\n…" → 2/9 · "Hello,\nReport attached.\n--\nPriya Rao…" → 1/12
+  ("Report attached" read as a name) · a 5-line mail ending "And the phone." → 16/22.
+- **Options:**
+  1. **Remove the step** (your first thought). A leftover signature adds a name and a phone number to the
+     embedding: small noise. Losing the body loses the memory. Doc deviation → add to CLAUDE.md §3.
+  2. **Keep only near-certain markers:** cut at the RFC 3676 delimiter line "-- " and at "Sent from my …"; drop
+     the name rule and the "starts with thanks/regards" rule. Lines that are exactly "Thanks," / "Regards," (with
+     nothing after) could stay as markers.
+  3. A signature-detection library: new dependency, heavier, still imperfect.
+- **Decision (2026-10-21): option 1 — remove the step.** Signatures stay in the embedded text (small noise, uses
+  part of the ~500-char body budget, A4); no body is ever cut. Doc deviation (§5.2 / §9.1) → added to CLAUDE.md §3.
+  - Build: in `enp/text_cleaner.py` delete `remove_email_signature`, `_looks_like_signature_line`,
+    `SIGNATURE_MARKERS`, `EMAIL_ONLY_RE`, `NAME_ONLY_RE` (no other users — grep 2026-10-21); `clean_gmail_text`
+    goes quotes → normalize; update the pipeline comment at line 21.
+  - B5 re-embed (Thursday) picks up the change for old mails.
+
+### A13. Chrome headings never reach ENP; ENP's Readability runs on nothing — [x] decided 2026-10-21 (found 2026-10-17) — DISCUSS AT THE END
+- Doc §6.4: "Readability … Headings are preserved", and embeddable text = title + **headings** + snippet + domain.
+- Reality: `extension/content/chrome_tracker.js` `visibleTextFrom` sends the innerText of `<article>`/`<main>`/
+  `<body>` with ALL whitespace collapsed to single spaces (max 12,000 chars). So raw_text is plain text: the
+  extension already does a simple "main content" pick, ENP's Readability branch never runs, and `headings` is
+  always [] for every Chrome row.
+- **Options:**
+  1. Extension also sends the page's h1–h3 texts (a short list) and keeps line breaks → headings feed the embedding
+     as the doc says. Small extension + connector + storage change (no schema change needed).
+  2. Extension sends the article HTML; ENP runs real Readability. Bigger payloads; more page content leaves the
+     page than is needed.
+  3. Accept: document that main-content extraction happens in the extension; delete ENP's Readability branch.
+- **Decision (2026-10-21): option 1 — send the headings.** Headings feed the embedding as §6.4 says, so a later
+  section ("BRIN for time-series data") is findable by meaning even when the exact word is forgotten.
+  - Build (~1–2 h): `chrome_tracker.js` collects visible h1–h3 texts from the chosen content node (cap ~10
+    headings / ~200 chars) and sends them as the first lines of `raw_text`, each prefixed `## `; ENP
+    `clean_chrome_text` lifts `## ` lines into `headings` and keeps the body unchanged. No schema change.
+    `build_embeddable_text` already joins title + headings + domain + snippet (snippet 800 per A24) — check the
+    total still fits MiniLM's ~256 tokens.
+  - Old pages: no headings (their text is already flattened); B5 re-embed cannot recover them.
+  - Fallback if the build runs short: option 3.
+
+### A14. Quoted replies: Outlook headers are not cut, inline replies are lost — [x] decided 2026-10-21 (found 2026-10-17) — DISCUSS AT THE END
+- Fixed in review: Gmail's 2-line "On … <addr>\nwrote:" header (was missed). Not changed, needs a decision:
+  1. Outlook replies quote with "-----Original Message-----" or "From: … Sent: …", which are not cut, so the old
+     thread is embedded again. Older Outlook uses the same marker for forwards, whose content exists nowhere else;
+     cutting there could lose a forward. Option: cut only when the subject starts with "RE:".
+  2. Everything after "On … wrote:" is dropped. A reply written inline (between "> " lines, below the header)
+     loses its own lines. Option: drop only "> " lines and the header itself.
+- **A14.1 decided 2026-10-21: option c — leave Outlook replies as they are** (quoted old thread stays). Known
+  cost: repeated results on Outlook threads. Fallback if it shows in the demo data: cut at "-----Original
+  Message-----" / "From: … Sent: …" only when the subject starts with "RE:" (~30 min).
+- **A14.2 decided 2026-10-21: option a — keep inline answers.** In `remove_quoted_replies`
+  (`enp/text_cleaner.py`): below the "On … wrote:" header, drop the header and "> " lines and keep unquoted lines,
+  ONLY when that part has at least one "> " line; with none (old thread unmarked, e.g. HTML-converted) cut as
+  today. ~30 min. Cases: inline answers kept; normal "> " reply cut; unmarked old thread cut.
+
+### A15. YouTube descriptions are embedded uncleaned — [x] decided 2026-10-21 (found 2026-10-17) — DISCUSS AT THE END
+- `clean_youtube_text` only joins and normalizes. Descriptions often carry links, sponsor blocks, "subscribe"
+  lines, social handles, chapter timestamps and hashtags; all of it goes into the embedding. The doc asks for no
+  cleaning here, so this is a quality choice, not a doc gap.
+- **Options:** 1. strip URLs and lines that are mostly links/handles; keep chapter titles without timestamps.
+  2. keep only the first N lines of the description. 3. accept as is.
+- **Decision (2026-10-21): option 3 — accept as is.** Descriptions embedded uncleaned (first 600 chars). Known
+  cost: link-heavy descriptions give weak fingerprints; matters more if A11 yields no transcripts. Fallback
+  (~30 min): strip URLs/@handles/#hashtags, drop chapter timestamps, drop emptied lines (exact patterns only).
+
+### A16. Confirm: embeddable text puts short hints before long text — [x] decided 2026-10-21 (found 2026-10-17)
+- Already done in `enp/topic_extractor.py` (a fix, but it changes the doc's part ORDER, so it needs your OK for
+  CLAUDE.md §3). Doc §5.2: subject + body + thread keywords + sender. Now: subject + keywords + sender + body
+  (Chrome: domain before snippet; YouTube: channel + category before description).
+- **Why:** MiniLM reads only the first 256 tokens. Measured with the real tokenizer: a 1,346-char email was 261
+  tokens and its sender hint was cut; dense technical text (IDs, code) runs ~1.4 chars/token, so no char cap is
+  safe. Order otherwise does not matter (mean pooling).
+- **Options:** 1. keep (add to CLAUDE.md §3). 2. revert to doc order and rely on char caps only.
+- **2026-10-21, his direction:** "we need to embed all that we provide the model" — nothing passed to the model
+  may be silently cut. Proposed: keep today's order + build the text with the model's own tokenizer so the total
+  fits `max_seq_length` (read from the model, not hard-coded); short parts whole, body/attachments trimmed at a word
+  boundary; char caps of A4/A13/A24 become token budgets. He then asked why only 256 tokens (verified from the local
+  model files: 512 position slots, `max_seq_length` 256, trained on 128) → **he will change the model; close A16
+  together with A40 later today.**
+- **Decision (his, 2026-10-21; with A40, he accepted every pick of the A16/A40/A42/A43 brief; its build notes and measurements are kept in A40/A42 below):**
+  - **A16.1 keep the order: short hints first, long text last** (hints measured 16–50 tokens). Add to CLAUDE.md §3.
+  - **A16.2 fill the model's 512-token window, cut with its own tokenizer at a word boundary; the stored
+    `embeddable_text` is exactly what was embedded.** Shares: Gmail = hints whole, body up to 300 tokens, then
+    attachments fill the rest; Chrome = title + headings + domain, then page text; YouTube = title + channel +
+    category, description up to 200 tokens, then transcript; fallback/app pages = title, then text. Cutting lives
+    in `embedding_generator.fit_to_window(parts)`; `topic_extractor` returns ordered parts. Replaces the char caps of
+    A4 / A13 / A24.1 (same intent: top-only, one vector). A11's "only when the description is short" note changes.
+  - **A16 build notes (from the brief; line numbers as of 2026-10-21):**
+    - Budget = 510 content tokens (512 minus the 2 special tokens). If the hints alone pass 510 (very rare) they are
+      cut at a word too. No attachment → body takes all; no transcript → description takes all. Chunking (several
+      vectors per long item) stays paper future work (A24.1).
+    - Unit is tokens, not chars: prose runs 3.3–5.4 chars/token, code-like text 1.6 (arctic-xs tokenizer, test set).
+    - `topic_extractor.build_embeddable_text` returns an ordered list of (part, max_tokens or None) — that file stays
+      pure functions with no model. `embedding_generator.fit_to_window(parts)` reads `get_model().max_seq_length` and
+      the tokenizer, keeps hints whole, cuts long parts at a word boundary (tokenizer offsets), returns the final text.
+    - Remove `GMAIL_BODY_CHARS`, `CHROME_SNIPPET_CHARS`, `YOUTUBE_DESCRIPTION_CHARS`, `YOUTUBE_TRANSCRIPT_CHARS`,
+      `FALLBACK_BODY_CHARS` (`topic_extractor.py:57-61`); add `GMAIL_BODY_MAX_TOKENS = 300`,
+      `YOUTUBE_DESCRIPTION_MAX_TOKENS = 200`.
+    - Test to add: one long dense item (code / IDs) → stored text has ≤ 512 tokens and ends on a whole word.
+    - Cost: worst case 0.22 s per item (every item fills the window). Trade-off: one long text → one blurred vector;
+      measured, adding unrelated text lowered the right-question match by 0.03 on average, up to 0.24 (bge-small).
+    - ~1 h. Must land before B5. CLAUDE.md §3 bullet: "embeddable text = hints first, long parts last (A16)".
+    - A4 (800-char split), A13 (snippet 800) and A24.1 (Chrome 500 → 800) lines should point to A16.
+
+### A17. Domain map covers too little — how to grow it — [x] decided 2026-10-21
+- Stage 1 lists (32 work + 31 entertainment) + Stage 2 map (136 entries after removing 68 unreachable ones:
+  63 duplicates of the Stage-1 lists, 4 "site.com/path" keys that can never match because only the host is
+  looked at, and "ember.js", not a host). No domain maps to **personal** at all.
+- **Simulation (2026-10-17):** 60 typical domains of an Indian CS student → only **19 covered**. Missed: chatgpt.com,
+  claude.ai, linkedin.com, naukri.com, internshala.com, amazon.in, flipkart.com, swiggy.com, zomato.com,
+  irctc.co.in, hotstar.com, jiocinema.com, kaggle.com, huggingface.co, docs.google.com, javatpoint.com,
+  tutorialspoint.com, programiz.com, cricbuzz.com, thehindu.com, zerodha.com, paytm.com, bookmyshow.com, … (41).
+  Every miss goes to Stage 3 (rarely fires, A18) → Stage 4 LLM (cost + snippet leaves the machine, A19).
+- **Options (can combine):**
+  1. **Learn from the user's own history (recommended):** a domain whose pages were classified the same way
+     N+ times (by llm / user_override, e.g. ≥ 3 with ≥ 80% agreement) becomes a domain rule. One SQL query over
+     memory_items + chrome_metadata at ENP start / monthly recompute; no schema change; matches the doc's
+     "improves over time" idea. Gets better exactly on the sites YOU use.
+  2. **Offline category dataset.** Likely (memory, not checked): UT1 blacklists (Université Toulouse Capitole,
+     CC BY-SA, millions of domains in categories like social_networks, games, press, shopping, audio-video) or the
+     Curlie (ex-DMOZ) dump. Needs a mapping from their categories to our 5; adds a data file + licence note.
+  3. **Hand-extend** the map with the 41 misses above (+ personal: swiggy, zomato, irctc, banking, travel). Cheap,
+     immediate, never complete.
+  4. Online categorization APIs (e.g. Cloudflare Radar) — reject: sends every browsed domain off the machine.
+  - Also: path rules (linkedin.com/learning → study) would need a URL-prefix match on the item's url.
+- **Decision (his, 2026-10-21): grow it by hand, once.** Thursday, on the restored local data: list the top
+  50-100 Chrome domains that reached Stage 4 (classified_by = 'llm'/'fallback'), add them to DOMAIN_CATEGORY_MAP
+  (~30 min). Paper: "curated domain map"; a self-learning map (LLM agrees N times -> rule) may go in future work.
+
+### A18. Improve the initial seed centroids — Stage 3 almost never fires with them — [x] decided 2026-10-21 (found 2026-10-17; his ask 2026-10-21: improve the seeds)
+- Seeds are one 7–9-word bag of words per category. Real items score cosine **0.10–0.55** against them, so the
+  doc's `> 0.55` threshold is almost never met. Measured on 20 realistic items (4 per category, real MiniLM):
+  | threshold (score / margin) | fires | correct |
+  |---|---|---|
+  | 0.55 / 0.08 (doc, today) | 1 / 20 | 1 |
+  | 0.35 / 0.08 | 5 / 20 | 5 |
+  | 0.25 / 0.08 | 8 / 20 | 8 |
+  | 0.20 / 0.10 | 9 / 20 | 8 |
+  The best centroid was right on 14/20 — the direction is good, only the threshold is off for seeds.
+- Until recompute_centroids has ≥ 10 confirmed items per category, ~95% of non-structural items go to the LLM.
+- **Options:** 1. richer seeds: 5–10 real example sentences per category, centroid = their mean.
+  2. lower threshold while a category still uses its SEED (e.g. 0.25 / 0.08), doc value 0.55 once recomputed.
+  3. both. 4. keep doc values (accept the LLM load until recompute kicks in). 20 items is a small sample: re-measure on
+  your real rows before picking numbers.
+- **Decision (his, 2026-10-21), part by part:**
+  1. **Option 3 — both:** richer seeds (5–10 real example sentences per category, centroid = their mean) AND a
+     separate, lower Stage-3 threshold while a category still uses its seed.
+  2. **Threshold: measure, then fix.** After writing the new seeds, test on restored local rows with a known
+     category (Stage-1 'structural' labels): pick the lowest score/lead threshold with ZERO wrong (start guess
+     0.25 / 0.08). A category with recomputed centroids (A36) goes back to the doc's 0.55 / 0.08. Thursday, after
+     the restore (~30 min, local DB read under the standing permission).
+
+### A19. Stage 4 LLM: one call per item, and the doc contradicts itself on privacy — [x] decided 2026-10-21
+- Doc §9.4: "Items are batched (every few minutes) to minimise API calls — not one call per item." Code: one
+  call per item, inside the ENP batch.
+- Doc §1/§2 (lines 34, 57): the only data sent to the LLM is "query text and retrieved snippets" for synthesis.
+  Stage 4 also sends source + 200-char title + 300-char snippet of every ambiguous item — emails included — at
+  ingestion time, whether or not you ever search. With A17/A18 as they are, that is most non-structural items.
+- `classified_by = 'fallback'` (no LLM / LLM failed) is not in the DB doc's value list (structural | domain |
+  centroid | llm | user_override | pending). The column is VARCHAR(20) with no CHECK, so it works.
+- **Options:** 1. batch: one LLM call per ENP batch with a numbered list, reply = numbered labels (doc's intent;
+  ~10× fewer calls). 2. keep per-item. 3. privacy: exclude Gmail from Stage 4 (→ 'misc'), or send title only.
+  4. add 'fallback' to the documented values (CLAUDE.md §3).
+- **Decision (his, 2026-10-21), part by part:**
+  1. **Keep one Stage-4 call per item** (deviation from doc §9.4, record in CLAUDE.md §3 + paper): A21's typed
+     classifier gives per-item probabilities that a batched call cannot; cost < 1 cent/month; A18 + A36 cut the
+     Stage-4 load further.
+  2. **Privacy: keep title + 300-char snippet for every source, and say it plainly** (slide/paper wording: "only the
+     query and short snippets go to the LLM, for classifying and for answering — never full mails, pages or
+     transcripts"; matches A31.5). Housekeeping (option 4): add 'fallback' to the documented classified_by values.
+
+### A20. Centroids may learn the SOURCE instead of the category — [x] decided 2026-10-21
+- Your concern: a centroid could end up meaning "Gmail-like" / "YouTube-like" instead of "work" / "study".
+- **Measured offline (2026-10-17, real MiniLM, same 4 topics written in each source's embeddable-text format):**
+  same topic + different source → mean cosine 0.90; same source + different topic → 0.15; neither → 0.12. So the
+  source FORMAT adds only ~0.03. Even centroids built from one source each put all 8 cross-source items in the right
+  category. Caveat: the test reused the same text per topic, so it is kind to us.
+- **The real risk is the training data, not the format.** recompute_centroids learns from 'structural' items (+
+  user_override, llm), and each structural rule belongs to one source: misc ≈ Gmail promotions, personal ≈ Gmail
+  CATEGORY_PERSONAL, entertainment ≈ YouTube Shorts / music, study ≈ YouTube education + .edu mail. So "misc" learns
+  what promotional EMAILS look like, and a misc Chrome page (news, weather) may not be near it.
+- **Options:**
+  1. Balanced recompute: centroid = mean of the per-source means, so each source counts equally.
+  2. Per-source centroids (15 = 5 categories × 3 sources); an item is compared only with its own source's. Needs
+     ≥ 10 confirmed items per cell — many cells would stay on seeds.
+  3. Verify on real data first (needs your OK for a read-only DB query): confirmed items per category × source,
+     and Stage-3 accuracy per source on held-out structural items.
+- **Decision (his, 2026-10-21): option 1, balanced recompute** — in `recompute_centroids()`, average each source's
+  confirmed vectors first, then average those per-source means (each source gets an equal vote). Check on
+  Thursday's local data: confirmed items per category x source, and Stage-3 accuracy per source. Note: Stage-4
+  LLM labels come from all sources and also soften the imbalance; the count shows how much.
+
+### A21. Replace the Stage-4 text LLM call with a typed classifier — [x] decided 2026-10-21 (revised from 2026-10-18)
+- Today: a chat model is asked for "exactly one word" and the reply is parsed; confidence is a fixed 0.90.
+- A typed classifier returns one of the given options plus real probabilities — no parsing, real
+  classification_confidence.
+- **Options:**
+  1. **OpenAI Decisions API (recommended).** `client.decisions.create(model="gpt-6-luna", input=..., questions=[{type:
+     "choice", choices:[{value, description} × 5]}])` → `choice`, `probabilities` per option, `confidence`. Public beta
+     since 2026-10-06; $0.10 / 1M input tokens, no output cost; ZDR available, abuse logs up to 30 days by default.
+     Same vendor + key you already use. Needs an `openai` SDK upgrade (installed 2.32.0 has no `decisions`); check
+     `langchain-openai` still works with the new SDK, else call the REST endpoint with httpx.
+  2. **TypeSafe Jev.** Same idea (choice / score / yes-no with calibrated probabilities), $0.04 / 1M input, 70–500 ms.
+     Early access with a waitlist; a second outside vendor + key; no data-retention policy found (2026-10-17).
+  3. Structured Outputs with an enum (LangChain `with_structured_output`): valid label guaranteed on OpenAI, works
+     with other providers to varying degrees; no real probabilities.
+  4. Keep the current text call.
+- Options 1–2 are provider-specific → break CLAUDE.md's "provider only via LLM_CONFIG" rule unless the current
+  LangChain call stays as the fallback. Cost is negligible at Echo's volume (~100 items/day ≈ under 1 cent/month).
+- Privacy unchanged: still title + 300-char snippet leave the machine (see A19).
+- **Decision (2026-10-18, follows A25's rule):** provider = openai → `langchain_openai.decisions.OpenAIDecisions`
+  (LangChain's own wrapper, beta, needs `langchain-openai>=1.7.0` — see A25 upgrade); any other provider →
+  option 3 (`with_structured_output` enum via `init_chat_model`). Real probabilities only on OpenAI; fixed
+  confidence elsewhere. Jev dropped.
+- **FINAL decision (his, 2026-10-21) — replaces the 2026-10-18 text above:**
+  - provider = openai -> **Decisions API** (`OpenAIDecisions`), choices = the 5 category names. Its probabilities
+    are NOT stored.
+  - any other provider -> the current text call with a **strict single-word reply = the category name**
+    (prompt says so; `_parse_category` accepts only the 5 names, anything else -> 'misc' / 'fallback').
+  - Guard (beta API, not yet called for real): if the Decisions call raises, fall back to the single-word path
+    for that item, so a beta failure never stops classification.
+  - `classification_confidence` is no longer stored: drop the column on Thursday (schema open, A31.3) —
+    `setup_db.py` + ALTER on the restored dump + remove the writes at `enp/enrichment_pipeline.py:366` and `:404`.
+    Paper/deck: no confidence claims.
+
+### A22. Attachment types that still give no text — which to add — [x] decided 2026-10-21
+- Doc §5.4 requires: PDF, DOC, DOCX, TXT, images (Tesseract OCR). Audio/video out of scope.
+- **Simulation (2026-10-17, real file bytes):** PDF, DOCX (now incl. tables + header/footer), TXT/CSV/MD/JSON/ICS
+  (UTF-8, UTF-8 BOM, UTF-16, Latin-1) and HTML work. Everything below returns no text → the email shows only
+  "(metadata only) filename|mime|size".
+  | Type | Doc requires? | Cheapest way | Cost |
+  |---|---|---|---|
+  | Images (PNG/JPG…) | **yes** | install Tesseract binary + `pytesseract` (code already there) | system install |
+  | Legacy `.doc` | **yes** | LibreOffice headless convert, or `antiword` | system binary |
+  | Scanned PDF (no text layer) | no (common!) | render pages (PyMuPDF; Likely AGPL licence) → Tesseract | needs OCR first |
+  | XLSX | no | `openpyxl` (already installed) | none |
+  | PPTX | no | `python-pptx` | 1 pip package |
+  | `.eml` (forwarded mail as attachment) | no | stdlib `email` | none |
+  | RTF | no | `striprtf` | 1 pip package |
+  | ODT | no | `odfpy` | 1 pip package |
+  | ZIP | no | stdlib `zipfile` + size/zip-bomb limits | none |
+  | HEIC (iPhone photos) | no | `pillow-heif` + OCR | 1 pip package |
+- Related gaps: (1) Tier 1 (`gmail_api.extract_attachments`) also stores INLINE images (signature logos) as
+  attachments → `has_attachments` is TRUE for mails with only a logo, and Tier 2 then returns logo metadata. Option:
+  skip inline parts / tiny images at ingestion. (2) Two attachments with the same filename: Tier 2 always downloads
+  the first (no stable Gmail part id is stored).
+- **Recommended:** OCR (doc-required; also unlocks scanned PDFs) + XLSX + PPTX + EML (cheap); .doc only if you get
+  such files.
+- **Decision (his, 2026-10-21), part by part:**
+  1. **Add XLSX (`openpyxl`, installed) + PPTX (`python-pptx`, pip) + `.eml` (stdlib) + OCR for images and
+     scanned PDFs** (install the Tesseract Windows program + `pytesseract`; checked 2026-10-21: neither is
+     installed). Skip .doc / RTF / ODT / ZIP / HEIC. Add the new packages to requirements.txt; README notes the
+     Tesseract install. ~2-3 h.
+  2. **Skip signature logos at ingestion:** in `gmail_api.extract_attachments`, drop parts Gmail marks inline
+     (Content-Disposition inline / Content-ID) and images under ~10 KB. Real attachments unaffected.
+  3. **Same filename: match on filename + size** in `enp/attachment_processor._download_attachment_data` (size is
+     already stored in `gmail_attachments.file_size`). No schema change. Gmail's attachmentId stays unused (not
+     stable between fetches).
+
+### A23. Attachment text is sent to the LLM — the doc says it never is — [x] decided 2026-10-21
+- Doc line 702: "The LLM API never receives: raw email bodies, full page content, video transcripts, **attachment
+  text**, …". But doc §8.3 / §11 put attachment content into the synthesizer's context, and the code sends up to
+  6,000 chars per attachment, 12,000 total, to the synthesis LLM (`MAX_CHARS_*` in enp/attachment_processor.py).
+- **Options:** 1. keep (it is the whole point of fetch_attachment) and note the exception in CLAUDE.md §3.
+  2. send only the passages that match the query (e.g. top-3 paragraphs by keyword/embedding), not the first
+  6,000 chars. 3. lower the caps.
+- **Decision (his, 2026-10-21): option 2 — send only the passages that match the question.** In
+  `enp/attachment_processor.py`: extract the full text, split into paragraphs, score each against the query
+  (keyword overlap and/or MiniLM cosine), send the top 3 (~1,500 chars total) instead of the first 6,000 per file.
+  Keeps the A31.5 "short snippets" privacy line true and finds content deep in the file. ~1-2 h. Record the
+  remaining doc deviation (attachment snippets do reach the synthesis LLM) in CLAUDE.md §3.
+- **2026-10-21 follow-up:** option 2 is "contextual compression", which CLAUDE.md §2.3 prohibited. His decision:
+  drop that prohibition completely (CLAUDE.md line removed 2026-10-21; MMR and recency boosting stay prohibited).
+  At build time also fix the `rse/llm_synthesizer.py:29` docstring ("no semantic filtering or compression ... by
+  design") and any paper/deck line that says compression is excluded.
+
+### A24. How much text we take, and from WHERE (top only vs top + middle + end) — [x] decided 2026-10-21
+- **Today every cut takes the TOP only.** Checked in code 2026-10-17:
+  | Where | Text | Cap (chars) |
+  |---|---|---|
+  | Extension → stored raw_text | Chrome page (article/main/body) | 12,000 |
+  | ENP embedding (MiniLM sees ~256 tokens ≈ 1,000–1,300 chars total) | Gmail body / Chrome snippet / YT description + transcript | 800 / 500 / 600 + 400 |
+  | ENP auto_keywords | full text | no cap |
+  | ENP Stage-4 LLM | title + clean text | 200 + 300 |
+  | RSE keyword search (FTS) | raw_text | **5,000** (`search_coordinator.py:97`) |
+  | RSE cross-encoder | title + raw snippet | 512 |
+  | RSE synthesizer, per result × 10 | raw_text (uncleaned: quoted replies included) | 500 |
+  | Tier-2 attachments → synthesizer | extracted text | 6,000 each, 12,000 total |
+- **Claude's view:**
+  1. **Embedding: top only is right; current caps are sufficient.** One vector holds ~256 tokens; mixing top +
+     middle + end into it blurs the topic, and the top carries the subject and intent. Small tweak: Chrome
+     snippet 500 → 800 like Gmail (still fits the window). Real fix for long documents is chunking (several
+     vectors per item) — a schema change, after the capstone.
+  2. **What the LLM reads (snippets, attachments): neither top-only nor blind top/middle/end — pick by the
+     query.** Split into ~800-char chunks, always keep chunk 1 (context), then add the chunks that best match the
+     query (keyword overlap or MiniLM cosine — local, no extra LLM call, so the 2-call rule holds). Blind
+     top/middle/end wastes ~2/3 of the budget unless the question is "summarize it".
+     Numbers: attachments ≈ 1,000 lead + best chunks up to 4,000 per attachment, 8,000 total (less than today's
+     12,000, so less leaves the machine); synthesizer snippets 500 per result but query-matched and from the
+     CLEANED text, not raw_text.
+  3. **Keyword search: raise the 5,000 cap to the full text** (Chrome stores up to 12,000, so a word in the
+     second half of a long page is unsearchable today).
+  4. **Is today's setup sufficient?** For finding items: mostly (fix 3). For answering about long PDFs/articles:
+     no — if the answer is on page 7, top-only never sends it.
+- **Options:** 1. keep top-only everywhere. 2. query-aware chunks for LLM inputs (recommended) + top-only
+  embedding. 3. fixed top + middle + end sampling. Plus independently: FTS cap → full text; Chrome snippet → 800.
+- **Decision (his, 2026-10-21), part by part:**
+  1. **Embedding: keep top-only; raise the Chrome snippet 500 -> 800 chars** (same as Gmail; fits MiniLM's
+     window). Chunking (several vectors per item) = paper future work.
+  2. **Result snippets to the LLM: the best-matching 500 chars of the CLEANED text** (quotes removed — signatures
+     stay since A12 — with ENP's cleaner, then the 500-char window that best matches the query; same method as A23). Replaces the
+     raw first 500 chars in `rse/llm_synthesizer.py:189`. ~1 h.
+  3. **Keyword search over the FULL text, with a stored index:** add a stored `tsvector` column + GIN index (schema
+     open, A31.3) built at write time; drop the 5,000-char cap in `rse/search_coordinator.py` `_FTS_DOCUMENT`
+     (line ~107). setup_db.py + ALTER on the dump. ~1 h. He wants a low-level walk-through of GIN at build time.
+
+### A25. LLM = GPT-5.6 Luna on the Responses API, via LangChain — [x] DECIDED 2026-10-18 (build in Step 2)
+- **Rule ("plug-in for all, specialised for OpenAI"):** every LLM call stays behind LangChain, so any provider key
+  works by changing `LLM_CONFIG`. When `provider == "openai"`, OpenAI-only extras switch on (Responses API,
+  reasoning effort, Decisions API). Other providers get the generic path; their own extras can be added later
+  the same way.
+- Model `gpt-5.6-luna` everywhere `LLM_CONFIG` is used (RSE both calls, ENP Stage 4 fallback, WBA insights).
+  $0.20 / $1.20 per 1M in/out (gpt-4.1-mini was $0.40 / $1.60). Cutoff Feb 2026, 1.05M context.
+- **Reasoning effort: `medium` for both calls** (his call: better answers beat faster answers for the demo).
+- Drop `parser_temperature` / `synthesizer_temperature` for Luna (installed `langchain-openai` already silently
+  removes them for gpt-5* unless effort is `none`, `base.py:971-984`). Keep them for other providers.
+- Endpoint: `ChatOpenAI(use_responses_api=True, reasoning={"effort": "medium"}, use_previous_response_id=True)`,
+  so reasoning carries across tool rounds.
+- **Dependency upgrade — [x] DONE 2026-10-18 (his go).** Minimal upgrade only: `langchain-openai` 1.1.16 → 1.7.2,
+  `langchain-core` 1.3.0 → 1.6.12, `openai` 2.32.0 → 3.35.1, `langsmith` 0.7.33 → 0.14.11 (+ small deps).
+  `langchain` 1.2.15, `langgraph` 1.1.9, anthropic/google packages and the pinned `google-auth` left as they are
+  (a full-family upgrade would have bumped `google-auth` and `pydantic`). `pip check` clean. Offline checks: all
+  project modules import, `compileall` silent, the RSE graph compiles (16 nodes), both current LLM clients build,
+  a Luna `ChatOpenAI(use_responses_api=True, reasoning=medium)` builds a Responses payload (`input` + `reasoning`,
+  temperature dropped), `OpenAIDecisions` imports (beta warning). Not yet tested: a real API call (needs his go).
+  `requirements.txt` floors raised (`langchain-core>=1.6.10`, `langchain-openai>=1.7.2`). Rollback list:
+  scratchpad `freeze_before_upgrade.txt`.
+- Cost: assume ~1,000 reasoning tokens per call → ~$0.004 per 2-call query. Measure real tokens + latency.
+
+### A26. Agentic retrieval: Luna calls a `search_memories` tool, up to 5 rounds — [x] DECIDED 2026-10-18 (build in Step 2)
+- Replaces the one-way parse → search → synthesize flow. LangGraph agent node ⇄ tool node; round counter in
+  `EchoState`.
+- Tool `search_memories(query, sources?[gmail|chrome|youtube], time_phrase?, sender_or_domain?)` runs the
+  EXISTING deterministic pipeline (FTS + FAISS → RRF → cross-encoder → neighbourhood). `time_phrase` ("last
+  Tuesday") is resolved by `time_anchor.py`, not by the model. Returns short numbered snippets only (privacy rule
+  unchanged). Numbering is global across rounds, so [n] citations stay stable.
+- **Cap: 5 search rounds** (his call). After round 5 the next call is forced to answer (no tools). LLM calls per
+  query: usually 2, max 6. Cap enforced in code, never only in the prompt. Parallel tool calls allowed.
+- **Hard constraint #5 changes** from "exactly 2" to "usually 2, max 6" → record as an approved deviation in
+  CLAUDE.md §3 (architecture doc untouched).
+- Fallback: LLM down → today's deterministic pipeline on the raw query.
+- Risks: prompt injection from captured emails/pages (tool is read-only; system prompt says snippets are data,
+  not instructions); non-deterministic searches → bring back an eval set (`git checkout 16bde99 --
+  rsr/quality_evaluator.py rsr/query_quality_eval_set.py`, drop its diversity metric); latency per round.
+- **Conversation chaining (agreed 2026-10-18, build with this item):** with one agent conversation per chat,
+  use `previous_response_id` instead of resending history. Save the turn's last `response_id` inside the AI
+  message JSON in message_store (no new table); next question on OpenAI sends only the new message +
+  `previous_response_id`. Fall back to history from message_store when: provider is not OpenAI, the id has
+  expired (~30 days), or the provider changed mid-chat. Not cheaper (the chain is billed as input, mostly at the
+  cached rate) — the gain is carried-over reasoning/tool results and simpler code. Needs his OK on
+  `store=true` (OpenAI keeps the conversation; doc §10.7 says history never goes to a cloud service).
+- **store=true DECIDED (his, 2026-10-21): option a — `store=true` + `previous_response_id`.** Claude's pick was
+  store=false; he chose a. Consequence to write everywhere the privacy line appears (design doc, paper, deck
+  privacy slide, README): "what is sent is unchanged (question + short snippets); OpenAI keeps each chat for ~30
+  days so a follow-up continues from it". The message_store history path stays as the fallback (non-OpenAI
+  provider, expired id, provider changed mid-chat). Likely (OpenAI docs, may have changed): stored responses
+  are kept ~30 days — verify at build.
+- Open sub-question: a `read_more(n)` tool (longer capped excerpt / attachment text of one item) touches the
+  privacy rule; ties to A23/A24. Decide at build time.
+
+### A27. Answer style = chat (chatbot reply), NOT a fixed structured format — [x] DECIDED 2026-10-18
+- **His call:** no fixed JSON response type. Echo answers like a chatbot: a natural, conversational reply in
+  markdown. (The structured-schema idea of earlier the same day was rejected.)
+- **What a good reply looks like (guidance for the system prompt, not a schema):**
+  - Lead with the direct answer in the first sentence, in a friendly voice ("Yes — Priya emailed you on Tue 14
+    Oct…"). No "Based on the retrieved items…" preamble.
+  - Short paragraphs; bold the key facts (dates, deadlines, amounts, names); a bullet list only when there are
+    really several things; a small time-ordered list only when the answer is a sequence of events.
+  - Sources are cited right after the facts they support, as memory pills (see "Citation format" below) —
+    no visible numbers. Mention when and where naturally.
+  - Honest about gaps in plain words ("I didn't find a reply from you").
+  - If the query is ambiguous, ask back in one line instead of guessing.
+  - End with at most one natural follow-up offer ("Want me to pull up the onboarding checklist too?").
+  - Tone: warm and personal (it is the user's own memory), never judgemental; length matches the question.
+- **Citation format — "memory pills" + "moment strip" (decided 2026-10-18, Claude's design by his delegation):**
+  - *Market base:* ChatGPT search / Perplexity / Gemini all moved from bare [1] numbers to inline source chips
+    (favicon + short name, hover preview, "+2" when several sources back one claim). Echo uses the same pattern.
+  - *Echo's twist — the pill names the human anchor, not the website:* in a personal memory the useful cue is
+    who / where / when. Pill = small source logo + anchor + short time:
+    Gmail → sender (`✉ Priya · 14 Oct`), Chrome → site (`◎ arxiv.org · Tue`), YouTube → channel
+    (`▶ 3Blue1Brown · last week`). Several sources for one claim → stacked logos `Priya +1`.
+  - *Honest evidence styling:* solid pill = the item itself says it; dashed outline = related context (thread /
+    same-session neighbour). Label text, not colour alone, carries the difference (accessible).
+  - *Click a pill = open the original directly (his call 2026-10-18):* Gmail → the mail in Gmail, Chrome → the
+    page, YouTube → the video, in a new tab. Hover (desktop) shows a peek card first: title, 2-line snippet,
+    exact date-time, "What was I doing around then?" (the ±5-min neighbourhood RSE already computes). On touch,
+    first tap = peek, second tap = open.
+    Note: ingestion stores the Gmail link as `#inbox/{message_id}` (`ingestion/gmail/gmail_api.py:372`), which
+    breaks once a mail is archived — build the link as `#all/{message_id}` instead (fix in ingestion or in RSE
+    when building `sources`).
+  - *Moment strip (innovation, fits Recall's "thread of time"):* a thin horizontal time ribbon under each reply
+    with one dot per cited item placed by date; hovering a pill lights up its dot and vice versa, so the user
+    sees WHEN the answer comes from at a glance. Hidden when all sources are from the same day.
+  - Logos: recognisable Gmail / Chrome / YouTube marks rendered muted to match the Midnight tokens, full colour on
+    hover; respects `prefers-reduced-motion`; pills have aria-labels ("Email from Priya, 14 October").
+  - *How it works:* the model writes hidden markers (e.g. `⟦m3⟧`) after facts; the backend checks every marker is
+    an item it actually returned (drops the rest) and sends a `sources` list; the frontend swaps markers for
+    pills. The user never sees numbers; the model never invents a source.
+- **UI otherwise:** chat bubbles with streamed text (A28); the follow-up offer works as a quick-reply button.
+- **Chat sessions (added 2026-10-18, his logic):** every new chat gets a new session_id; opening an old chat
+  resumes its session_id, so its history (message_store, keyed by session_id) continues.
+  - Today: history is keyed by session_id ✅; `run_query` makes a UUID when none is sent ✅; the frontend keeps
+    the id only in memory (`useRef` in RecallPage) so a page reload silently starts a new chat; no "New chat"
+    button; no list of past chats; no endpoint to list sessions.
+  - Build: backend `GET /sessions` → [{session_id, title = first question (cut short), last_active, turns}]
+    from message_store (no new table; created_at gives the times); `GET /session/{id}` already returns the
+    messages; `DELETE /session/{id}` already exists (delete chat). Frontend: "New chat" button, past-chats list
+    (sidebar or drawer), click to resume (loads the messages, keeps sending that session_id), remember the
+    open chat id across reloads (localStorage, per-viewer convenience only).
+- Backend: `final_answer` stays a string (markdown with markers) + a `sources` list the backend fills (id,
+  source_type, anchor, created_at, title, snippet, link, direct|related); drop markers not in the context. `QueryResponse`, `types.ts`, `RecallPage.tsx`, demo data get the `sources` list.
+
+- **Progress 2026-10-18 (his request, done early during the rse/ review):** `rse/llm_synthesizer.py` now
+  writes the chat-style answer with ⟦n⟧ markers, validates them, and returns `final_answer` (readable, markers
+  rendered as text pills "(✉ Priya · 14 Oct)" so today's UI works), `answer_markdown` (validated markers) and
+  `answer_sources` (n, memory_id, source_type, anchor, date_label, created_at_local, title, link, role). State
+  fields added in `rse/state.py`. Prompt/pill times are local (created_at is UTC). Done too: `retrieval_engine.py`
+  defaults + return of the two new fields, `no_results_found` node shape (graph_nodes.py). Left: backend
+  `QueryResponse.answer_sources` / `answer_markdown`, and the frontend pill UI + moment strip (Step 2).
+
+### A28. Live "what Echo is doing" progress in the UI — [x] DECIDED 2026-10-18 (his go: "really good one")
+- With up to 5 search rounds a query can take several seconds. Stream the steps ("Searching Gmail for 'offer
+  letter', last 2 weeks…", "Reading 8 results…", "Writing the answer…") over SSE instead of one silent POST,
+  then stream the reply text itself into the chat bubble (A27). Backend: a streaming variant of `/query`
+  (LangGraph `stream` events); frontend: a step indicator above the typing bubble. Keep the plain POST as
+  fallback.
+
+### A29. Effort score is unfair across sources — [x] decided 2026-10-21 (found 2026-10-18, rse/reranker.py review) — DISCUSS AT THE END
+- `final_score = 0.8 × cross-encoder + 0.2 × effort`; effort = average of the signals an item has.
+- Chrome items average up to 4 signals (dwell, scroll, revisits, interactions); YouTube 2 (watch time,
+  completion); Gmail only dwell — and dwell exists only for mail read in Gmail on the web with the extension.
+  Mail read on the phone, or never opened in the browser, always has effort 0 → up to −0.2 vs. a page of equal
+  relevance. Dwell is also always included, so a page with no dwell data is dragged down by a 0.
+- Options: 1. keep. 2. per-source effort: only average signals that source CAN have, and give items with no
+  measurable signal a neutral value (e.g. the source's median) instead of 0. 3. drop effort for sources without
+  signals and rank them on the cross-encoder alone (renormalise to 1.0 × ce).
+- Claude's view: 2 — it keeps "attention the user gave" as a signal without punishing email for being unmeasurable.
+- **Decision (2026-10-21): option 2 — neutral value instead of 0** (first picked 3, switched after the flagged
+  risk: under 3 an unopened mail beat a studied page). A Gmail item with 0 s reading time gets the MEDIAN effort of
+  the Gmail items in the same result list (computed per query in `rse/reranker.py`, no storage); mails with real
+  reading time, Chrome and YouTube score exactly as today. "Read on phone" and "never opened" both land in the
+  middle (cannot be told apart). ~30 min.
+
+### A30. Wellbeing time lands on the LAST-opened day — [x] decided 2026-10-21 via A1.1b (his pick: b) (found 2026-10-18, wba/time_aggregator.py review) — DISCUSS AT THE END
+- `memory_engagement` keeps one running total per item (not one row per visit). §11.2 attributes that whole
+  total to `DATE(last_accessed_at)`.
+- Effect: read an email for 10 min on Monday, reopen it for 5 s on Wednesday → Monday loses 10 min, Wednesday
+  shows 10 min 5 s. Past days and weekly reports change after the fact; the heatmap moves the time too.
+- Options: 1. keep (doc rule; document it as an approximation). 2. a per-visit table — breaks the 16-table
+  lock. 3. no schema change: split nothing, but show "time from items last opened in this range" as the label.
+- Claude's view: 1 + the honest label (3) for Review; 2 only if per-day accuracy becomes a real need.
+- 2026-10-18: option 2 becomes possible if the schema is unlocked in A31 (go local).
+- **Decision (2026-10-21, asked and answered under A1.1b):** per-visit rows with `dwell_seconds` for Chrome +
+  YouTube; `time_aggregator.py` sums visits by the visit's day. Gmail unchanged (or removed — A41).
+
+### A31. Go fully local: own PostgreSQL + Redis, real personal data, schema may grow — [x] decided 2026-10-21 (all 6 parts)
+- Why (his words, summarised): the final review (28 Oct) is the last one; the panel's main question is "how is
+  privacy maintained?". Development used cloud Neon + Redis; for the final system everything should run
+  locally, and he moves from the test data to his actual personal accounts.
+- Scope he named: replace Neon with a local PostgreSQL, replace cloud Redis with a local Redis, switch to his
+  personal data. While doing it he may add new columns and new tables.
+- Points to settle when we discuss:
+  1. Schema lock: CLAUDE.md §2.2 locks the 16 tables. Unlocking is his call → update CLAUDE.md, `scripts/setup_db.py`
+     and a deviation note at the same time. First candidate: a per-visit table (fixes A30).
+  2. Fresh start vs migrate: with a fresh personal DB, the Neon repairs B1–B5 become unnecessary, and
+     `data_faiss/` must be emptied / rebuilt so FAISS ids match the new rows.
+  3. What still leaves the machine even when the DB is local: the LLM calls (query text + short snippets to
+     OpenAI, A25) and the Gmail / YouTube APIs (needed to fetch the data). The privacy answer should say this
+     plainly, or a local-LLM option is discussed.
+  4. Config only, no code: `DATABASE_URL` / `REDIS_URL` in `.env` point to localhost; check sslmode and the
+     Neon-specific stale-connection handling still behave on a local server.
+  5. Time zone: the code assumes `NOW()` = UTC (Neon's default). A local PostgreSQL takes the machine's zone
+     (IST) at install, which would silently shift every timestamp by 5:30. Set `timezone = 'UTC'` in
+     postgresql.conf (or per connection) — then C22's local `marked_at` stays the only local column.
+  6. **Demo risk — college Wi-Fi (raised 2026-10-19).** He reports "port 8000 doesn't work" on college Wi-Fi.
+     Likely (inference, not verified): `localhost:8000` is loopback and never touches the Wi-Fi; what the campus
+     firewall blocks is the backend's OUTGOING connections on non-web ports — Neon PostgreSQL (5432) and Upstash
+     Redis (6379/6380). OpenAI / Gmail / YouTube APIs use 443 and pass. The review on 28 Oct is at college, so a
+     Neon-backed demo would fail in the room.
+     - 1-minute check on campus: `curl http://localhost:8000/docs` (page = port fine), then
+       `Test-NetConnection <neon-host> -Port 5432` (`TcpTestSucceeded : False` = blocked).
+     - Rarer cause: a college proxy pushed into Windows/Chrome routes `localhost` through it (curl works, browser
+       fails) → add `localhost;127.0.0.1` to the proxy bypass list. No code change.
+     - Going local removes the problem entirely: only 443 traffic leaves the laptop. Another reason to do A31 first.
+     - If port 8000 itself is ever the issue: it is hard-coded in 5 places (`background.js`, `manifest.json`,
+       `popup.js`, frontend `VITE_API_BASE` default, backend CORS list) → would need a small config change.
+- **Decision (his, 2026-10-21), part by part:**
+  1. Go local: **YES** — local PostgreSQL + local Redis, Neon/Upstash dropped for the final system.
+  2. Data: **keep the test account's Neon data.** `pg_dump` Neon (at home) -> restore into local PostgreSQL ->
+     schema alterations as later decisions need them (e.g. A30 visit table) -> clean up the rows that need it
+     (B1-B3) -> full re-embed (B5; old FAISS index discarded). For data a new column/table cannot get from Neon,
+     three ways, case by case at build time: (a) look the real value up from the TEST account itself — Gmail API,
+     the test account's YouTube Takeout, the test Chrome profile's History file (real visit times, last 90 days);
+     (b) approximate; (c) NULL where honest. Personal-data import
+     (Google Takeout + browser History file) is NOT part of the build: moved to E2, stretch from Mon 26 Oct,
+     not shown in the demo unless fully ready.
+  3. Schema: **fully open** (add, change or drop) — the 16-table lock is lifted. Guardrails (his ask: "keep me
+     within limits so that I don't creep scope"): every schema change must belong to a decided item; each one is
+     written twice — in `scripts/setup_db.py` (fresh installs) AND as an ALTER/migration SQL run on the restored
+     Neon dump; all schema changes happen Thursday, before the data cleanup and re-embed; dedup
+     UNIQUE(source_type, source_id) and non-NULL `system_group_id` stay unless a decision says otherwise.
+     Update CLAUDE.md §2.2 + paper DB section to match.
+  4. Time zone: **store UTC, show IST** ("the user end should always be in IST, backend anything is fine").
+     Force UTC per connection in code: SQLAlchemy engine in `ste/postgresql_manager.py` + psycopg2 connect in
+     `rse/search_coordinator.py` (and ENP's `get_connection`). UI already converts to IST everywhere — verify
+     during the frontend pass that every displayed time is IST. C22's local `marked_at` stays documented.
+  5. Privacy statement: **say it plainly** — "storage and processing are local; only the query and short snippets
+     go to the LLM, never full mails, pages or transcripts; Gmail/YouTube APIs fetch the user's own data". NO local
+     LLM, and it is NOT listed as future work (his decision: college laptops cannot run one).
+  6. Redis: **WSL Ubuntu** (`sudo apt install redis-server`; start before use with
+     `wsl -d Ubuntu -u root service redis-server start`). PostgreSQL 16 is already installed natively as a Windows
+     service. Check at home before the dump: if Neon runs PG 17, pg_dump 16 refuses -> install PG 17 client tools.
+
+### A32. KNN alone can never create a group suggestion — [x] decided 2026-10-21 (found 2026-10-18, wba/group_manager.py review) — DISCUSS AT THE END
+- Hybrid score = 0.5 × rule_score + 0.5 × knn_score; a suggestion needs score > 0.70 OR a rule match.
+- With no rule matching, the score is at most 0.5 × 1.0 = 0.5, so the 0.70 threshold is unreachable: KNN never
+  suggests anything by itself — only rules do. Same formula in the architecture doc (§11.3 pseudo-code).
+- Measured earlier (A18): MiniLM cosines between related items are often 0.3–0.6, so even a reweighting needs care.
+- Options: 1. keep (rules drive suggestions; KNN only informs the score shown in review). 2. when no rule
+  matches, use knn_score alone against its own threshold (e.g. top-3 mean ≥ 0.60, tune on his data).
+  3. renormalise: rules present but unmatched → 0.5/0.5; no rules in the group → 1.0 × knn.
+- Claude's view: 2 — it is what Phase 4 ("KNN improves each cycle") assumes; threshold tuned on real groups.
+- **Decision (2026-10-21): option 2 — KNN gets its own threshold.** Suggest when any rule matches, OR (no rule
+  match) knn_score (mean cosine of the 3 most similar confirmed members) >= KNN-only threshold. Threshold value set
+  on Thursday's data AFTER the A40 model is chosen (cosines change with the model); start point ~0.60. Every
+  suggestion stays pending until he accepts (human-in-the-loop unchanged) — EXCEPT, since A42 (2026-10-21), rule match
+  AND KNN >= this bar, which is auto-accepted and shown in the Sunday review for undo. Build: `wba/group_manager.py:479`
+  condition + a constant; update the docstring Phase 2 line and doc/paper wording.
+
+### A33. The pause switch has no UI — restore the extension popup? — [x] decided 2026-10-21 (found 2026-10-19, extension/background.js review) — DISCUSS AT THE END
+- `background.js` honours `echo_tracking_paused` before every send, but the only thing that sets it is the popup
+  (`popup.html` / `popup.js`), staged out on 2026-08-31 (git-ignored, `default_popup` removed from the manifest;
+  see RESTORE.md §1 + §3). So today the user cannot pause capture at all.
+- The popup also calls `/retrieval/query` and `/wellbeing/recent` directly with `fetch` (needs its own review pass).
+- **Options:** (1) restore the popup as it was (pause + search + recent 5) and review `popup.js`; (2) restore
+  only the pause toggle; (3) put the pause switch in the dashboard Settings page instead (backend flag in Redis,
+  extension polls it — more moving parts); (4) leave it out of the demo.
+- **Decision (2026-10-21): option 2 — restore only the pause toggle.** Build (~20 min): un-ignore `popup.html` /
+  `popup.js`, strip the search box and recent-5 (and their direct `fetch` calls), keep the pause switch writing
+  `chrome.storage.local.echo_tracking_paused`; add `default_popup` back to `manifest.json` `action`; update
+  RESTORE.md. Later add-on if time: dashboard switches returned with `GET /chrome/rules` (A9.5) so the extension
+  stops sending (today the server discards).
+
+### A34. YouTube "revisit" (Option C) can never decide anything — [x] decided 2026-10-21 (found 2026-10-19, extension/content/youtube_tracker.js review) — DISCUSS AT THE END
+- The server checks the revisit flag only inside `/ytc/video-detected`, and the extension sends that only AFTER
+  Options A / B / manual interaction already passed. A short first visit sends nothing, so it leaves no flag; a
+  second short visit sends nothing either. So Option C never lets a video through on its own.
+- Chrome solves this with an early call at 5 s (`/chrome/revisit-check`), which records the visit.
+- **Options:** (1) add a `/ytc/revisit-check` call at ~5 s of watch time (like Chrome; then a second short watch
+  passes); (2) drop Option C from the doc's gate and the code (say so in the paper); (3) keep as is.
+- **Decision (2026-10-21): option 1 — add a 5 s `/ytc/revisit-check` call** (same as Chrome's 5 s rule, A10).
+  Build (~30 min): `youtube_tracker.js` sends it once per video at 5 s of active watch time through
+  `postToBackend` (pause respected); the route calls `check_and_record_revisit_async` (Redis, 24 h TTL) and, on a
+  revisit, lets the video through Option C. Add the 5 s value to the A39 timings list.
+
+### A35. Store the OAuth tokens unencrypted, since everything is local? — [x] decided 2026-10-21 — PLAIN TOKENS
+- Today `token_gmail.enc` / `token_youtube.enc` are Fernet-encrypted (`ste/security.py`); the key is
+  `ECHO_TOKEN_ENCRYPTION_KEY` in `.env`. His idea: once A31 makes everything local, plain `token_*.json` is enough.
+- **For plain:** one less env key to lose; simpler `security.py`; the key sits in `.env` on the same disk anyway,
+  so encryption only stops someone who copies the token file but not `.env`.
+- **Against plain:** the Gmail token is a long-lived refresh token with `gmail.readonly` = read access to the whole
+  mailbox. A plain file leaks via backups, OneDrive/Desktop sync, a zip of the repo, or an accidental `git add -f`.
+  Encryption at rest is also a point the paper/deck can claim.
+- **Touches:** `ste/security.py`, `gmail_api.py`, `youtube_api_client.py`, `scripts/test_youtube_auth.py`, `.gitignore`.
+- Note: `scripts/test_gmail_auth.py` deleted 2026-10-19 (`gmail_api.authenticate_gmail` opens the browser sign-in
+  itself). `scripts/test_youtube_auth.py` also deleted 2026-10-19 (his decision): `youtube_api_client.sign_in_youtube()`
+  now opens the browser sign-in once at backend startup, on a daemon thread started by `backend/main.py`.
+  `ste/security.py` callers line fixed.
+- **Decision (his, 2026-10-21): plain `token_gmail.json` / `token_youtube.json`, no encryption.** Reason: in the
+  demo he shows the real token; an encrypted blob looks "fake" to the panel.
+- **Build:** `gmail_api.py` + `youtube_api_client.py` read/write plain JSON; remove the token encrypt/decrypt/
+  migrate helpers from `ste/security.py` but KEEP `validate_redis_tls_url` (redis_manager uses it; it already
+  allows redis:// to localhost, so local Redis works); drop `ECHO_TOKEN_ENCRYPTION_KEY` from .env / README;
+  existing `.enc` tokens: one-time decrypt to .json, or just sign in again. `.gitignore` already covers
+  `token_*.json`.
+- **Guards:** paper/deck must NOT claim "tokens encrypted at rest". A token shown on the projector is a live key
+  to the test mailbox — revoke it after the demo (Google Account -> Security -> third-party access) and sign in
+  again.
+
+### A36. Two maintenance jobs lost their only trigger (scripts deleted 2026-10-19) — [x] decided 2026-10-21
+- **Monthly centroid recompute (architecture 9.3/9.4).** `enp/system_group_classifier.recompute_centroids()` still
+  exists, but nothing calls it now. Note: it had never run — `data_faiss/centroids.npz` does not exist, so the
+  classifier has always used the seed-text centroids.
+  Options: (1) call it from the backend (e.g. at startup when `centroids.npz` is missing or > 30 days old, in a
+  background thread); (2) drop the feature: delete the function + the centroid loader, say "seed centroids
+  only" in the paper/deck; (3) leave the dead function.
+- **FAISS rebuild.** `ste/faiss_manager.py` tells the user to "rebuild" when the index file is missing, corrupt or
+  of the wrong dimension/version, but the rebuild tool is gone. Relevant to A31: a fresh local DB from `pg_dump`
+  keeps the same `memory_id`s, so the existing index stays valid; a re-embed from scratch needs either a rebuild
+  or resetting `preprocessed = FALSE` (ENP then re-embeds every row — the old `enp_reprocess.py` job).
+  Options: (1) ENP worker rebuilds automatically when the index fails to load; (2) messages say "reset
+  preprocessed and let ENP re-embed" (one SQL line, written in the README); (3) restore the script from git.
+- **Claude's recommendation (NOT decided — he wants to discuss it):** centroids -> option 1 (startup, background
+  thread, when `centroids.npz` is missing or > 30 days old); FAISS rebuild -> option 2 (fix the messages + README SQL;
+  clears C27's faiss_manager bullets). Paper/deck must not claim "monthly centroid recompute" unless option 1 is built.
+- **Decision (his, 2026-10-21):** centroids -> **option 1, run at startup** when `centroids.npz` is missing or
+  > 30 days old. FAISS rebuild -> **moot**: A31.2 re-embeds everything into a fresh index; C27 still fixes the
+  stale "rebuild" messages in `ste/faiss_manager.py`.
+- **Build:** run `recompute_centroids()` inside the ENP worker thread at its start, before the batch loop (no extra
+  thread: CENTROIDS is written only by the ENP thread, so no lock is needed), then load the result into CENTROIDS
+  in-process (today the new file is only picked up on the next start). Categories with < 10 confirmed items keep
+  their seed. Run it AFTER the B5 re-embed has filled FAISS, or it finds no vectors (harmless: it just retries on
+  the next start). Paper/deck may then say "centroids recomputed monthly".
+
+### A37. Data retention: auto-delete old data after a fixed period (PANEL, Phase 3 Review 1) — [x] decided 2026-10-21 (added 2026-10-21, from the Review 2 deck/LLD)
+- Panel: "keep captured data for a fixed period (6 months or 1 year), then delete it automatically to save storage,
+  as production systems do". Our Review 2 answer (deck slide + LLD): "planned as future work — a configurable
+  auto-delete window (6 or 12 months)". Today nothing deletes memory items by age; only chat history is cleaned
+  (`rse/conversation_memory.cleanup_old_sessions`, 30 days, once at startup).
+- It is the final review, so the panel may ask "did you do it?".
+- A full delete must reach every store: `memory_items` + child rows (embedding_index, group links, wellbeing
+  rows), the FAISS vectors (`remove` by memory_id), and Redis keys. `DELETE /items/{id}` already does one item —
+  reuse that path. Soft delete (`is_deleted`) vs hard delete is part of the decision.
+- Correction 2026-10-21: `DELETE /items/{id}` is SOFT only (`backend/items.py:98`, sets `is_deleted`); text stays in
+  Postgres and the vector stays in FAISS. No hard-delete path exists yet.
+- **Decision (2026-10-21): option a — retention setting, default "keep forever".** Settings → Retention:
+  forever / 1 year / 6 months (stored with the capture settings in Redis, `echo:settings:capture`). A job at backend
+  startup HARD-deletes items older than the window from every store: `memory_items` + child rows (CASCADE),
+  FAISS vectors (`remove` by memory_id), Redis keys. ~2 h. Panel answer: "user-controlled; default forever because
+  recalling old things is the product". Storage estimate (assumption, not measured): ~100 items/day ≈ 180 MB/yr
+  text + ~55 MB/yr vectors.
+
+### A38. Spam filtering for Gmail (PANEL, Phase 3 Review 1) — [x] decided 2026-10-21 (added 2026-10-21, from the Review 2 deck/LLD)
+- Panel: "add a model that filters out spam emails before they are captured". Our Review 2 answer: Gmail's own
+  Spam folder is never read; "a dedicated spam model is planned as future work".
+- Checked 2026-10-21: `gmail_api.py:296` lists mail with spam and trash excluded (Gmail API default
+  `includeSpamTrash=false`), so the Review 2 answer is true. The real gap: Promotions / Social / Updates mail
+  (newsletters, offers) IS captured and fills memory.
+- **Decision (2026-10-21, his): use Gmail's own spam marking only — skip mail Gmail puts in Spam (and Trash).**
+  Already true for the full listing. Promotions / Social stay captured (his choice). Panel answer: "Gmail's spam
+  filter is our spam model; spam is never read."
+  - Build: the new `history.list` path (A5) must skip messages whose `labelIds` contain SPAM or TRASH — Likely
+    (from memory of the API) history.list has no includeSpamTrash switch, so the list call's default does not
+    cover it. Verify when building A5.
+  - Fallback if Promotions/Social crowd results in the demo data: skip those two categories too (~30 min).
+
+### A39. Review every timing and threshold before the final review (his ask, 2026-10-21) — [x] decided 2026-10-21
+- He wants to go through each number once and change any that feel too short or too long. Current values:
+- **Chrome gate** (`extension/background.js` 42–46 + `ingestion/chrome/intent_filter.py` 26–29, must match):
+  Phase 1 foreground >= 5 s (sets the revisit flag); Phase 2 passes on ANY of: >= 10 s, scroll >= 25 %,
+  >= 1 interaction, or a revisit. App pages (Slack/Notion/Jira) >= 5 s, server copy too (A8.2). Signals sent every 5 s
+  (`chrome_tracker.js` 37). Page text: 200 min / 12,000 max chars. Failed send retried after 30 s.
+- **Revisit:** flag lives 24 h in Redis (`ste/redis_manager.py` 42), Chrome and YouTube. A visit < 5 s never
+  counts (A10).
+- **YouTube gate** (`youtube_tracker.js` 87–96 + `youtube_connector.py` 85–87, must match): Shorts >= 15 s
+  watched, regular >= 20 s, OR completion >= 50 %, OR a revisit (A34: revisit check sent at 5 s of watch time).
+  A Short = `/shorts/` URL (duration <= 60 s fallback is unused)
+  (`video_classifier.py` 30). Heartbeat every 5 s; idle after 30 s of no input.
+- **Gmail:** polled every 30 s (`ingestion/gmail/config.py` 26); no gate, every mail is stored. Read time
+  (extension): an open < 3 s is not a visit; idle after 30 s; in-focus reading credited per 60 s
+  (`gmail_tracker.js` 59–61).
+- **Wellbeing:** session gap 20 min (`wba/wellbeing_analytics.py` 50); regret reminder only after a >= 15 min
+  session, max 1 per type and 2 in total per day, 2 h cooldown (`wba/regret_system.py` 47–50); a habit =
+  >= 3 times in 30 days (`wba/pattern_detector.py` 34–35); insights cover the last 7 days.
+- **Groups:** KNN needs >= 6 confirmed items; suggest when any rule matches OR KNN-only >= ~0.60 (A32, set after A40);
+  rule suggestion after >= 5 shared matches (`wba/group_manager.py` 59–65).
+- **Background jobs:** ENP checks for new rows every 10 s, waits up to 600 s for YouTube metadata
+  (`enp/enrichment_pipeline.py` 60, 71); chat history kept 30 days (`rse/config.py` 106); attachment text
+  cached 1 h.
+- **Retrieval:** quality gate top similarity >= 0.35 and >= 2 results, widen up to 3 times; neighbours ± 5 min
+  (`rse/config.py` 78–96).
+- **Part 1 decided 2026-10-21 (his values; he let Claude fine-tune "around" them):**
+  - Chrome scroll: 25 % → **15 %** ("reduce a bit"; Claude picked 15).
+  - YouTube Shorts watch time: 15 s → **10 s**. Regular videos stay 20 s.
+  - YouTube completion: 50 % → **10 %** (his value). Claude flagged once: completion uses watch time / length, so a
+    20 s Short passes at 2 s and a Shorts-feed swipe would save almost every Short. Safer add-on proposed: count
+    completion only after >= 5 s of watch time. **Floor: YES — 10 % + 5 s minimum (his choice 2026-10-21;
+    he first said "let it be as it is", then switched to option a).** Completion passes only when watch time >= 5 s
+    AND watch / length >= 10 %. Build: a `INTENT_COMPLETION_MIN_SECONDS = 5` constant in `youtube_tracker.js` and
+    `COMPLETION_MIN_WATCH_SECONDS = 5` in `youtube_connector.py` (must match). Side effect: any Short up to 50 s
+    saves at 5 s, so the 10 s Shorts rule only decides for Shorts over 100 s.
+  - Groups: KNN starts at **5** confirmed items (was 6; his "change it to 5" read as this, since rule suggestions
+    are already 5).
+  - Everything else in the list above kept as is.
+  - Build (~30 min, both copies must match): `extension/background.js` PHASE2_MIN_SCROLL +
+    `ingestion/chrome/intent_filter.py` PHASE2_MIN_SCROLL = 0.15; `youtube_tracker.js` INTENT_WATCH_SHORT = 10,
+    INTENT_COMPLETION_THRESHOLD = 0.1 + `youtube_connector.py` SHORT_MIN_WATCH_SECONDS = 10,
+    COMPLETION_RATE_THRESHOLD = 0.1 (+ header comments "0.5"); `wba/group_manager.py` MIN_CONFIRMED_FOR_KNN = 5.
+    Doc §6.2 / §7.3 numbers are his to change; paper + deck numbers change too (tell the deck agent).
+  - Thursday task (not a vote): every cosine cutoff was tuned on MiniLM — 0.35 search quality gate, Stage-3
+    centroid cutoff (A18), KNN-only ~0.60 (A32). Re-measure all three on Thursday's data after A40.
+- **Part 2 decided 2026-10-21: option c — clicks on links do not count as an interaction.** Only matters for
+  pages left between 5 and 10 s (10 s passes on time alone). Today a click on a headline counts, and the
+  `pagehide` signal still carries it, so a homepage clicked through after 6 s is saved. New: copy / expand /
+  "show more" clicks and text selections still count; link clicks don't.
+  - Build (~15 min, extension only; the server just compares the count): in `chrome_tracker.js` the click
+    listener skips events whose target is inside an `a[href]` (`event.target.closest("a[href]")`). Known cost:
+    an in-page link (table-of-contents jump) no longer counts; such pages still pass by scroll (15 %) or 10 s.
+
+### A40. Embedding model and cross-encoder model — keep or upgrade? — [x] decided 2026-10-21 (his ask, 2026-10-21)
+- Today: embeddings = `all-MiniLM-L6-v2` (`enp/embedding_generator.py:56`; 384-d, reads ~256 tokens; used by ENP,
+  RSE query embedding, Stage-3 centroids, A23/A24 passage matching). Re-ranker = cross-encoder
+  `ms-marco-MiniLM-L-6-v2` (`rse/reranker.py`). Both run on CPU on his laptop.
+- Timing: B5 re-embeds every row on Thursday anyway, so switching the embedding model now costs no extra re-embed.
+  After Thursday, any switch = another full re-embed.
+- Candidates (Likely — from memory of the model cards / MTEB, verify sizes + licences before picking):
+  - Embedding: keep MiniLM-L6 (fastest, weakest) | `BAAI/bge-small-en-v1.5` (same 384-d so FAISS dim unchanged,
+    ~512-token window, better retrieval, ~1.5x slower; queries want an instruction prefix) | larger 768-d models
+    (e.g. nomic-embed-text v1.5, long window) — slower on CPU, FAISS dim + VECTOR_DIMENSION change.
+  - Cross-encoder: keep MiniLM-L-6 | `ms-marco-MiniLM-L-12-v2` (~2x slower, a bit better) | `BAAI/bge-reranker-base`
+    (much better, several x slower on CPU — risky for demo latency).
+- Touches: model names, `EMBEDDING_VERSION`, maybe VECTOR_DIMENSION, A18 threshold (measure with the chosen
+  model), A24.1 snippet size (window), paper/deck model names. Measure on his laptop: embed speed, query latency.
+- **2026-10-21, his direction: "We will be changing the model"** (embedding model; which one = this decision).
+  Close A16 (token budget, order) at the same time.
+- **Research 2026-10-21 (model cards / web, not measured on his laptop):**
+  - Local MiniLM files: `max_position_embeddings` 512, `max_seq_length` 256, model card "sequence length was
+    limited to 128 tokens" in training.
+  - Retrieval NDCG@10 (MTEB/BEIR, from model cards): all-MiniLM-L6-v2 41.95 · snowflake-arctic-embed-xs 50.15
+    (22M, 384-d, 512 tok, query prefix needed) · bge-small-en-v1.5 51.68 (33M, 384-d, 512 tok, query prefix) ·
+    ibm-granite/granite-embedding-small-english-r2 BEIR 50.9 (47M, 384-d, **8192 tok**, no prefix, Apache 2.0,
+    ModernBERT → needs transformers ≥ 4.48; installed 4.57.6, sentence-transformers 5.4.1, torch 2.2.2+cpu) ·
+    nomic-embed-text-v1.5 (137M, 768-d, 8192 tok, prefixes, trust_remote_code).
+  - All 384-d options keep the FAISS dimension. Long windows cost CPU time (attention grows with length²) —
+    pick a cap (e.g. 512–1024) and measure embed speed on his laptop before Thursday's B5.
+- **Decision (his, 2026-10-21; he accepted every pick of the A16/A40/A42/A43 brief; build notes + measurements are below):**
+  - **A40.1 embedding model = `Snowflake/snowflake-arctic-embed-xs`, 512-token window** (384-d, FAISS dim unchanged,
+    Apache-2.0; query prefix per its model card). Measured on his laptop, 39 questions: right item first 37/39
+    (MiniLM 31, bge-small 36, granite-r2 @1,024 35), top-5 39/39; ~221 ms/item at 512 tokens. Fallback if Thursday's
+    data shows long pages missed by meaning: granite-r2 at 1,024 tokens.
+  - **A40.2 cross-encoder = keep `ms-marco-MiniLM-L-6-v2`** (L-12 same hits at 2x time; bge-reranker-base worse, 12x slower).
+  - **A40.3 (new): the cross-encoder reads title + the best-matching 500-char window** (same function as A24.2),
+    not the first 512 chars: 25/27 -> 27/27 at no measured cost.
+  - Thursday re-tune (cutoffs were tuned on MiniLM): search gate start 0.55, KNN bar (A32 + A42.1) start 0.65,
+    A18 seed cutoff re-measured (lead 0.08 portable); ALSO re-measure the 0.55 / 0.08 cutoff for RECOMPUTED centroids
+    (set on MiniLM; flagged by the design-doc sync 2026-10-22). Passage picking (A23/A24.2): prefer keyword overlap.
+  - Update model names: paper `\embmodel`, deck `EMBEDDING_MODEL`, design doc, README, EMBEDDING_VERSION; B5 re-embeds.
+- **A40 build notes (from the brief; line numbers as of 2026-10-21):**
+  - Model facts (read from the downloaded files): arctic-xs 22.6M params, 384-d, `max_seq_length` 512, CLS pooling,
+    ends with a Normalize layer (unit vectors, like MiniLM today, so C14 holds), config prompt
+    `query = "Represent this sentence for searching relevant passages: "`, no document prompt. bge-small: 33.4M, 384-d,
+    512, CLS, Normalize, MIT. granite-r2: 47.7M, 384-d, 8,192, CLS, **no Normalize** (code must normalise if it is
+    ever the fallback), Apache-2.0.
+  - `enp/embedding_generator.py:56-57` `MODEL_NAME` / `MODEL_REPO_ID` → `Snowflake/snowflake-arctic-embed-xs`; today's
+    repo id is built as `sentence-transformers/{MODEL_NAME}` — that pattern must go; line 130 loads by `MODEL_NAME`,
+    load by the repo id instead. Offline loading (`_prefer_local_models`) checks the cache by repo id, so it keeps
+    working once the id is right.
+  - Add a query path `generate_query_embeddings(texts)` that prepends `model.prompts["query"]` (verified to exist in
+    the loaded config). Callers that embed QUESTIONS switch to it: `rse/search_coordinator.py:415-419`,
+    `rse/time_anchor.py:149-152`. Items, centroid seeds (`enp/system_group_classifier.py:325`) and group KNN keep
+    the document path (no prefix).
+  - `ste/faiss_manager.py:68` `EMBEDDING_VERSION = "snowflake-arctic-embed-xs-v1"`; `VECTOR_DIMENSION` stays 384.
+  - Docstrings naming MiniLM / 256 tokens: `embedding_generator.py:2,22-29`, `topic_extractor.py:8-19,54-61`,
+    `enrichment_pipeline.py:13`, `system_group_classifier.py:13`, `search_coordinator.py:17`,
+    `faiss_manager.py:6,122` (+ the stale "UNNORMALIZED" wording, C14). CLAUDE.md §5 FAISS bullet. Paper, deck and LLD
+    model names are other agents' files — tell them.
+  - Scores sit higher with arctic-xs (unrelated pairs ~0.40 instead of ~0.06), so all cutoffs need re-tuning (below).
+  - Query cost: one short question 22 ms (arctic-xs) vs 12.5 ms (MiniLM). If A23/A24.2 passage matching scored
+    windows with the embedding model, 10 results × ~5 windows per round would add ~1 s per round under load
+    (Likely, from per-item speed) — so use keyword overlap there, or measure first.
+  - B5 re-embed time, worst case (every item fills the window): ~110 test items (Likely: `data_faiss/echo_faiss.index`
+    was 169,005 bytes on 16 Oct = ~110 vectors of 1,536 bytes; Neon may hold more now) → arctic-xs ~24 s. If the E2
+    personal import brings 3,000 items: MiniLM 4 min, arctic-xs 11 min, bge 17 min, granite@512 36 min, @1,024 100 min.
+    Daily load at ~100 items/day (A37's assumption): arctic-xs ~22 s of CPU.
+  - Build: ~45 min code + the B5 re-embed already planned + the cutoff re-tune.
+  - Risk: no test item was longer than ~940 tokens, but Chrome pages reach 12,000 chars (~3,000 tokens). Notice it on
+    Thursday's data as long pages found by keyword but missed by meaning → fallback granite-r2 at 1,024 tokens (same
+    384-d, ~9× the embed time, normalise its vectors).
+  - Reading past 512 tokens bought little: on the 4 questions with the answer past token 512, granite@1,024 and
+    arctic-xs@512 both got 2 first / 4 in top 5 (a long text becomes one averaged vector). Granite@1,024 costs ~9×
+    arctic-xs per item. Granite alone separated "in group" from "not in group" in both test groups (A42), but its
+    scores are squeezed into 0.72–0.95.
+  - nomic-embed-text-v1.5 was not measured (768-d changes the FAISS dimension, needs `trust_remote_code`, 137M params).
+  - **A40.2/A40.3 notes:** no code change for A40.2 (CLAUDE.md §3 already names L-6). Today the re-ranker scores
+    `RRF_POOL_SIZE = 50` candidates (`rse/config.py:76`), once per search round, up to 5 rounds (A26): 2.4 s × 5 = 12 s
+    worst case under load. Optional, not measured on real data: pool 50 → 30 cuts re-rank time ~40 % (1.4 s vs 2.4 s)
+    — only if Thursday's demo feels slow. All three cross-encoders take 512 tokens for question + item; today a pair
+    is 127 tokens on average, 152 at most (item cut at `RERANK_DOC_CHAR_LIMIT = 512`, `rse/config.py:86`).
+    A40.3 build: `rse/reranker.py:114-128` `_document_text` → title + best window (reuse the A24.2 function);
+    `rse/search_coordinator.py:64` must select enough text (cleaned text, or `raw_text` with no 1,000-char cut).
+    ~30 min on top of A24.2. Late-answer cases: first-512-chars 14/16 → window 16/16.
+  - **Thursday re-tune** — cosine ranges on the 25-item set, not comparable across models:
+
+    | Model | Right item (median / lowest) | Wrong items (median / 95th pct) | No-answer questions, best score |
+    |---|---|---|---|
+    | MiniLM (today) | 0.532 / 0.026 | 0.055 / 0.223 | 0.11 – 0.43 |
+    | bge-small | 0.750 / 0.573 | 0.475 / 0.594 | 0.51 – 0.66 |
+    | arctic-xs | 0.709 / 0.530 | 0.405 / 0.530 | 0.48 – 0.64 |
+    | granite-r2 | 0.872 / 0.795 | 0.722 / 0.783 | 0.74 – 0.83 |
+
+    - Search gate (`rse/config.py:90` `MIN_TOP_SIMILARITY = 0.35`, also used by `rse/time_anchor.py:155`): arctic-xs
+      start **0.55** (just above the wrong-item 95th percentile 0.53). For every model, no-answer questions overlap
+      answered ones (arctic-xs: best no-answer 0.641 vs lowest right answer 0.530), so the gate can only trigger
+      widening, never prove "nothing there".
+    - A18 seed cutoff (0.25 / 0.08, set on MiniLM): unrelated pairs sit ~0.35 higher with arctic-xs, so the absolute
+      value must move up; the lead (0.08) is the more portable part.
+    - A32 KNN-only bar (~0.60 on MiniLM): arctic-xs test groups suggest ~**0.65** (Placement: lowest "in" 0.656,
+      highest "out" 0.632; Capstone overlaps). The same constant feeds A42.1.
+  - **Measurements (test set: 38 invented items, 39 questions with known answers + 6 with none, 2 test user groups —
+    hand-made by Claude, small; one question is noise, only big gaps count).** Laptop: Ryzen 5 5600H, 6 cores, 7.3 GB
+    RAM, measured on battery with another Python job running → absolute times pessimistic (a same-moment re-run was
+    1.4–3× slower), the ratios are the useful part. sentence-transformers 5.4.1, transformers 4.57.6, torch 2.2.2+cpu.
+    The bench scripts were in a session temp folder and are likely gone; nothing was installed.
+    - Right item first / in top 5 (39 questions): MiniLM today's caps 31/35 · bge-small@512 36/37 · arctic-xs@512
+      **37/39** · granite@512 34/38 · granite@1,024 35/39. Answers past token 512 (4 questions): MiniLM 0 first /
+      2 top-5 · bge 2/3 · arctic 2/4 · granite@1,024 2/4.
+    - Embed ms per item @512 tokens: arctic-xs 221 · bge-small 342 · granite 725 (1,990 @1,024; 10.4 s @2,048; batch of
+      4 at 4,096 ran out of RAM, asked for 3.2 GB). MiniLM @256 79.
+    - Cross-encoder (27 questions, pool of 20): L-6 25/27 first with first-512-chars, 27/27 with the best window,
+      30 pairs 1.4 s / 50 pairs 2.4 s · L-12 same hits, 2.8 s / 4.7 s · bge-reranker-base (278M) 23/27 (26/27 window),
+      16.7 s / 25.7 s.
+    - Group KNN (mean cosine of the 3 nearest of 5 confirmed members), arctic-xs: Placement prep "in" lowest 0.656 vs
+      "out" highest 0.632 (separates); Capstone "in" lowest 0.600 vs "out" highest 0.614 (overlaps). MiniLM: 0.289 vs
+      0.254 / 0.252 vs 0.264; bge: overlaps in both; granite separates both. Per item (arctic-xs) — Placement in:
+      Zentrix 0.659, Northwind 0.656, podcast 0.739, system-design guide 0.708; out: biryani 0.472, song 0.531, fee
+      circular 0.552, BRIN article 0.547, OS lecture 0.632, Swiggy UPI 0.556. Capstone in: RRF article 0.600,
+      review-schedule mail 0.603, GIN article 0.652; out: LeetCode 0.585, OS-project mail 0.614, laptop review 0.467,
+      metro news 0.438, BCNF video 0.580, internship offer 0.570.
+    - Not measured: nomic; granite@4,096; any real-data test (Thursday).
+  - **Flags against decided items:** A11 (a 200-token description share means a transcript now reaches the vector for
+    most videos; A11's "only when the description is short" changes); A23 / A24.2 say "keyword overlap and/or MiniLM
+    cosine" for passage picking → prefer keyword overlap with the new model.
+
+---
+
+### A41. Stop tracking when emails are opened? — [x] decided 2026-10-21 (his ask, 2026-10-21)
+- His view: opening time of a mail gains nothing. Nobody asks "when did I open this mail"; they ask about mail
+  that arrived (A1.1 already filters mail by arrival).
+- What it is today: `extension/content/gmail_tracker.js` reports each opened email + reading time →
+  `POST /gmail/engagement` (`ingestion/gmail/router.py:106`) → `update_gmail_engagement`
+  (`ste/storage_engine.py:662`) adds dwell, stamps first_opened_at / last_accessed_at.
+- What else uses it (the cost of removing):
+  - Wellbeing: `wba/time_aggregator.py` counts only OPENED emails, and `wba/wellbeing_analytics.py:75` builds
+    sessions from opened emails → Gmail disappears from time charts, heatmap and sessions.
+  - Reranker effort score (`rse/reranker.py:92`): Gmail dwell becomes 0 for every mail → read mails no longer
+    rank above unread ones.
+  - A39 timings: Gmail read minimum 3 s / idle 30 s / credit 60 s go away.
+- Gain: less capture (one content script fewer on mail.google.com — a clean privacy line), less code to build
+  and defend.
+- Options (to brief): 1. remove fully. 2. keep for wellbeing + ranking only, drop from retrieval wording.
+  3. keep as is.
+- **Decision (2026-10-21): option b — keep it.** It sends only the email ID + seconds (`gmail_tracker.js:126`).
+  After A1 it feeds only wellbeing (the only record of email time, since A9.1 skips mail.google.com in the Chrome
+  tracker) and the effort score (A29). Open times are not used to filter retrieval (A1.1: Gmail by arrival).
+
+### A42. Auto-accept confident group suggestions; ask only below a threshold — [x] decided 2026-10-21 (his ask, 2026-10-21)
+- His idea: instead of the user accepting every suggestion, an item whose score is above a HIGH threshold is put
+  into the user group automatically; below it (but above the suggest bar from A32) it stays `pending` for him.
+- Today: every suggestion is `pending` (`group_suggestions.decision DEFAULT 'pending'`, `scripts/setup_db.py:338`);
+  only `decide_suggestion` / `manual_assign` write `memory_user_groups` (`wba/group_manager.py`).
+- Doc history: the architecture doc §15.3 step 5 originally did exactly this for ALL suggestions
+  (`decision='auto_accepted'`, `reviewed=FALSE`, reviewed weekly; doc lines ~917/971/1129). DB design v5 changed
+  the default to 'pending' (DB doc line 336: auto_accepted "silently breaks" human-in-the-loop). CLAUDE.md §2.4
+  (hard constraint) and §3 (deviation) state the strict version — both must be updated if this is decided.
+- To decide at the end: (1) which score auto-accepts (rule match? KNN ≥ a high bar? both?) and the value — set on
+  Thursday's data after A40; (2) do auto-accepted items still show in the weekly review so he can undo them
+  (`reviewed = FALSE`, as the doc had)? (3) wording for the panel: "human-in-the-loop for uncertain items,
+  human-on-the-loop (weekly undo) for confident ones".
+- Ties to A32 (suggest bar) and A43 (groups under system groups).
+- **Decision (his, 2026-10-21; he accepted every pick of the A16/A40/A42/A43 brief):**
+  - **A42.1 auto-accept only when a rule matches AND the KNN score >= the A32 KNN bar** (one shared constant, start
+    0.65 with arctic-xs, set Thursday). Anything less certain stays `pending`.
+  - **A42.2 auto-added items still show in the Sunday review** with Keep / Remove (UI + delete path already exist:
+    `PatternsPage.tsx:199-214`, `group_manager.py:545-554`); row written `decision='auto_accepted'`, `reviewed=FALSE`.
+  - **A42.3 only items he confirmed count as KNN examples** (`_load_group_context` keeps `decision='accepted'`).
+  - **A42.4 panel wording:** "Echo never decides alone when it is unsure. If a rule you wrote AND the similarity to
+    items you confirmed both agree, the item is added and shown in your Sunday review, where one click undoes it —
+    human-on-the-loop. Anything less certain waits for your yes — human-in-the-loop. Only items you confirmed ever
+    teach the system."
+  - `setup_db.py` keeps `DEFAULT 'pending'`; only the confident path writes 'auto_accepted'. Entry is still only via
+    `group_suggestions` (wba/group_manager.py stays the only write path). CLAUDE.md §2.4 + §3 updated 2026-10-21.
+    A32's "every suggestion stays pending" now reads: except the A42.1 confident path. ~1.5 h.
+  - **A42 build notes (from the brief; line numbers as of 2026-10-21):**
+    - Why rule AND KNN: rule alone auto-adds everything a broad rule touches (e.g. the "Semester fee circular", KNN
+      0.552, under a `pes.edu` rule); KNN alone needs ~0.70 to be safe and then catches only 2 of 7 real members
+      (Capstone "in" and "out" overlapped). A group without rules works exactly as today (all pending). Auto-accept
+      fires only for KNN-ready groups (≥ 5 confirmed members, A39), so a new group starts fully manual.
+    - Why only confirmed items teach KNN: a wrong auto-add (an OS-project mail in "Capstone E.C.H.O") would become a
+      "member", the next OS mail would match it, score high and be auto-added too — one mistake teaching the next.
+    - `wba/group_manager.py`: new constant `AUTO_ACCEPT_KNN_THRESHOLD` (or reuse the A32 constant) near lines 59-65;
+      at line 479, rule match AND knn ≥ bar → new `_insert_auto_accepted()` writing `group_suggestions`
+      (`decision='auto_accepted'`, `reviewed=FALSE`, `decided_at=NOW()`) and `memory_user_groups` in one transaction;
+      docstrings at lines 8-23 and 425 ("nothing is auto-accepted"). A42.3 filter: `_load_group_context` (lines 319-339)
+      keeps `decision = 'accepted'` (manual adds already write `'accepted'`, line 600); same filter for the readiness
+      count in `list_groups` (line 141) and `manual_assign` (line 619). `review_queue` (lines 488-508) already returns
+      `decision`.
+    - `scripts/setup_db.py` (~lines 322-341): keep `DEFAULT 'pending'`; update the comments at ~325-326 and 338; the
+      setup check at ~526-535 stays valid. No schema change (`decision` is VARCHAR(20), no CHECK).
+    - `backend/wellbeing.py`: docstring lines 21-22; `POST /groups/auto-assign` can return an `auto_accepted` count.
+    - `frontend/src/pages/PatternsPage.tsx:170-222`: small "added automatically" label when
+      `decision === 'auto_accepted'` (~15 min, frontend only).
+    - Docs that stay yours to change: DB design doc (lines 331, 336-337) and architecture doc §15.3 step 5.
+    - Threshold check on Thursday's data (arctic-xs start ~0.65).
+
+### A43. User groups as fine-grained children of system groups? — [x] decided 2026-10-21 (his ask, 2026-10-21)
+- His view: user groups should be finer grains of the 5 system groups (work, study, entertainment, personal, misc).
+- Today: NOT like that. `user_groups` has no link to `system_groups` (`scripts/setup_db.py:224`); group_manager
+  never reads `system_group_id`. A user group can hold items of any system group.
+- What it would take: a `system_group_id` column on `user_groups` (schema open since A31), the group form picks a
+  parent, and auto-assignment only scores items whose system group = the parent (fewer wrong suggestions).
+- Cost to weigh: a goal that spans two system groups ("Placement prep" = study pages + work mails) needs one
+  parent; and an item misclassified at system level (ENP stage 1–4) can never reach the right user group.
+  Possible middle: parent is optional (NULL = any system group).
+- **Decision (his, 2026-10-21; he accepted every pick of the A16/A40/A42/A43 brief): keep user groups unlinked** from system
+  groups. Measured: the hard wrong suggestions sit inside the same system group, so a parent filter buys little
+  and can lose items ENP misclassified. No schema change.
+  - Evidence: in "Capstone E.C.H.O" the near misses (OS-project mail 0.614, LeetCode page 0.585) are study items
+    too, so a "study" parent would still suggest them; the items a parent would remove (metro news 0.438, laptop
+    review 0.467) were already rejected by KNN. Assumption in the test: ENP puts the OS mail and LeetCode in study.
+  - If revisited (optional parent or display label, ~2 h; required parent ~2.5 h): `ALTER TABLE user_groups ADD COLUMN
+    system_group_id INTEGER NULL REFERENCES system_groups(system_group_id)` in `scripts/setup_db.py` (~line 224) AND
+    as migration SQL (A31.3); `create_group` (`group_manager.py:105`), the items query (lines 454-467),
+    `backend/wellbeing.py:107-109` `GroupCreateRequest`, `frontend/src/lib/types.ts:51`, `api.ts:155`,
+    `PatternsPage.tsx:~254`. `manual_assign` must never check the parent.
+
+### A44. Automatic retry of failed ENP items — [x] decided 2026-10-21 (found by the paper agent) — STRETCH: build if time permits
+- Today: a row that fails any ENP step is marked `classified_by = 'failed'` and skipped by every later batch; it is
+  retried only with `ENP_RETRY_FAILED=true` + a backend restart (`enp/enrichment_pipeline.py` 62, 102).
+  `scripts/enp_run_once.py`, named in the module docstring, was deleted 2026-10-19 (A36) — fix that docstring.
+- Draft 1/2/3 of the paper say failed items are "retried automatically" (Draft 2 line ~278).
+- **Decision (his, 2026-10-21): build automatic retry, if time permits before the Sun 25 freeze.** Sketch: retry
+  failed rows on worker start and then periodically, max 3 attempts per row (attempt counter: a column — schema open
+  under A31.3 — or a Redis key), ~45 min.
+- **If not built by the freeze:** change the paper sentence to "kept apart and can be retried" (all drafts).
+
+### A45. Fresh Gmail poll for "just now" questions in the A26 tool loop — [x] decided 2026-10-21 — STRETCH: build if time permits
+- Today: `parse_intent` sets `fetch_api=True` for "latest / today / just received"; `node_fetch_api`
+  (`rse/graph_nodes.py:281`) runs a live Gmail `poll_once` and loads today's items. A26 replaces the fixed graph with
+  Luna's `search_memories` tool loop, and no decision placed this live poll in it. Without it a new mail appears
+  after the next background poll (every 30 s, A5).
+- **Decision (his, 2026-10-21): keep it — a `fresh` option on `search_memories` that runs a Gmail poll before
+  searching, if time permits before the freeze** (~30–45 min). Then add one sentence to the paper's retrieval loop.
+- **If not built:** the paper stays silent (as now); demo pre-flight sends the test mail early, so the 30 s gap
+  never shows.
+
+## B. Live Neon actions — your explicit go + snapshot first
+
+| ID | Action | Status |
+|----|--------|--------|
+| B1 | `DROP TABLE gmail_memory` (archive `legacy_gmail_threads.json` stays local) | [ ] |
+| B2 | Remove duplicate `gmail_attachments` rows — keep one per `(memory_id, filename)` | [ ] |
+| B3 | Gmail rows wrongly marked opened: set `first_opened_at` and `last_accessed_at` to NULL where `play_sessions_count = 0` | [ ] |
+| B4 | Shorts stored as `is_short = FALSE` — cannot be fixed from the DB; each fixes itself on a re-watch | info only |
+| B5 | Re-embed every row after the ENP review (cleaner, keywords and embeddable text changed; old vectors and
+       auto_keywords — full of "the"/"and"/"for" — stay until re-processed). Set `preprocessed = FALSE` on all rows,
+       run ENP. Do it ONCE, after all of enp/ is reviewed and A12–A15 are decided. | [ ] |
+
+- Do B2 only after C1 is done, or new duplicates keep appearing.
+- For each: count the affected rows first, show the count, then run.
+
+---
+
+## C. Fixes in other files (do when that file is reviewed)
+
+### C1. `ingestion/gmail/database.py` — [x] 2026-10-15 (718fe9a) — B2 is now unblocked
+- Delete `store_attachments_metadata` and its call. Until then every new email with attachments gets
+  **2 rows** (one from `ste/storage_engine.py`, one from here).
+- Delete the stubs `store_in_memory_items` and `store_in_gmail_metadata`.
+- Replace `print()` with `logger`.
+
+### C2. `ingestion/gmail/config.py` — [x] 2026-10-15 (718fe9a)
+- [x] 2026-10-15 Follow-up after deleting `ingestion/gmail/main.py`: `get_redis_client()` has no callers left → delete it.
+      Also remove the "main.run_listener" lines from the docstrings of `config.py`, `database.py`, `gmail_api.py`.
+- It builds its own Redis client. Use `ste.redis_manager.get_sync_client` instead.
+
+### C3. `is_source_enabled` on the event loop — gmail [x] 2026-10-15 · youtube [x] 2026-10-17
+- `ingestion/youtube/youtube_connector.py` calls `settings_store.is_source_enabled` directly on the event
+  loop. On a cache miss that is a sync Redis GET — up to 5 s blocked when Redis is down. Wrap it in
+  `asyncio.to_thread`.
+- `ingestion/gmail/router.py`: **was a false alarm** — the call sits inside `poll_once`, which already runs
+  in `asyncio.to_thread`. Done there instead: `poll_once` now skips the fetch when `initialize_database()`
+  returns False (it used to ignore the result).
+
+### C4. FAISS staleness — RSE never sees new vectors until a restart — [ ]
+- **Cause:** ENP builds its own `FAISSManager` instead of the shared `get_manager()`.
+- **Order matters** (otherwise ENP's `add()` races unlocked reads → crash risk):
+  1. [x] `rse/search_coordinator.py` `_search_full_index` → `manager.search_all`; drop `_cosine_similarity`
+         (2026-10-18; parity-tested on the real 110-vector index: identical ids and scores).
+  2. [x] `rse/time_anchor.py` (uses `_search_full_index`) → `get_manager().search_all` (2026-10-18).
+  3. [x] `wba/group_manager.py` `_item_embedding` / `_knn_score` → `get_vector` + `cosine` (2026-10-18).
+  4. [x] `enp/system_group_classifier.py` → `get_vector` (2026-10-17; also imports `ste.faiss_manager` directly).
+  5. [ ] `enp/enrichment_pipeline.py` → use `get_manager()`.
+  6. [ ] Make `index` / `vectors` / `memory_ids` private in `ste/faiss_manager.py`.
+  7. [ ] (2026-10-17: shim now exports only `get_manager`, its last use.) Delete the `enp/faiss_manager.py` shim and the dead module-level `add/search/save_index/load_index`
+         + `FAISSManager.search(candidate_ids)`. Point `system_group_classifier` at `ste.faiss_manager`.
+         (2026-10-19: `scripts/enp_recompute_centroids.py`, the shim's last caller, was deleted -> the shim has
+         ZERO callers now; delete it.)
+
+### C5. Chrome dwell is undercounted — `extension/background.js` — [ ]
+- The page is sent once, when the intent gate passes (~5–10 s), then `sentToBackend = true`. Time after that
+  is never sent. A 20-minute read is stored as ~10 s → wellbeing Chrome time is far too low.
+- **Fix:** on tab close, send the extra dwell since the first send. `ste/storage_engine.py` already adds
+  dwell on conflict, so the backend needs no change.
+
+### C6. YouTube re-watch time not added — `ingestion/youtube/youtube_connector.py` — [x] no change (A2 = "how far", 2026-10-21)
+- Heartbeats send the session's running total, so plain `+=` would double count.
+- **Fix if A2 = "total":** take the stored value at detection as a baseline; store baseline + session total.
+
+### C7. `backend/main.py` — [x] (main.py side 2026-10-19; leftovers 2026-10-22: dead `redis_client` in youtube_connector.py deleted, gmail/config.py comment and conversation_memory.py docstring fixed; D1 engine dispose is tracked separately)
+- **Done in main.py:** all six bullets below. Startup now pings `redis_manager.get_async_client()` and closes it
+  (`aclose`) on shutdown; ENP stops via `threading.Event` with a 60 s wait for its batch; cleanup runs once at startup.
+- **Leftover:** `ingestion/youtube/youtube_connector.py` lines 53–55 — the dead `redis_client = None` and its
+  comment ("backend/main.py still sets and closes it") are now stale. Delete those 3 lines (already-reviewed file).
+  Two stale comments too: `ingestion/gmail/config.py` lines 19–21 (main.py now loads .env first; keep the call,
+  fix the reason) and `rse/conversation_memory.py` `cleanup_old_sessions` docstring ("Not called anywhere yet").
+- D1 (engine dispose) is NOT done: it needs a `dispose_engine()` helper in `ste/postgresql_manager.py` first.
+- Remove the dead `ytc_module.redis_client`.
+- Close `redis_manager`'s async client on shutdown.
+- Replace the f-string inside `logger.warning` with `%s` args.
+- `load_dotenv()` runs after the imports — move it before.
+- ENP clean stop (added 2026-10-17): `run_pipeline` now takes `stop_event`. Create a `threading.Event`, pass it
+  in `_run_enp_in_named_thread`, and `set()` it in the lifespan shutdown. Today the ENP thread never ends, so
+  shutdown waits on asyncio's default executor (up to 300 s on 3.12+, and the interpreter's exit join).
+- Conversation cleanup (added 2026-10-18): call `rse.conversation_memory.cleanup_old_sessions()` once at
+  startup (in a background thread — it is a DB round trip), so message_store keeps only 30 days. Nothing calls
+  it today.
+
+### C8. `wba/regret_system.py` — [ ]
+- `_redis()` sends a PING on every call — one wasted round trip each time.
+
+### C9. Remove `gmail_memory` leftovers (standing goal) — [ ]
+- [x] Legacy fallback in `enp/enrichment_pipeline.py` (2026-10-17).
+- [x] `parse_message_history` in `enp/topic_extractor.py` + its now-unused imports (2026-10-17).
+- [x] Delete `scripts/export_legacy_gmail_threads.py` (2026-10-19; the archive `legacy_gmail_threads.json`, 25 KB,
+      31 Aug, already exists in the project root).
+- **Done when:** `git grep -i gmail_memory` returns only the `.gitignore` line.
+
+### C11. Small follow-ups from `enp/enrichment_pipeline.py` (2026-10-17) — [ ]
+- [ ] `ste/storage_engine.py` `store_youtube_detection` docstring names `enrichment_pipeline._awaiting_hydration`;
+      that check is now SQL inside `fetch_unprocessed_items`. Fix the comment.
+- [x] ~~`scripts/enp_run_once.py`: call `setup_logging()`~~ — moot: script deleted 2026-10-19.
+- [ ] `CleanedContent.snippet` -> `item["content_snippet"]` in `enrichment_pipeline.py` is never read (topic_extractor
+      cuts the text itself, now with `truncate`). Decided at topic_extractor's review: topic_extractor keeps the
+      caps (one place for the token budget) -> drop `snippet` from text_cleaner + `content_snippet` from the pipeline.
+- [ ] `enp/enrichment_pipeline.py` `_fetch_thread_history`: add `AND mi.preprocessed = TRUE` — a failed earlier
+      message has its ERROR TEXT in auto_keywords, which would become thread keywords of the reply.
+
+### C12. `import sentence_transformers` takes 16–23 s on this machine — investigate later — [ ]
+- Measured 2026-10-17 (3 fresh processes, offline model cache): the import line alone took 16–23 s, before any
+  model load. Likely (not profiled yet): mostly PyTorch (`torch`) import, possibly slowed by Windows Defender
+  scanning the .venv's many .dll/.pyd files.
+- Effect: the first embedding after every backend start / ENP script run waits that long (model load itself is
+  now ~0.5 s offline).
+- **To check later:** `python -X importtime -c "import sentence_transformers" 2> importtime.txt` and sort by the
+  cumulative column; then test a Defender exclusion for the .venv folder, and whether an import-time-heavy
+  submodule can be avoided.
+
+### C13. LLM calls have no timeout — `rse/config.py` (+ synthesizer, parse_intent) — [ ]
+- Found 2026-10-17 in `enp/system_group_classifier.py`. Stage 4 now uses LLM_CONFIG's `max_retries` (fail fast),
+  but no call sets a timeout. Likely (openai client default, not checked): 600 s per attempt, so a hung request
+  can stall the ENP thread for many minutes, and a /query for the same.
+- Fix: add `"timeout": <seconds>` to LLM_CONFIG and pass it in every `init_chat_model` (Stage 4, parse_intent,
+  synthesizer). Check each provider class accepts `timeout` (openai / anthropic / google_genai / ollama).
+
+### C14. MiniLM vectors ARE unit-length — the "UNNORMALIZED" notes are wrong — [x] 2026-10-22
+- Found 2026-10-17. The loaded model is Transformer -> Pooling -> **Normalize**; all 110 vectors in the saved FAISS
+  index have norm 1.0. (`normalize_embeddings=False` only skips a SECOND normalization.)
+- Nothing is broken: code that computes true cosine is still correct; for unit vectors L2 order == cosine order,
+  so that extra cosine work is simply unnecessary.
+- Fix the wording in: project `CLAUDE.md` §5 ("FAISS is IndexFlatL2 over UNNORMALIZED MiniLM vectors" — needs your
+  OK, it is the project instructions file), `ste/faiss_manager.py` docstrings, `rse/search_coordinator.py` comments.
+  `enp/embedding_generator.py` already corrected.
+- 2026-10-21: CLAUDE.md §5 wording fixed (his go: "fix it"). Still open: `ste/faiss_manager.py` docstrings + `rse/search_coordinator.py` comments.
+- 2026-10-22: done — `ste/faiss_manager.py` (module + class docstring, `search_all`) and `enp/system_group_classifier.py` `stage3_centroid` now say "unit-length". `rse/search_coordinator.py` needed no change (a search for "unnormali" in ste/, enp/, rse/, wba/, backend/ finds nothing).
+
+### C15. Tier-1 attachment info never reaches search — `enp/enrichment_pipeline.py` + `enp/topic_extractor.py` — [ ]
+- Found 2026-10-17 while reviewing `enp/attachment_processor.py`. Doc §5.4 Tier 1: "Metadata in gmail_attachments
+  table, lightweight_extract text, **embedding in FAISS**". Nothing outside storage reads `gmail_attachments`:
+  filenames are in neither the embedding nor the keyword search, and `is_processed` is never set TRUE.
+- Effect: "the email with the offer letter PDF" is found only if the subject/body mention it.
+- Fix: in `_fetch_gmail_context` also read the attachment filenames; in `build_embeddable_text` (gmail) add them as a
+  short hint (before the body, per A16); set `gmail_attachments.is_processed = TRUE` when marked processed. Then
+  re-embed (B5). Optional: add filenames to the RSE keyword search.
+
+### C16. `enp/centroids.npz` is not git-ignored — `.gitignore` — [x] (2026-10-17)
+- Found 2026-10-17 reviewing `enp/faiss_manager.py`. recompute_centroids saves `enp/centroids.npz` next to the
+  FAISS index. `.gitignore` covers `*.index` and `*.index.meta.json` only, so a recompute followed by `git add -A`
+  would commit vectors derived from your personal data.
+- Fix: add `enp/centroids.npz` (or `*.npz`) to `.gitignore`. Longer term: keep all runtime data out of the source
+  folder (e.g. a `data/` dir), both index and centroids.
+- **Done 2026-10-17 (his request):** index, meta.json and centroids now live in `data_faiss/` at the repo root
+  (`ste.faiss_manager.DEFAULT_INDEX_PATH`), and `data_faiss/` is git-ignored. Existing files moved byte-identical
+  (110 vectors load). `scripts/enp_status.py` now imports the path; `scripts/enp_rebuild_faiss.py` docstring fixed.
+- Left (small): `enp/system_group_classifier.py` `_centroids_path()` uses the DEFAULT folder even when
+  `ECHO_FAISS_INDEX_PATH` points elsewhere — use the manager's `index_path.parent` instead.
+
+### C10. YouTube `seeked` may save every video at 0 s — `extension/content/youtube_tracker.js` — [ ] (verify first)
+- Found 2026-10-17 while reviewing `youtube_connector.py`. Not verified.
+- The tracker treats any `seeked` event as a manual interaction and fires `video-detected` at once.
+- Likely (not tested): YouTube seeks by itself when it resumes a half-watched video or opens a `&t=` link.
+  If so, every such video is saved at 0 s, without real intent.
+- **Check:** set `DEBUG = true`, open a resumed video, see if "intent fired seek" appears with no click.
+- **Fix if true:** count a seek only after a user input event (click/keydown on the player).
+
+### C17. `scope_level` is a dead intent field — `rse/query_parser.py` — [x] (found and done 2026-10-18; removed from prompt, examples, builders and `ParsedIntent`)
+- The parser prompt, examples, `_fallback_intent` and `_normalise_intent` always set `scope_level = 0`; nothing
+  reads it and widen_scope never changes it (widening is tracked by `attempt_count`).
+- Fix when reviewing query_parser.py: drop it from the prompt/examples/builders, then delete the field from
+  `ParsedIntent` in `rse/state.py` (state.py now documents it as unused).
+
+### C18. Unused LLM-memory packages — `requirements.txt` + CLAUDE.md §3 — [ ] (found 2026-10-18, conversation_memory review)
+- `rse/conversation_memory.py` no longer uses LangChain's deprecated `PostgresChatMessageHistory`; it reads and
+  writes `message_store` over the RSE psycopg2 pool (same table, same LangChain message JSON).
+- Nothing else imports `langchain_community` or `psycopg` (v3) → remove `langchain-community==0.4.1` and
+  `psycopg[binary]==3.3.3` from requirements.txt (check `pip check` after uninstalling).
+- Add to CLAUDE.md §3 (deviations): doc §10.7 names PostgresChatMessageHistory; we keep its table format but
+  not the class.
+
+### C19. `POSTGRES_RESULT_LIMIT` is now unused — `rse/config.py` — [x] 2026-10-22 (constant and comment deleted; no `.py` file references it) (found 2026-10-18, search_coordinator review)
+- The keyword branch no longer has a "most recent 1000 items" fallback (it fed RRF a recency-ranked list —
+  recency boosting, a prohibited feature). Delete the constant and its comment from config.py.
+
+### C20. Local-date vs UTC `created_at` in the other time checks — `rse/fusion.py`, `rse/graph_nodes.py` — [x] (found 2026-10-18)
+- `created_at` is naive UTC (`ste/storage_engine._safe_datetime`); parser dates are the user's local dates.
+  search_coordinator now converts with `local_to_utc_naive()`. Do the same where `time_filter` is compared in
+  Python: `fusion.py` (semantic hits vs time_filter, ~line 57) and `graph_nodes.py` evaluate_quality (~line 127).
+  Without it, in IST, items from local midnight to 05:30 are treated as the previous day.
+- [x] `fusion.py` done 2026-10-18. [x] `graph_nodes.py` evaluate_quality done 2026-10-18.
+
+### C21. One shared LLM factory instead of four copies — `rse/llm_factory.py` — [~] (his OK 2026-10-18; created, used by query_parser + llm_synthesizer + wba/insight_generator (2026-10-18); left: ENP Stage 4, and the factory docstring's caller list)
+- The "OpenAI + reasoning_effort → reasoning + Responses API, else temperature" builder now exists in
+  `rse/query_parser.py` and `rse/llm_synthesizer.py`; `enp/system_group_classifier.py` and
+  `wba/insight_generator.py` still build their own (temperature only, no reasoning/Responses wiring).
+- Proposal: `rse/llm_factory.py` with `build_chat_model(model_key, temperature_key) -> chat model` (cached per
+  key), used by all four. New file → needs his OK (structure rule). Otherwise copy the same block into the
+  ENP/WBA callers when they are reviewed.
+
+### C22. `regret_events.marked_at` is LOCAL time, everything else naive UTC — `wba/regret_system.py` — [~] (found 2026-10-18; KEPT LOCAL + documented in regret_system.py and time_aggregator.py during review; revisit with A31)
+- `toggle_regret` inserts `marked_at = datetime.now()` (local, IST); the column default and every other
+  timestamp is `NOW()` = UTC on Neon. `wba/time_aggregator.activity_heatmap` therefore compares `marked_at`
+  with local days directly (commented there).
+- Fix with regret_system: write UTC (`utc_now_naive`) and keep `regret_hour` / `regret_day_of_week` local.
+  Then the heatmap regret query must switch to `local_day_range_utc` + the offset shift, like the activity
+  query, and existing rows need a one-time `- 5:30` repair (new B item, his go + snapshot). Or keep local and
+  document it as the one local-time column.
+
+### C23. Shared WBA helpers are imported by their private names — `wba/time_aggregator.py`, `wba/regret_system.py` — [ ] (found 2026-10-18, wba/pattern_detector.py review)
+- `pattern_detector` imports `time_aggregator._utc_offset_seconds` and `regret_system._CURRENTLY_REGRETTED_CTE` /
+  `_MARK_EVENTS_CTE` (one source of truth instead of copies). Rename them public (`utc_offset_seconds`,
+  `CURRENTLY_REGRETTED_CTE`, `MARK_EVENTS_CTE`) and update the imports. Pure rename, no behaviour change.
+- Also `pattern_detector._standing_marks_sql` (used by `wba/insight_generator.py` for the weekly regret counts).
+
+### C24. Record the session-gap deviation in CLAUDE.md §3 — [x] (2026-10-18; CLAUDE.md is git-ignored, so the bullet is local only) (his decision 2026-10-18, wba/wellbeing_analytics.py review)
+- `SESSION_GAP_MINUTES` 5 → 20 (doc §11.5 says 5). Reason: an item is one point in time (last access), so a
+  15-minute read before the next page looked like a 15-minute gap and split one sitting into two sessions.
+- Add one bullet to CLAUDE.md §3 when the wba/ commit goes in (architecture doc stays untouched).
+- Not affected: `rse/neighborhood.py`'s ±5 min window (a different idea: what else was open around a result).
+
+### C25. DB error messages carry bound values into the logs — `ste/postgresql_manager.py` — [x] 2026-10-22 (`hide_parameters=True` added to `create_engine`) (found 2026-10-19, backend/wellbeing.py review)
+- SQLAlchemy puts the statement's parameters in the exception text ("[parameters: {'note': ...}]"). Every route's
+  `logger.exception` prints that text, so a failed regret toggle would log the user's note; a failed insert, a title.
+- Fix: `create_engine(..., hide_parameters=True)` in `get_engine()`. One line; errors then show the SQL only.
+- psycopg2 (rse/) errors have no parameter dump; their DETAIL line can show key values (UUIDs) — fine.
+
+### C26. Capture settings are logged in full — `ste/settings_store.py` — [x] 2026-10-22 (both log lines now show the three toggles + list lengths) (found 2026-10-19, backend/items.py review)
+- `save_settings` ("Capture settings saved ... : %s", merged) and `_current_settings` ("Capture settings loaded: %s")
+  log the whole dict at INFO, including `excluded_senders` — other people's email addresses — and excluded domains.
+- Fix: log the three toggles plus the list LENGTHS only (e.g. `excluded_senders=3`).
+
+---
+
+### C27. Stale pointers to the scripts deleted on 2026-10-19 — [x] 2026-10-22: all code pointers fixed, plus CLAUDE.md §4 and `AGENTS.md:74` reworded (see "Done 2026-10-22" below); only `build_lld.py:589` (LLD generator) left (found 2026-10-19, scripts/ review)
+- Deleted by his decision: `redis-py.py`, `test_gmail_auth.py`, `test_youtube_auth.py`, `enp_run_once.py`,
+  `enp_reprocess.py`, `enp_rebuild_faiss.py`, `enp_recompute_centroids.py`, `export_legacy_gmail_threads.py`.
+- Text that still names them (fix in the same pass as A36, since A36 decides what the messages should say):
+  - `ste/faiss_manager.py` line 20 (docstring) and the 4 error/log messages at ~399, 417, 430, 443:
+    "Rebuild with scripts/enp_rebuild_faiss.py".
+  - `enp/system_group_classifier.py` lines 23 and 530 (docstrings: "run monthly via scripts/enp_recompute_centroids.py").
+  - `enp/faiss_manager.py` line 8 ("One caller is left: scripts/enp_recompute_centroids.py") -> see C4 step 7.
+  - `enp/enrichment_pipeline.py` line 20 and `enp/embedding_generator.py` line 9.
+  - [x] `scripts/enp_status.py` hints fixed 2026-10-19 (his go): drift hint prints the reset SQL (A36 option 2),
+    retry hint says "restart the backend with ENP_RETRY_FAILED=true" (both work today, whatever A36 decides); also compares FAISS vs embedding_index
+    counts and shows "n/a" when there is no index file. Keeps `print` (standalone script).
+  - [x] `ste/security.py` callers line (fixed 2026-10-19 with the YouTube sign-in change).
+- CLAUDE.md section 4 (local only) lists "monthly centroid recomputation (scripts/enp_recompute_centroids.py)" as built.
+- **Done 2026-10-22:** `ste/faiss_manager.py` — the 4 "rebuild" messages now share one `_REBUILD_HINT` (delete `data_faiss/`
+  files, `UPDATE memory_items SET preprocessed = FALSE`, restart; failed rows also need `ENP_RETRY_FAILED=true`) and the
+  dead script row is gone from the callers list; `enp/enrichment_pipeline.py` retry hint; `enp/embedding_generator.py`
+  callers list; `enp/system_group_classifier.py` (2 places: nothing calls `recompute_centroids` yet, A36 plans a run at
+  ENP start); `enp/faiss_manager.py` (no caller left, delete per C4 step 7).
+- **Also done 2026-10-22:** CLAUDE.md §4 and `AGENTS.md:74` now say `recompute_centroids()` exists but nothing calls it yet (A36 plans a run at ENP start); reword again once A36 is built.
+- **Left:** `docs/Phase III/build/lld/build_lld.py:589` names the deleted script too (it generates the LLD document; not an instruction file, so not touched).
+
+### C28. Gmail sign-in can hang backend shutdown — `ingestion/gmail/router.py` + `backend/main.py` — [ ] (found 2026-10-19, YouTube sign-in change)
+- `authenticate_gmail()` opens the browser sign-in inside an `asyncio.to_thread` worker of the gmail-poller.
+  Cancelling the poller task does not stop that thread. Likely (Python's executor joins its workers at
+  interpreter exit): stopping the backend while the Gmail sign-in tab is still open hangs until the sign-in
+  finishes or the process is killed. Not tested live.
+- **Fix (same as YouTube):** do the Gmail sign-in once at startup on a daemon thread; the poller then only uses
+  the token, never opens the browser. Touches `gmail_api.py`, `router.py`, `main.py`.
+
+### C29. Delete `docs/review/pending_answers_A16_A40_A42_A43.md` — [x] 2026-10-22 (his ask; not in git, so not recoverable)
+- Done: the four decision lines (A16, A40, A42, A43) were reworded without the path, and the brief's build notes,
+  measurements, re-tune table and flags were copied into A16, A40, A42 and A43 before the file was deleted.
+- 2026-10-22: `docs/Timeless_docs/Echo_System_Design.md` line 12 reworded to "measured briefs for A16/A40/A42/A43 are
+  folded into their entries in `ste_open_items.md`" (his standing permission to edit the architecture doc).
+
+## D. Missing-10% — build after the review
+
+### D1. Dispose the DB pool on shutdown — [ ]
+- Backend shutdown never calls `engine.dispose()`; pooled connections wait for Neon's idle timeout.
+
+### D2. Full attachment support — [ ]
+- **Works today:** PDF (pypdf → pdfplumber), DOCX (python-docx), `.txt` / `.md` / `.csv`.
+- **To build:**
+  - [ ] OCR for images (PNG/JPG/…): install the Tesseract binary, enable `pytesseract` in `requirements.txt`.
+  - [ ] Scanned PDFs (no text layer): OCR each page.
+  - [ ] Old `.doc` files (python-docx cannot read them).
+  - [ ] PPTX, XLSX, ODT, RTF, HTML.
+  - [ ] A4 decided 2026-10-21: extract at ingestion into `extracted_text`, merge into embedded text (shared
+        800-char budget) + full text into the tsvector, set `is_processed = TRUE`.
+
+### D4. Sessions are never built — [ ] (found 2026-10-18, wba/wellbeing_analytics.py review)
+- Only `POST /wellbeing/sessions/rebuild` builds sessions, and nothing calls it (no frontend call, no scheduler).
+  So `sessions` stays empty: fragmentation, focus score and session patterns (insights) show nothing.
+- Options: rebuild today's sessions inside `GET /sessions` / `daily_summary` (cheap: one day of items), and past
+  days once when first asked; or a background task in backend/main.py (C7). Before first use, clear any rows
+  built with the old UTC-day logic (`DELETE FROM sessions`, his go).
+
+### D5. No route to pause/resume a group rule — [ ] (found 2026-10-18, wba/group_manager.py review)
+- `group_manager.set_rule_active` exists (DB Table 14: is_active pauses a rule, keeps match history) but no
+  backend route or UI calls it. Also not surfaced: rules with match_count = 0 after 30 days ("dead rules").
+- Build: `PATCH /wellbeing/rules/{rule_id}` {active} + a toggle in the group rules list; or drop from scope.
+
+### D3. Regret reminders are never shown — [ ] (found 2026-10-18, wba/regret_system.py review)
+- `GET /wellbeing/regret/reminder` works (rate limits, cooldown, user's own note) but NO client calls it: the
+  extension and frontend only use the enable/disable setting. Nothing reports `session_minutes` either.
+- The payload offers "Got it / Snooze for today / Disable permanently"; only Disable has a backend route
+  (`POST /regret/reminders/settings`). Snooze-for-today needs a route (e.g. set the per-type day key).
+- Build: extension polls the route during a long Chrome/YouTube session and shows a non-blocking notice; or
+  drop reminders from the final scope and say so (§11.6 marks them optional).
+
+---
+
+## E. Later — after the review AND Step 2 are complete
+
+### E2. Import personal history + an "export my data" option (stretch, from Mon 26 Oct if time permits) — [ ] later (his plan, 2026-10-21)
+- Researched 2026-10-21. Gmail: no export needed (the connector already reads the whole mailbox; add a date cutoff).
+  YouTube: Google Takeout `watch-history.json` (title, video URL, channel, UTC time) + the same Data API fill as
+  live capture; no watch time / completion. Chrome: the profile's local `History` SQLite (`urls` + `visits`:
+  url, title, visit times, `visit_duration`), kept 90 days only; NO page text, scroll, interactions or real dwell.
+- What we GET / DON'T GET / CHANGES, per source:
+  - Gmail — get: everything live capture gets (sender, subject, body, labels, attachments, time). Missing: nothing.
+    Change: date cutoff in `gmail_api.py` (~30 min).
+  - YouTube — get: video id, title, channel, exact time of every watch, watch count; Data API then adds
+    description, duration, category, Short/regular (same as live). Missing: watch time, completion %; the 15 s /
+    20 s gate cannot apply, so every watched video gets in. Change: importer drops ads ("From Google Ads"),
+    removed videos (no titleUrl) and YouTube Music entries; writes NULL watch time / completion (~2-3 h).
+  - Chrome (the profile's local `History` file, not Takeout — Takeout only has Chrome-sync history) — get: URL,
+    title, domain, exact time of every visit, visit count; last 90 days only. Missing: page text (search sees
+    title + URL only), scroll, interactions, real dwell (`visit_duration` = until the tab moved on, not
+    foreground). Change: importer runs live capture's own filters (canonicalize_url, extract_domain, excluded /
+    sensitive domains, app pages, chrome:// URLs) + gate (>= 2 visits or >= 10 s); writes NULL dwell / scroll /
+    interactions (~3 h). Copy the file first (locked while the browser is open). History is per browser
+    PROFILE, not per Google account.
+  - Shared: skip existing rows via UNIQUE(source_type, source_id); explicit NULLs (schema defaults are 0); an
+    `imported` marker column; reranker skips NULL dwell (A29). Total ~1 day incl. ~2 h testing. Start the Takeout
+    early — Google emails the link (minutes to hours).
+  - Build on a separate branch (it lands after the Sun 25 freeze); merge only if it works end to end.
+- Frontend "export my data" button (GET /export already exists). Not in the demo unless fully ready.
+
+### E1. Echo as an MCP server (Claude Desktop or any MCP client) — [x] decided 2026-10-21: IN THIS BUILD (added 2026-10-18, his idea)
+- **Decision (his, 2026-10-21): build it this week** (moved from "later" into the Thu 22 – Sun 25 build).
+  Scope for the build: tools `search_memories` (same contract as A26), `get_memory`, `recent_activity`; stdio
+  transport; Claude Desktop config snippet + an MCP README with the privacy note below. The wellbeing tool set
+  stays optional (only if time permits). Estimate: Likely ~2–3 h.
+- New dependency: the official MCP Python SDK (`pip install mcp`) — not installed in `.venv` (checked
+  2026-10-21); add to requirements.txt at build.
+- Update: deck + paper + design doc move MCP from "future work" into the implementation; CLAUDE.md §4/§1 module
+  list gains the MCP entry point.
+- Expose Echo's deterministic tools over MCP so an outside assistant (Claude Desktop first) does the tool
+  calling itself; its own model replaces Luna's agent loop. Echo stays the engine, the client is the brain.
+- Candidate tools: `search_memories` (same contract as A26), `get_memory` (one item's details / peek card),
+  `recent_activity`; later a second set for digital wellbeing (time patterns, sessions, regret, weekly review —
+  read-only summaries; group decisions stay human-in-the-loop through the existing review flow).
+- Privacy boundary unchanged: tools return snippets and aggregates only, never raw bodies. The client's LLM
+  provider then sees those snippets — call this out in the MCP README.
+- Likely stack: official MCP Python SDK, stdio transport for Claude Desktop, reusing `rse/` and `wba/`
+  functions directly (no HTTP hop). Decide when we get here.

@@ -23,10 +23,6 @@ data_faiss/
 *.index.meta.json
 debug.log
 
-# Tooling / assistant config — local only
-CLAUDE.md
-AGENTS.md
-
 # graphify knowledge-graph cache — regenerated locally, never commit
 graphify-out/
 
@@ -55,9 +51,6 @@ logs/
 *.fls
 *.synctex.gz
 docs/Research Paper/**/*.log
-
-# Review working files: decision log + open items (its own header says "not committed")
-docs/review/
 
 # Analysis of the owner's own writing style (personal working notes for the paper drafts)
 docs/Research Paper/**/STYLE_PROFILE.md
