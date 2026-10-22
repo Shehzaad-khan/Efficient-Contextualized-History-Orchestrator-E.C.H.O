@@ -40,7 +40,7 @@ from urllib.parse import urlparse
 
 import numpy as np
 
-from ste.faiss_manager import DEFAULT_INDEX_PATH, cosine, get_manager
+from ste.faiss_manager import cosine, get_manager
 
 logger = logging.getLogger(__name__)
 
@@ -291,7 +291,7 @@ def _coerce_category_id(value: Any) -> int | None:
 # INIT CENTROIDS
 # -------------------------
 def _centroids_path() -> Path:
-    return Path(DEFAULT_INDEX_PATH).parent / "centroids.npz"
+    return get_manager().index_path.parent / "centroids.npz"
 
 
 def _load_persisted_centroids() -> bool:

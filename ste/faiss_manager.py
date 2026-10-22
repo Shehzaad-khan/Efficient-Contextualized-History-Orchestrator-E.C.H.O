@@ -53,8 +53,6 @@ import os
 import threading
 import time
 from pathlib import Path
-from typing import Iterable
-
 import numpy as np
 
 from ste import postgresql_manager
@@ -335,34 +333,6 @@ class FAISSManager:
                 return None
             return self._buffer[offset].copy()
 
-    def search(
-        self,
-        query_vector: np.ndarray,
-        candidate_ids: Iterable[str],
-        k: int = 20,
-    ) -> list[tuple[str, float]]:
-        """Nearest k among candidate_ids only, as (memory_id, L2 distance), nearest first."""
-        query = self._ensure_vector(query_vector)
-        with self._lock:
-            ordered_ids = [memory_id for memory_id in candidate_ids if memory_id in self.memory_id_to_offset]
-            if not ordered_ids:
-                return []
-            candidate_offsets = [self.memory_id_to_offset[memory_id] for memory_id in ordered_ids]
-            # Fancy indexing returns a copy, so the search below is safe outside the lock.
-            candidate_vectors = np.ascontiguousarray(self.vectors[candidate_offsets])
-
-        temp_index = faiss.IndexFlatL2(self.dimension)
-        temp_index.add(candidate_vectors)
-        limit = min(max(k, 1), len(ordered_ids))
-        distances, indices = temp_index.search(query, limit)
-
-        results: list[tuple[str, float]] = []
-        for distance, idx in zip(distances[0], indices[0]):
-            if idx < 0:
-                continue
-            results.append((ordered_ids[idx], float(distance)))
-        return results
-
     def save_index(self, path: str | Path | None = None) -> Path:
         """Write the index and its metadata atomically (temp file + os.replace each).
 
@@ -494,19 +464,3 @@ def get_manager(index_path: str | Path | None = None) -> FAISSManager:
         return _default_manager
 
 
-def add(memory_id: str, vector: np.ndarray, embeddable_text: str | None = None) -> bool:
-    return get_manager().add(memory_id, vector, embeddable_text=embeddable_text)
-
-
-def search(query_vector: np.ndarray, candidate_ids: Iterable[str], k: int = 20) -> list[tuple[str, float]]:
-    return get_manager().search(query_vector, candidate_ids, k=k)
-
-
-def save_index(path: str | Path | None = None) -> Path:
-    return get_manager(path).save_index(path)
-
-
-def load_index(path: str | Path | None = None) -> FAISSManager:
-    manager = get_manager(path)
-    manager.load_index(path)
-    return manager

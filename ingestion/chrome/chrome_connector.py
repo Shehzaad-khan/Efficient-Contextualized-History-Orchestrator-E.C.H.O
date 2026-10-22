@@ -52,6 +52,24 @@ IGNORED_QUERY_PARAMS = {
     "yclid",
 }
 
+# Query parameters that can carry authentication or session secrets. Strip them
+# before URLs become a memory item's source_id or stored metadata.
+SECRET_QUERY_PARAMS = {
+    "token",
+    "access_token",
+    "id_token",
+    "code",
+    "state",
+    "key",
+    "sig",
+    "signature",
+    "session",
+    "sid",
+    "pwd",
+    "otp",
+    "rlkey",
+}
+
 # Pages that are never captured. Plain substring match on the full URL.
 APPLICATION_PATH_PREFIXES = (
     "github.com/issues",
@@ -109,6 +127,16 @@ def canonicalize_url(raw_url: str) -> str:
     return urlunparse(normalized)
 
 
+def strip_secret_query_params(raw_url: str) -> str:
+    """Remove secret-bearing query keys while preserving other URL parts."""
+    parsed = urlparse(raw_url or "")
+    query = parse_qsl(parsed.query, keep_blank_values=True)
+    clean_query = [(key, value) for key, value in query if key.lower() not in SECRET_QUERY_PARAMS]
+    if len(clean_query) == len(query):
+        return raw_url
+    return urlunparse(parsed._replace(query=urlencode(clean_query, doseq=True)))
+
+
 def extract_domain(raw_url: str) -> str:
     parsed = urlparse(raw_url)
     return (parsed.hostname or "").lower()
@@ -148,14 +176,30 @@ def ingest_chrome_page(payload: ChromeIngestRequest):
     if not settings_store.is_source_enabled("chrome"):
         return _discard("chrome_capture_disabled", payload.domain)
 
+    # Gmail activity is captured through its API and its dedicated tracker,
+    # never as a Chrome page item.
+    if payload.domain == "mail.google.com" or payload.domain.endswith(".mail.google.com"):
+        return _discard("gmail_web_excluded", payload.domain)
+
     if settings_store.is_domain_excluded(payload.domain):
         return _discard("domain_excluded", payload.domain)
 
     if is_skipped_page(payload.url):
         return _discard("application_path_excluded", payload.domain)
 
-    if is_sensitive_page(payload.canonical_url):
+    if is_sensitive_page(payload.url) or is_sensitive_page(payload.canonical_url):
         return _discard("sensitive_page_excluded", payload.domain)
+
+    # Check the original URLs first so sensitive query keys such as password
+    # remain visible to is_sensitive_page; then scrub secrets from both stored
+    # URL fields (including the source_id derived from canonical_url).
+    payload.url = strip_secret_query_params(payload.url)
+    payload.canonical_url = strip_secret_query_params(payload.canonical_url)
+
+    # App pages bypass the regular intent gate, so enforce their minimum
+    # engagement threshold here as a server-side copy of the extension rule.
+    if payload.is_app_page and not intent_filter.phase1_passes(payload.dwell_seconds) and payload.interaction_count == 0:
+        return _discard("app_page_not_engaged", payload.domain)
 
     # §6.2 Phase 1: a page seen for >= 5 s leaves a 24 h revisit flag in Redis,
     # even if Phase 2 then fails — a later return to it counts as a revisit.
@@ -199,7 +243,8 @@ def revisit_check(payload: RevisitCheckRequest):
     """Return whether this URL was seen in the last 24 h, and mark it as seen now.
     If Redis is down, answer False (no revisit signal) instead of failing."""
     try:
-        return {"is_revisit": check_and_record_visit(payload.canonical_url)}
+        # Same stripped URL that /ingest records, or the two Redis keys differ.
+        return {"is_revisit": check_and_record_visit(strip_secret_query_params(payload.canonical_url))}
     except Exception:
         logger.warning("Chrome revisit check failed; answering False", exc_info=True)
         return {"is_revisit": False}

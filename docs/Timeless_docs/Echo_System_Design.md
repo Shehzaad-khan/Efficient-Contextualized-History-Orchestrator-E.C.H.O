@@ -664,7 +664,7 @@ and send only query-matched passages. The query-time download path is no longer 
 
 `enp/enrichment_pipeline.py` (worker loop), `enp/text_cleaner.py`, `enp/topic_extractor.py`, `enp/embedding_generator.py`
 (model load, `HF_HUB_OFFLINE` when cached), `enp/system_group_classifier.py`, `enp/attachment_processor.py`.
-`enp/faiss_manager.py` is a shim with zero callers left; delete it (C4 step 7). Known gap (C4 step 5): ENP builds its own
+The `enp/faiss_manager.py` shim was deleted on 2026-10-22 (C4 step 7). Known gap (C4 step 5): ENP builds its own
 `FAISSManager` instead of the shared `get_manager()`, so the recall engine does not see new vectors until a backend restart.
 
 ## 9. System Group Classification — 4-Stage Pipeline
@@ -1060,7 +1060,7 @@ Values stored lowercase; five rule types (`VALID_RULE_TYPES`):
 | time_window | `YYYY-MM-DD,YYYY-MM-DD`, inclusive, on the item's local created date | `2026-01-01,2026-03-31` |
 
 When 5 or more accepted items share a pattern (`RULE_SUGGESTION_MIN_MATCHES = 5`), the UI offers a rule; the user approves it.
-`match_count` counts matches. Open build item (D5): no route pauses a rule yet (`set_rule_active` exists), and dead rules are not surfaced.
+`match_count` counts matches. `PATCH /wellbeing/groups/{group_id}/rules/{rule_id}` pauses or resumes a rule (D5, built 2026-10-22). Still open: a toggle in the UI, and dead rules are not surfaced.
 
 ### 11.5 Session Computation
 
@@ -1219,7 +1219,7 @@ Likely blocked (inference, not verified); going local removes this — only port
 | Frontend | React, TypeScript, Vite, Tailwind, Framer Motion, GSAP, Lenis, React Router | `^18.3.1`, `~5.6.2`, `^5.4.8`, `^3.4.13`, `^11.11.0`, `^3.12.5`, `^1.1.14`, `^6.26.2` |
 | Extension | Chrome Manifest V3, JavaScript | — |
 
-Packages to remove (C18): `langchain-community`, `psycopg[binary]` — nothing imports them. `passlib` / `pyjwt` belonged to the
+Removed on 2026-10-22 (C18): `langchain-community`, `psycopg[binary]` — nothing imported them. `passlib` / `pyjwt` belonged to the
 deleted auth layer (Likely unused; confirm with grep before removing).
 
 ## 15. Database Schema — Summary
@@ -1489,7 +1489,7 @@ Still open, as build-or-drop items rather than design questions:
 
 | Id | Topic | Where it matters |
 |---|---|---|
-| D3 / D4 / D5 | Build or drop: regret reminders UI, automatic session building, rule pause route | §11.4–§11.6 |
+| D3 / D4 / D5 | Build or drop: regret reminders UI, automatic session building, rule pause toggle in the UI (route done) | §11.4–§11.6 |
 
 **Decided, no build:** A40.2 (keep the cross-encoder model), A41 (Gmail open tracking kept), A43 (user groups stay unlinked).
 
@@ -1748,7 +1748,7 @@ Before first real use, rows built with the old UTC-day logic are cleared (D4 not
 | `group_id` | UUID | NOT NULL, FK CASCADE | |
 | `rule_type` | VARCHAR(30) | NOT NULL | keyword, domain, channel, sender, time_window (checked in code, `VALID_RULE_TYPES`) |
 | `rule_value` | TEXT | NOT NULL | Lowercase |
-| `is_active` | BOOLEAN | TRUE | Pause without losing history (no route yet, D5) |
+| `is_active` | BOOLEAN | TRUE | Pause without losing history (PATCH route built; no UI toggle yet, D5) |
 | `created_at` | TIMESTAMP | `NOW()` | |
 | `match_count` | INTEGER | 0 | Rule usefulness |
 
@@ -2037,6 +2037,6 @@ the project history; "—" where no date was recorded.
 | D2 | decided via A4/A22 | Full attachment support |
 | D3 | open (build or drop) | Show regret reminders; snooze route |
 | D4 | open (build or drop) | Build sessions automatically |
-| D5 | open (build or drop) | Pause/resume a group rule; surface dead rules |
+| D5 | partly done (route built 2026-10-22) | UI toggle to pause/resume a group rule; surface dead rules |
 | E1 | decided 2026-10-21 — in this build | Echo as an MCP server: `search_memories`, `get_memory`, `recent_activity` over stdio (§10.11); wellbeing tools optional |
 | E2 | stretch, from Mon 26 Oct | Import personal history (Takeout, Chrome `History`) and an export button; separate branch |

@@ -87,6 +87,8 @@ whenever a decision or change makes it wrong: edit it directly, no need to ask.
 - **App pages (Slack/Notion/Jira) are stored as per-page memory items** with their tab title and
   `raw_text = NULL` (owner's decision A8, 2026-10-21), not §6.5's "session duration only". Their text is
   never captured; the title is embedded and searchable.
+- **Conversation history keeps the `PostgresChatMessageHistory` table format, not the class.**
+  `rse/conversation_memory.py` reads and writes the `message_store` table directly through the RSE psycopg2 pool.
 - File names differ from the doc's "Key Files" lists in places (e.g. `gmail_api.py`
   instead of `gmail_connector.py`); functionality is what matters.
 

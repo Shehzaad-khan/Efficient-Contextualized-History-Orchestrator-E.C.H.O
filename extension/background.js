@@ -65,8 +65,7 @@ const CHROME_APPLICATION_DOMAINS = [
   "figma.com",
   "linear.app",
   "trello.com",
-  "asana.com",
-  "mail.google.com"
+  "asana.com"
 ];
 
 const CHROME_APPLICATION_PATH_SNIPPETS = ["github.com/issues", "github.com/pulls"];
@@ -148,6 +147,15 @@ function shouldSkipChromeUrl(url, incognito = false) {
   // Only web pages. This also drops chrome://, chrome-extension://, about:,
   // and file:// (local files can be private documents).
   if (!url.startsWith("http://") && !url.startsWith("https://")) {
+    return true;
+  }
+
+  try {
+    const hostname = new URL(url).hostname.toLowerCase();
+    if (hostname === "mail.google.com" || hostname.endsWith(".mail.google.com")) {
+      return true;
+    }
+  } catch (error) {
     return true;
   }
 

@@ -24,6 +24,7 @@ Endpoints (prefix /wellbeing):
         POST /groups/{group_id}/assign         — manual seeding (Phase 1)
         GET  /groups/{group_id}/rules          — list rules
         POST /groups/{group_id}/rules          — add rule
+        PATCH /groups/{group_id}/rules/{rule_id} — pause/resume a rule
         GET  /groups/{group_id}/rule-suggestions — candidate rules from shared patterns (step 9)
         POST /suggestions/{id}/decision        — accept/reject a suggestion
     Regret:
@@ -65,6 +66,7 @@ from wba.group_manager import (
     manual_assign,
     review_queue,
     run_auto_assignment,
+    set_rule_active,
     suggest_rules_for_group,
 )
 from wba.insight_generator import generate_weekly_insight
@@ -113,6 +115,10 @@ class RuleCreateRequest(BaseModel):
     # The allowed types are checked once, in wba.group_manager.add_rule (400).
     rule_type: str = Field(..., description="keyword | domain | channel | sender | time_window")
     rule_value: str = Field(..., min_length=1, max_length=500)
+
+
+class RuleActiveRequest(BaseModel):
+    active: bool
 
 
 class ManualAssignRequest(BaseModel):
@@ -277,6 +283,17 @@ def groups_rules_create(group_id: UUID, request: RuleCreateRequest):
         raise HTTPException(status_code=404, detail="Group not found")
     except Exception:
         raise _server_error("groups rules create")
+
+
+@router.patch("/groups/{group_id}/rules/{rule_id}")
+def groups_rule_set_active(group_id: UUID, rule_id: UUID, request: RuleActiveRequest):
+    try:
+        changed = set_rule_active(str(group_id), str(rule_id), request.active)
+    except Exception:
+        raise _server_error("groups rule active")
+    if not changed:
+        raise HTTPException(status_code=404, detail="Rule not found in group")
+    return {"group_id": str(group_id), "rule_id": str(rule_id), "is_active": request.active}
 
 
 @router.get("/groups/{group_id}/rule-suggestions")

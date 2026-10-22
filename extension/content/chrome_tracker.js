@@ -49,8 +49,7 @@
     "linear.app",
     "trello.com",
     "asana.com",
-    "confluence.atlassian.net",
-    "mail.google.com"
+    "confluence.atlassian.net"
   ];
   const SENSITIVE_PATH_TERMS = new Set([
     "account",

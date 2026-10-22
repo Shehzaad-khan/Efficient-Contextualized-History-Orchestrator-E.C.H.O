@@ -121,9 +121,34 @@ def html_to_text(html: str) -> str:
     return normalize_text(unescape(stripped))
 
 
+def _reply_header_end(lines: list[str], index: int) -> int | None:
+    """Index just after the "On ... wrote:" header that starts at `index`, or None."""
+    stripped = lines[index].strip()
+    if REPLY_HEADER_RE.match(stripped):
+        return index + 1
+    if (
+        REPLY_HEADER_START_RE.match(stripped)
+        and index + 1 < len(lines)
+        and REPLY_HEADER_END_RE.match(lines[index + 1].strip())
+    ):
+        return index + 2
+    return None
+
+
+def _next_reply_header(lines: list[str], start: int) -> int:
+    """Index of the next reply header at or after `start`, or len(lines) if none."""
+    for index in range(start, len(lines)):
+        if _reply_header_end(lines, index) is not None:
+            return index
+    return len(lines)
+
+
 def remove_quoted_replies(text: str) -> str:
-    """Drop "> " quoted lines, and everything from the "On ... wrote:" reply
-    header down (the earlier messages, already stored as their own rows).
+    """Drop quoted lines and the reply header when its block has quote markers.
+
+    Keep unquoted inline answers below an "On ... wrote:" header. A header's
+    block runs to the next reply header (or the end). If no quoted lines are in
+    that block, treat the remainder as an unmarked old thread and cut it as before.
 
     A "Forwarded message" block is kept: its content exists nowhere else.
     """
@@ -132,19 +157,24 @@ def remove_quoted_replies(text: str) -> str:
 
     lines = text.splitlines()
     cleaned_lines: list[str] = []
-    for index, line in enumerate(lines):
-        stripped = line.strip()
-        if stripped.startswith(">"):
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        if line.strip().startswith(">"):
+            index += 1
             continue
-        if REPLY_HEADER_RE.match(stripped):
-            break
-        if (
-            REPLY_HEADER_START_RE.match(stripped)
-            and index + 1 < len(lines)
-            and REPLY_HEADER_END_RE.match(lines[index + 1].strip())
-        ):
-            break
+
+        header_end = _reply_header_end(lines, index)
+        if header_end is not None:
+            block_end = _next_reply_header(lines, header_end)
+            has_quoted_lines = any(candidate.strip().startswith(">") for candidate in lines[header_end:block_end])
+            if not has_quoted_lines:
+                break
+            index = header_end
+            continue
+
         cleaned_lines.append(line)
+        index += 1
     return "\n".join(cleaned_lines)
 
 

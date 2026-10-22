@@ -24,6 +24,7 @@ Logs carry counts, scores and timings only — never the query or item titles.
 """
 import logging
 import math
+from statistics import median
 import threading
 import time
 from typing import Any, Optional
@@ -111,6 +112,26 @@ def compute_effort_score(item: dict[str, Any]) -> float:
     return sum(signals) / len(signals)
 
 
+def _query_effort_scores(candidates: list[dict[str, Any]]) -> list[float]:
+    """Impute zero-dwell Gmail effort from observed Gmail results in this query."""
+    scores = [compute_effort_score(item) for item in candidates]
+    observed_gmail_effort = [
+        score
+        for item, score in zip(candidates, scores)
+        if item.get("source_type") == "gmail" and (item.get("dwell_time_seconds") or 0) > 0
+    ]
+    # With no observed Gmail reading time, use a neutral midpoint; there is no
+    # per-query Gmail median to estimate from in that case.
+    gmail_imputed_effort = median(observed_gmail_effort) if observed_gmail_effort else 0.5
+
+    return [
+        gmail_imputed_effort
+        if item.get("source_type") == "gmail" and (item.get("dwell_time_seconds") or 0) == 0
+        else score
+        for item, score in zip(candidates, scores)
+    ]
+
+
 def _document_text(item: dict[str, Any]) -> str:
     """
     Build the text side of a (query, document) cross-encoder pair.
@@ -151,6 +172,7 @@ def rerank_cross_encoder(state: EchoState) -> dict[str, Any]:
         return {"ranked_results": []}
 
     started = time.perf_counter()
+    effort_scores = _query_effort_scores(candidates)
     ce_probs: Optional[list[float]] = None
     try:
         model = get_cross_encoder()
@@ -164,9 +186,8 @@ def rerank_cross_encoder(state: EchoState) -> dict[str, Any]:
                      type(exc).__name__, exc)
 
     ranked: list[dict[str, Any]] = []
-    for position, item in enumerate(candidates):
+    for position, (item, effort) in enumerate(zip(candidates, effort_scores)):
         entry = dict(item)
-        effort = compute_effort_score(item)
         entry["effort_score"] = effort
         if ce_probs is not None:
             entry["ce_score"] = ce_probs[position]

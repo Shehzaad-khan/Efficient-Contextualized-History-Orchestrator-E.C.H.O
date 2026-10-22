@@ -205,14 +205,12 @@ def list_rules(group_id: str, include_inactive: bool = False) -> list[dict[str, 
     return rows
 
 
-def set_rule_active(rule_id: str, active: bool) -> bool:
+def set_rule_active(group_id: str, rule_id: str, active: bool) -> bool:
     """Pause/resume a rule without deleting it (match history preserved).
-
-    No backend route calls this yet (tracker D5).
     """
     result = postgresql_manager.execute(
-        "UPDATE group_rules SET is_active = :active WHERE rule_id = :rule_id",
-        {"rule_id": rule_id, "active": active},
+        "UPDATE group_rules SET is_active = :active WHERE group_id = :group_id AND rule_id = :rule_id",
+        {"group_id": group_id, "rule_id": rule_id, "active": active},
     )
     return result.rowcount > 0
 

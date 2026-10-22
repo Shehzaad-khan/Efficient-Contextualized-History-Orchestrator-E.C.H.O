@@ -178,11 +178,23 @@ def _upsert_memory_item(
                 UPDATE memory_items
                 SET title = COALESCE(NULLIF(:title, ''), title),
                     raw_text = COALESCE(:raw_text, raw_text),
+                    preprocessed = CASE
+                        WHEN :source_type = 'chrome'
+                             AND :raw_text IS NOT NULL
+                             AND raw_text IS DISTINCT FROM :raw_text
+                        THEN FALSE
+                        ELSE preprocessed
+                    END,
                     last_updated_at = NOW()
                 WHERE memory_id = :memory_id
                 """
             ),
-            {"title": title, "raw_text": raw_text, "memory_id": memory_id},
+            {
+                "title": title,
+                "raw_text": raw_text,
+                "source_type": source_type,
+                "memory_id": memory_id,
+            },
         )
 
     _store_source_metadata(connection, source_type, memory_id, source_id, title, created_at, source_metadata)

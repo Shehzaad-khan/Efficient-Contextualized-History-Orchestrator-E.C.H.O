@@ -68,6 +68,7 @@ Summary: 45 decisions · 5 live-DB repairs · 29 cross-file fixes · 5 build ite
   update branch, Chrome only, set `preprocessed = FALSE` when `raw_text IS DISTINCT FROM` the new text. ENP re-embeds;
   `FAISSManager.add` already replaces in place. Accepted side effects: re-classification (group may change, Stage 4
   may call the LLM once); always-changing pages re-embed on every revisit (small CPU cost).
+- **Built 2026-10-22:** `_upsert_memory_item` update branch sets `preprocessed = FALSE` for Chrome when the new `raw_text` is not NULL and differs from the stored one (`IS DISTINCT FROM`; a SET expression reads the old row). SQL NOT run against Postgres (DB rule). Live check: revisit a Chrome page whose text changed, confirm `preprocessed` flips to FALSE and ENP re-embeds it.
 
 ### A4. Should attachment text be embedded? — [x] decided 2026-10-21
 - **Today:** Tier-2 extracts attachment text only at query time (`enp/attachment_processor.py`); it never
@@ -179,6 +180,7 @@ Still open — decide each:
   item. Also keep the existing query-KEY check in `is_sensitive_page` (`?password=`) in the whole-token rewrite.
   Build order: run `is_sensitive_page` on the URL BEFORE stripping the keys (`chrome_connector.py:157` today),
   or the query-key check never sees them.
+- **A7.3 built 2026-10-22:** `SECRET_QUERY_PARAMS` (the 13 keys above) + `strip_secret_query_params` in `chrome_connector.py`; `is_sensitive_page` runs on `payload.url` AND `payload.canonical_url` first, then both are stripped. Checked on 10 inputs (token / TOKEN / only-secret keys / no change / fragment kept / empty / None / `keyword` kept while `key` goes / `password=` still caught by the sensitive check). Gap found and fixed 2026-10-22: `/chrome/revisit-check` got the extension's raw `canonical_url`, so for a URL with a secret key its Redis key (a sha256 hash, so no raw URL was ever stored) differed from the stripped one `record_visit` writes and the revisit was missed. `revisit_check` now strips first (checked: same key). A7.1, A7.2, A7.4 are NOT built yet.
 - **A7.4 decided 2026-10-21: option a, with the count raised (his ask) to 3.** In `chrome_tracker.js`
   `hasPrivateFormSurface`: (1) a VISIBLE password box → private; (2) 3+ visible email/tel boxes in the same
   `<form>` → private; (3) `type=number` ignored; (4) the 5-field rule counts visible fields only. Hidden sign-in
@@ -200,6 +202,7 @@ Still open — decide each:
   `rse/llm_synthesizer.py` send app-page items as "<app> page" instead of their title.
 - **A8.2 decided 2026-10-21: the server enforces it too** — in `chrome_connector.py`, discard an app page with
   `dwell_seconds < 5` and `interaction_count == 0`. Add this second copy of the 5 s value to A39's timing list.
+- **Built 2026-10-22:** `chrome_connector.py` discards an app page with `dwell_seconds < 5` and `interaction_count == 0` (reason `app_page_not_engaged`). The 5 s test now calls `intent_filter.phase1_passes` instead of a literal 5 (2026-10-22). Still add the extension's copy to A39's list.
 - **Decision:** A8 fully decided 2026-10-21 (A8.1 keep items + titles as a deviation; A8.2 server minimum).
 
 ### A9. Which domains count as "application pages" — [x] decided 2026-10-21 (found 2026-10-17, `intent_filter.py`) — DISCUSS AT THE END
@@ -234,6 +237,7 @@ Still open — decide each:
   edit it, and have the extension fetch it (one copy instead of three).
 - **A9.1 decided 2026-10-21: skip Gmail web** — `mail.google.com` skipped in Chrome capture (`background.js`
   `shouldSkipChromeUrl` + the same server check); remove it from the app-domain lists. Gmail comes from its API.
+  - **Built 2026-10-22:** removed from the 3 app-domain lists (`background.js`, `chrome_tracker.js`, `intent_filter.py`); `shouldSkipChromeUrl` (host or `.mail.google.com`; a URL that fails to parse is skipped) and the server route (`gmail_web_excluded`) skip it. Read from the diff, JS not run in a browser. NOT done yet (A9.4): `confluence.atlassian.net` is still in `chrome_tracker.js` and `intent_filter.py`.
 - **A9.2 decided 2026-10-21: c, keep as is** (his words: "if it causes issues we will see that time"). Claude flagged
   the demo risk (the dashboard page with Luna's answer gets stored and can outrank the real source). Zero-code
   fallback if it shows up: add `localhost` in Settings → excluded domains (`settings_store.is_domain_excluded`,
@@ -353,6 +357,7 @@ Still open — decide each:
   (`enp/text_cleaner.py`): below the "On … wrote:" header, drop the header and "> " lines and keep unquoted lines,
   ONLY when that part has at least one "> " line; with none (old thread unmarked, e.g. HTML-converted) cut as
   today. ~30 min. Cases: inline answers kept; normal "> " reply cut; unmarked old thread cut.
+  - **Built 2026-10-22:** `remove_quoted_replies` rewritten (header + `> ` lines dropped, unquoted lines kept when a `> ` line follows; none follows -> cut from the header). Checked on 9 inputs (inline answers, normal reply, unmarked thread, two-line header, forward, empty, no header, header as last line, two headers). Gap found and fixed 2026-10-22: the `> ` test looked at ALL lines after the header; it now looks only at that header's block (up to the next reply header). "Hi / header / old1 / header / > older" returned "Hi / old1", now returns "Hi" (10 inputs checked).
 
 ### A15. YouTube descriptions are embedded uncleaned — [x] decided 2026-10-21 (found 2026-10-17) — DISCUSS AT THE END
 - `clean_youtube_text` only joins and normalizes. Descriptions often carry links, sponsor blocks, "subscribe"
@@ -751,6 +756,7 @@ Still open — decide each:
   the Gmail items in the same result list (computed per query in `rse/reranker.py`, no storage); mails with real
   reading time, Chrome and YouTube score exactly as today. "Read on phone" and "never opened" both land in the
   middle (cannot be told apart). ~30 min.
+- **Built 2026-10-22:** `_query_effort_scores` in `rse/reranker.py`. The median is taken over Gmail items WITH real reading time (> 0 s) in the same list; with none, 0.5. Reason: a median that counts the zero-dwell mails would be 0 when most mails are unopened, which is the problem this decision fixes. Checked on 7 inputs (zero and None dwell, real dwell unchanged, Chrome unchanged, no opened Gmail -> 0.5, empty list, YouTube unchanged, input not mutated). Reviewed again 2026-10-22, no change: a literal median over all Gmail items is 0.0 when most mails are unopened (checked: 3 unopened + 1 opened), which would undo the decision, so this rule stays.
 
 ### A30. Wellbeing time lands on the LAST-opened day — [x] decided 2026-10-21 via A1.1b (his pick: b) (found 2026-10-18, wba/time_aggregator.py review) — DISCUSS AT THE END
 - `memory_engagement` keeps one running total per item (not one row per visit). §11.2 attributes that whole
@@ -1282,7 +1288,7 @@ Still open — decide each:
   4. [x] `enp/system_group_classifier.py` → `get_vector` (2026-10-17; also imports `ste.faiss_manager` directly).
   5. [ ] `enp/enrichment_pipeline.py` → use `get_manager()`.
   6. [ ] Make `index` / `vectors` / `memory_ids` private in `ste/faiss_manager.py`.
-  7. [ ] (2026-10-17: shim now exports only `get_manager`, its last use.) Delete the `enp/faiss_manager.py` shim and the dead module-level `add/search/save_index/load_index`
+  7. [x] 2026-10-22 shim `enp/faiss_manager.py` deleted; module-level `add/search/save_index/load_index` and `FAISSManager.search(candidate_ids)` removed (grep: no caller; `search_all` untouched; compileall clean). (2026-10-17: shim now exports only `get_manager`, its last use.) Delete the `enp/faiss_manager.py` shim and the dead module-level `add/search/save_index/load_index`
          + `FAISSManager.search(candidate_ids)`. Point `system_group_classifier` at `ste.faiss_manager`.
          (2026-10-19: `scripts/enp_recompute_centroids.py`, the shim's last caller, was deleted -> the shim has
          ZERO callers now; delete it.)
@@ -1384,6 +1390,7 @@ Still open — decide each:
   (110 vectors load). `scripts/enp_status.py` now imports the path; `scripts/enp_rebuild_faiss.py` docstring fixed.
 - Left (small): `enp/system_group_classifier.py` `_centroids_path()` uses the DEFAULT folder even when
   `ECHO_FAISS_INDEX_PATH` points elsewhere — use the manager's `index_path.parent` instead.
+- **Left item done 2026-10-22:** `_centroids_path()` is now `get_manager().index_path.parent / "centroids.npz"`; the unused `DEFAULT_INDEX_PATH` import is gone. Note: the path call now loads the FAISS index first, so a broken index raises there.
 
 ### C10. YouTube `seeked` may save every video at 0 s — `extension/content/youtube_tracker.js` — [ ] (verify first)
 - Found 2026-10-17 while reviewing `youtube_connector.py`. Not verified.
@@ -1399,13 +1406,14 @@ Still open — decide each:
 - Fix when reviewing query_parser.py: drop it from the prompt/examples/builders, then delete the field from
   `ParsedIntent` in `rse/state.py` (state.py now documents it as unused).
 
-### C18. Unused LLM-memory packages — `requirements.txt` + CLAUDE.md §3 — [ ] (found 2026-10-18, conversation_memory review)
+### C18. Unused LLM-memory packages — `requirements.txt` + CLAUDE.md §3 — [x] 2026-10-22 (found 2026-10-18, conversation_memory review)
 - `rse/conversation_memory.py` no longer uses LangChain's deprecated `PostgresChatMessageHistory`; it reads and
   writes `message_store` over the RSE psycopg2 pool (same table, same LangChain message JSON).
 - Nothing else imports `langchain_community` or `psycopg` (v3) → remove `langchain-community==0.4.1` and
   `psycopg[binary]==3.3.3` from requirements.txt (check `pip check` after uninstalling).
 - Add to CLAUDE.md §3 (deviations): doc §10.7 names PostgresChatMessageHistory; we keep its table format but
   not the class.
+- **Done 2026-10-22:** both pins removed from `requirements.txt`; no `.py` file imports `langchain_community` or psycopg v3 (grep). CLAUDE.md §3 bullet added. Left: `pip uninstall` of the two in `.venv` + `pip check` (installed copies remain).
 
 ### C19. `POSTGRES_RESULT_LIMIT` is now unused — `rse/config.py` — [x] 2026-10-22 (constant and comment deleted; no `.py` file references it) (found 2026-10-18, search_coordinator review)
 - The keyword branch no longer has a "most recent 1000 items" fallback (it fed RRF a recency-ranked list —
@@ -1518,10 +1526,11 @@ Still open — decide each:
   days once when first asked; or a background task in backend/main.py (C7). Before first use, clear any rows
   built with the old UTC-day logic (`DELETE FROM sessions`, his go).
 
-### D5. No route to pause/resume a group rule — [ ] (found 2026-10-18, wba/group_manager.py review)
+### D5. No route to pause/resume a group rule — [~] 2026-10-22 route built; UI toggle + dead rules open (found 2026-10-18, wba/group_manager.py review)
 - `group_manager.set_rule_active` exists (DB Table 14: is_active pauses a rule, keeps match history) but no
   backend route or UI calls it. Also not surfaced: rules with match_count = 0 after 30 days ("dead rules").
 - Build: `PATCH /wellbeing/rules/{rule_id}` {active} + a toggle in the group rules list; or drop from scope.
+- **Built 2026-10-22:** `PATCH /wellbeing/groups/{group_id}/rules/{rule_id}` body `{"active": bool}`; 404 when the rule is not in that group. `set_rule_active(group_id, rule_id, active)` now also checks the group (its only caller is this route). Route is registered (router routes listed). SQL NOT run against Postgres. Left: the toggle in the UI; surfacing dead rules (match_count = 0 after 30 days).
 
 ### D3. Regret reminders are never shown — [ ] (found 2026-10-18, wba/regret_system.py review)
 - `GET /wellbeing/regret/reminder` works (rate limits, cooldown, user's own note) but NO client calls it: the
