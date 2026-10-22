@@ -1,0 +1,22 @@
+%%{init: {"flowchart": {"curve": "basis", "nodeSpacing": 34, "rankSpacing": 46, "subGraphTitleMargin": {"top": 10, "bottom": 20}}}}%%
+flowchart LR
+  Q["Question<br/>+ earlier turns"] --> A{{"Luna agent<br/>LLM call"}}
+  A -- "search_memories(query,<br/>sources, time_phrase,<br/>sender_or_domain)" --> TA
+
+  subgraph TOOL["search_memories — deterministic Python, no LLM"]
+    direction LR
+    TA["time_phrase<br/>→ dates"] --> KW["Keyword<br/>PostgreSQL<br/>full text"]
+    TA --> SEM["Semantic<br/>FAISS"]
+    KW --> RRF["RRF merge<br/>Σ 1/(60 + rank)"]
+    SEM --> RRF
+    RRF --> CE["Rerank<br/>0.8 · cross-encoder<br/>+ 0.2 · effort"]
+    CE --> NB["+ neighbours<br/>thread · ±5 min"]
+  end
+
+  NB -- "numbered<br/>snippets" --> A
+  A -- "enough<br/>evidence" --> ANS["Chat answer<br/>+ memory pills"]
+
+  classDef llm fill:#FFF1EE,stroke:#E0301E,color:#7A1A10,stroke-width:2px;
+  classDef out fill:#E6F5EC,stroke:#1F8A4C,color:#0F4D2A,stroke-width:2px;
+  class A llm;
+  class ANS out;

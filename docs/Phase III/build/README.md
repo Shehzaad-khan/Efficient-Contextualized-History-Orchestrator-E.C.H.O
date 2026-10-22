@@ -36,6 +36,22 @@ python "docs\Phase III\build\diagrams\render_mermaid.py" "docs\Phase III\build\d
   (`pdf_embedded_image`). If that PDF changes, update the sizes.
 - Close the deck in PowerPoint before rebuilding. Saving over an open file fails.
 
+# Review 3 deck build
+
+Builds `../ECHO_Phase3_Review3.pptx` from the official Review 3 template (`TEMPLATE` constant in
+`build_deck_r3.py`). `build_deck.py` and the Review 2 outputs are untouched. Content, sources, placeholders and the
+diagram audit are in `r3/approved_content_r3.md`.
+
+```powershell
+python "docs\Phase III\build\build_deck_r3.py"                       # also regenerates r3/backgrounds + r3/assets
+python "docs\Phase III\build\build_deck_r3.py" "$env:TEMP\r3.pptx"   # deck open in PowerPoint
+```
+- Template slides are kept in order; their instruction boxes are removed. Extra section slides clone the section's
+  own title and rule (snapshotted before anything is drawn).
+- Backgrounds are set as slide backgrounds (`p:bg`), so the master's PES logo stays on top.
+- `EMBEDDING_MODEL` and `INCLUDE_GUIDE_APPROVAL_SLIDE` are one-line switches at the top of the script.
+- `render_pptx.ps1` cannot open the template's en-dash file name; render the ASCII-named output, or a copy.
+
 # Review 2 LLD document build
 
 Rebuilds `../ECHO_Phase3_Review2_LLD.docx` (Low Level Design & Implementation Document) from the official template

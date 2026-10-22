@@ -43,7 +43,7 @@ Echo finds the interview email, resolves its timestamp as a hard time anchor, re
               clean → classify (4-stage) → embed → index
                               │
                               ▼
-              LangGraph Retrieval Engine (exactly 2 LLM calls):
+              LangGraph Retrieval Engine (usually 2 LLM calls, max 6):
               parse_intent → time anchor → [keyword ∥ semantic] → RRF
               → quality gate → (widen ≤3×) → cross-encoder re-rank
               → neighborhood context → attachments / live poll → synthesize
@@ -68,7 +68,7 @@ Echo finds the interview email, resolves its timestamp as a hard time anchor, re
 | `backend/` | **UIL** | FastAPI gateway (`main.py`) — all routers, data export/deletion/settings |
 | `frontend/` | **UIL** | React + TypeScript dashboard: Recall |
 | `scripts/` | — | DB setup, ENP maintenance (rebuild FAISS, recompute centroids) |
-| `docs/Timeless_docs/` | — | **Architecture & DB design documents — the source of truth** |
+| `docs/Timeless_docs/` | — | **`Echo_System_Design.md` — architecture + DB design, the source of truth** |
 
 ---
 
@@ -86,7 +86,7 @@ cd frontend && npm install && npm run dev
 # 3. Extension: chrome://extensions → Developer mode → Load unpacked → extension/
 ```
 
-Configuration via `.env`: `DATABASE_URL` (PostgreSQL), `REDIS_URL`/`UPSTASH_REDIS_URL`, plus the LLM provider key set in `rse/config.py` (plug-and-play: Anthropic / Google / Ollama — one line to switch). `credentials.json` supplies Google OAuth; tokens are stored encrypted.
+Configuration via `.env`: `DATABASE_URL` (local PostgreSQL), `REDIS_URL` (local Redis), plus the key for the LLM provider set in `rse/config.py` `LLM_CONFIG` (OpenAI today; plug-and-play — one place to switch). `credentials.json` supplies Google OAuth; the tokens are plain local files (`token_gmail.json`, `token_youtube.json`, decision A35).
 
 The frontend runs without the backend too — it flips into a clearly-badged **demo mode** with seeded data, useful for demos.
 
@@ -94,7 +94,7 @@ The frontend runs without the backend too — it flips into a clearly-badged **d
 
 ## Design Decisions Worth Knowing
 
-- **Exactly 2 LLM calls per query** — intent parsing and answer synthesis. Every retrieval step between them is deterministic, inspectable Python.
+- **Usually 2 LLM calls per query, max 6** — the LLM may call a `search_memories` tool for up to 5 rounds, then must answer (decision A26). The search itself is deterministic, inspectable Python.
 - **Rank fusion, not score fusion** — `ts_rank` and cosine similarity live on incomparable scales; RRF (k=60) merges by rank.
 - **Everything rebuildable but PostgreSQL** — FAISS and Redis can be regenerated from it at any time.
 
@@ -104,11 +104,11 @@ The frontend runs without the backend too — it flips into a clearly-badged **d
 
 **Backend:** Python 3.10+ · FastAPI · SQLAlchemy · LangGraph / LangChain · sentence-transformers (all-MiniLM-L6-v2, 384-dim) · cross-encoder (ms-marco-MiniLM-L-6-v2) · pypdf / pdfplumber / python-docx
 
-**Storage:** PostgreSQL 15+ (Neon in dev) · FAISS (local) · Redis 7 (Upstash in dev)
+**Storage:** PostgreSQL 16 (local Windows service) · FAISS (local) · Redis (local, in WSL Ubuntu) — fully local since decision A31; Neon and Upstash are no longer used
 
 **Frontend:** React 18 + TypeScript + Vite · Tailwind (custom token system) · Framer Motion + GSAP + Lenis · Chrome Extension (Manifest V3)
 
-**LLM:** Claude Haiku / Gemini Flash / Ollama — plug-and-play via one config change
+**LLM:** OpenAI GPT-5.6 Luna on the Responses API, via LangChain (decision A25) — plug-and-play via `rse/config.py` `LLM_CONFIG`
 
 ---
 
