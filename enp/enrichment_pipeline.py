@@ -17,8 +17,8 @@ worker turns those rows into searchable memories:
   9. mark_item_processed       system group, keywords, preprocessed = TRUE
 
 A row that fails at any step is marked classified_by = 'failed' and is skipped
-by later batches (set ENP_RETRY_FAILED=true, or scripts/enp_run_once.py
---retry-failed, to try them again).
+by later batches (restart the backend with ENP_RETRY_FAILED=true to try them
+again).
 
 Threading: run_pipeline is blocking. backend/main.py runs it in a worker
 thread named 'enp-worker', so nothing here touches the event loop. Pass a

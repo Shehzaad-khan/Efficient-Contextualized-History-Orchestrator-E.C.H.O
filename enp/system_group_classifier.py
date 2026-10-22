@@ -20,8 +20,8 @@ Caller: enrichment_pipeline.classify_item -> classify_system_group(item, embeddi
 Centroids (CENTROIDS):
   - initialize_centroids (ENP start): embed the 5 SEED_TEXTS, then override them
     with data/.../centroids.npz when a recompute has saved one.
-  - recompute_centroids (scripts/enp_recompute_centroids.py, run monthly by
-    hand): per category, the mean stored FAISS vector of items classified
+  - recompute_centroids (nothing calls it today; decision A36: run it at ENP
+    start when centroids.npz is missing or > 30 days old): per category, the mean stored FAISS vector of items classified
     'structural', 'user_override' or 'llm' (needs >= 10 such items), saved
     to centroids.npz. The ENP thread picks it up on its next start.
 
@@ -396,7 +396,7 @@ def stage2_domain_lookup(item: Dict[str, Any]):
 # STAGE 3
 # -------------------------
 def stage3_centroid(embedding):
-    """Nearest centroid by true cosine (vectors are unnormalized), only when
+    """Nearest centroid by true cosine (vectors are unit-length), only when
     the best score is high enough AND clearly ahead of the runner-up."""
     if embedding is None or len(CENTROIDS) < 2:
         return None
@@ -527,9 +527,10 @@ def recompute_centroids() -> Dict[str, int]:
     architecture also feeds back into the monthly recomputation, doc §9.4).
 
     A category keeps its current centroid until it has at least 10 confirmed
-    items. Intended to run monthly via scripts/enp_recompute_centroids.py —
-    passive learning, no retraining. Expects the shared FAISS manager to be
-    loaded (the script does that) and initialize_centroids() to have run.
+    items. Nothing calls it yet; decision A36 is to run it inside the ENP worker
+    at start when centroids.npz is missing or > 30 days old — passive learning,
+    no retraining. Expects the shared FAISS manager to be loaded and
+    initialize_centroids() to have run.
 
     Returns:
         {category: confirmed_item_count} for every category that was updated.

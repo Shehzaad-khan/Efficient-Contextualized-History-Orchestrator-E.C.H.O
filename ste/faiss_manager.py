@@ -3,7 +3,7 @@ faiss_manager.py — STE Module
 Echo Personal Memory System
 
 The semantic index (architecture §8 STE, DB design `embedding_index`):
-a FAISS IndexFlatL2 over UNNORMALIZED all-MiniLM-L6-v2 vectors (384-d),
+a FAISS IndexFlatL2 over unit-length all-MiniLM-L6-v2 vectors (384-d),
 mirrored by a numpy cache, plus one `embedding_index` row per vector in
 PostgreSQL. L2 distance is not cosine similarity — anything that needs a
 similarity score must compute true cosine from the vectors (cosine()).
@@ -17,7 +17,6 @@ ECHO_FAISS_INDEX_PATH to use another location.
 Callers:
     Writes   enp/enrichment_pipeline.py   its OWN FAISSManager (ENP thread):
                                           add() per item, save_index() per batch
-             scripts/enp_rebuild_faiss.py its own instance, separate process
     Reads    get_manager() — the shared process-wide instance:
              rse/search_coordinator.py    full-index search (request threads)
              rse/time_anchor.py           nearest item for an anchor phrase
@@ -81,6 +80,15 @@ INITIAL_CAPACITY = 256
 # .gitignore rules already cover a temp file left behind by a crash.
 _TEMP_MARKER = ".tmp"
 
+# Shown wherever the index cannot be trusted. There is no rebuild script: with
+# the files gone, load_index() starts empty and ENP re-embeds every row it sees
+# as unprocessed.
+_REBUILD_HINT = (
+    "To rebuild: stop the backend, delete the files in data_faiss/, run "
+    "UPDATE memory_items SET preprocessed = FALSE, then restart the backend "
+    "(ENP re-embeds every row; rows marked 'failed' also need ENP_RETRY_FAILED=true)."
+)
+
 _UPSERT_EMBEDDING_ROW_SQL = """
     INSERT INTO embedding_index (
         memory_id,
@@ -119,7 +127,7 @@ def cosine(a: np.ndarray, b: np.ndarray) -> float:
 
 class FAISSManager:
     """
-    IndexFlatL2 over UNNORMALIZED MiniLM vectors, mirrored by a numpy cache.
+    IndexFlatL2 over unit-length MiniLM vectors, mirrored by a numpy cache.
 
     The numpy cache (``vectors``) is the source of truth; ``index`` is derived
     from it and kept in sync incrementally:
@@ -299,7 +307,7 @@ class FAISSManager:
         """Nearest k items over the WHOLE index, as (memory_id, cosine), best first.
 
         FAISS ranks by L2 distance; the returned score is true cosine similarity
-        (vectors are unnormalized), and the list is re-sorted by it.
+        (vectors are unit-length), and the list is re-sorted by it.
         """
         query = self._ensure_vector(query_vector)
         with self._lock:
@@ -396,7 +404,7 @@ class FAISSManager:
         Neither file exists -> start empty (first run).
         Only one exists, or they disagree -> raise ValueError. Starting empty
         there would let the next save_index() overwrite the surviving vectors.
-        Rebuild with scripts/enp_rebuild_faiss.py.
+        The error message carries the rebuild steps (_REBUILD_HINT).
         """
         started_at = time.perf_counter()
         target = Path(path or self.index_path)
@@ -414,7 +422,7 @@ class FAISSManager:
                 raise ValueError(
                     f"FAISS files incomplete: {target.name} exists={index_exists}, "
                     f"{metadata_path.name} exists={metadata_exists}. "
-                    "Rebuild with scripts/enp_rebuild_faiss.py."
+                    + _REBUILD_HINT
                 )
 
             metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
@@ -426,10 +434,10 @@ class FAISSManager:
             if stored_version != self.embedding_version:
                 # Vectors from another model are not comparable with new ones.
                 logger.warning(
-                    "FAISS index was built with embedding_version=%s, current is %s — "
-                    "rebuild with scripts/enp_rebuild_faiss.py",
+                    "FAISS index was built with embedding_version=%s, current is %s. %s",
                     stored_version,
                     self.embedding_version,
+                    _REBUILD_HINT,
                 )
 
             index = faiss.read_index(str(target))
@@ -440,7 +448,7 @@ class FAISSManager:
                 raise ValueError(
                     f"FAISS index/vector metadata mismatch: index has {index.ntotal} vectors, "
                     f"metadata has {len(memory_ids)} memory_ids. "
-                    "Rebuild with scripts/enp_rebuild_faiss.py."
+                    + _REBUILD_HINT
                 )
 
             self._index = index

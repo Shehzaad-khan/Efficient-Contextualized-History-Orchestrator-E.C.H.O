@@ -96,9 +96,7 @@ def cleanup_old_sessions() -> int:
     """
     Delete message_store rows older than CONVERSATION_HISTORY_DAYS days.
 
-    Not called anywhere yet — meant to run periodically (backend startup or a
-    daily job) so the table does not grow forever; wiring tracked in the
-    backend/main.py review (C7).
+    Called once at backend startup so the table does not grow forever.
 
     Returns:
         Number of rows deleted, or -1 on error.

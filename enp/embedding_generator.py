@@ -6,7 +6,6 @@ Callers:
   enp/enrichment_pipeline.py      item embeddings (ENP thread), centroid seeds
   rse/search_coordinator.py       query variants  (FastAPI threadpool, per request)
   rse/time_anchor.py              anchor query    (FastAPI threadpool, per request)
-  scripts/enp_rebuild_faiss.py, enp_recompute_centroids.py, enp_run_once.py
 
 One shared SentenceTransformer per process, loaded on first use (~1-3 s).
 
@@ -24,7 +23,7 @@ layer, so normalize_embeddings=False changes nothing. Checked 2026-10-17: the
 loaded model is Transformer -> Pooling -> Normalize, and all 110 vectors in the
 saved FAISS index have norm 1.0. For unit vectors, L2 order equals cosine order;
 the cosine that ste/faiss_manager.py computes is therefore correct, just no
-longer necessary (CLAUDE.md's "UNNORMALIZED" note is out of date, tracker C14).
+longer necessary for ranking.
 Changing the model or normalization requires a new
 ste.faiss_manager.EMBEDDING_VERSION and a full re-embed.
 

@@ -132,7 +132,15 @@ def _current_settings(use_cache: bool) -> dict[str, Any]:
 
     if read_ok and settings != previous:
         # First load, or changed from outside this process (e.g. another backend).
-        logger.info("Capture settings loaded: %s", settings)
+        logger.info(
+            "Capture settings loaded (gmail=%s, chrome=%s, youtube=%s, "
+            "excluded_domains=%d, excluded_senders=%d)",
+            settings["gmail_enabled"],
+            settings["chrome_enabled"],
+            settings["youtube_enabled"],
+            len(settings["excluded_domains"]),
+            len(settings["excluded_senders"]),
+        )
     return settings
 
 
@@ -167,7 +175,16 @@ def save_settings(updates: dict[str, Any]) -> dict[str, Any]:
             _cache = merged
             _cache_loaded_at = time.monotonic()
 
-    logger.info("Capture settings saved (changed keys: %s): %s", sorted(updates), merged)
+    logger.info(
+        "Capture settings saved (changed keys: %s; gmail=%s, chrome=%s, "
+        "youtube=%s, excluded_domains=%d, excluded_senders=%d)",
+        sorted(updates),
+        merged["gmail_enabled"],
+        merged["chrome_enabled"],
+        merged["youtube_enabled"],
+        len(merged["excluded_domains"]),
+        len(merged["excluded_senders"]),
+    )
     return copy.deepcopy(merged)
 
 

@@ -16,9 +16,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-# Load .env as soon as the Gmail package is imported. backend/main.py imports
-# this package before its own load_dotenv() call runs (tracked as C7), so
-# without this, DATABASE_URL / REDIS_URL could be unset at import time.
+# Load .env when the Gmail package is imported so its configuration is available
+# even when the connector is used outside the backend entry point.
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 load_dotenv(PROJECT_ROOT / ".env")
 

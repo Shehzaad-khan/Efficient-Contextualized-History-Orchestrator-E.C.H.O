@@ -66,10 +66,6 @@ PG_KEYWORD_LIMIT = 200
 FAISS_TOP_K_PER_VARIANT = 30
 # Multiplier applied to FAISS k when widen_scope sets full_faiss_scan (attempt 3).
 FULL_SCAN_K_MULTIPLIER = 3
-# Row cap for the keyword branch's fallback query: no keyword filter, newest
-# first. Used on widen attempt 3 (skip_postgres_filter) or when the query has
-# no usable keyword.
-POSTGRES_RESULT_LIMIT = 1000
 # Reciprocal Rank Fusion constant: score = Σ 1 / (RRF_K + rank).
 RRF_K = 60
 # Fused candidates kept after merge_and_rrf — this pool feeds the cross-encoder.

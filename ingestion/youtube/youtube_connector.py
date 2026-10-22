@@ -50,10 +50,6 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/ytc", tags=["YouTube Connector"])
 
-# Dead: nothing in this file reads it. backend/main.py still sets and closes it
-# at startup/shutdown — remove both together (tracker item C7).
-redis_client: Optional[object] = None
-
 
 class VideoDetectedEvent(BaseModel):
     url: str
