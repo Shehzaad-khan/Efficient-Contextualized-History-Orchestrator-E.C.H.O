@@ -83,6 +83,7 @@ from wba.regret_system import (
 from wba.time_aggregator import activity_heatmap, recent_items
 from wba.wellbeing_analytics import (
     daily_summary,
+    ensure_sessions_for_day,
     fragmentation_for_day,
     rebuild_sessions_for_day,
     sessions_for_day,
@@ -184,6 +185,7 @@ def sessions_rebuild(day: Optional[date] = Query(None, description="Defaults to 
 def sessions(day: Optional[date] = Query(None, description="Defaults to today")):
     try:
         target = day or date.today()
+        ensure_sessions_for_day(target)
         return {
             "day": target.isoformat(),
             "sessions": sessions_for_day(target),

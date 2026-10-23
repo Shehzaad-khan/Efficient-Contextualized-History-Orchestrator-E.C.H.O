@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Echo</title>
+  <style>
+    :root {
+      --night-950: #100d0a;
+      --night-850: #1e1915;
+      --night-700: #38302a;
+      --ink: #efe6d8;
+      --ink-mute: #998e7d;
+      --ember: #f5a947;
+      --ember-deep: #d98324;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      width: 260px;
+      background: radial-gradient(120% 80% at 50% 0%, var(--night-850) 0%, var(--night-950) 70%);
+      color: var(--ink);
+      font: 13px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+    }
+
+    .wrap { padding: 14px; }
+
+    /* ── Header ── */
+    header {
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .brand {
+      font-family: Georgia, "Times New Roman", serif;
+      font-style: italic; font-size: 17px; letter-spacing: 0.02em;
+      color: var(--ink);
+    }
+    .brand::after {
+      content: ""; display: inline-block; width: 5px; height: 5px;
+      margin-left: 6px; border-radius: 50%; background: var(--ember);
+      vertical-align: middle; box-shadow: 0 0 8px var(--ember);
+    }
+
+    /* pause toggle */
+    .pause {
+      display: flex; align-items: center; gap: 7px;
+      background: none; border: none; cursor: pointer;
+      font: 10px/1 ui-monospace, "Cascadia Mono", monospace;
+      letter-spacing: 0.08em; text-transform: uppercase;
+      color: var(--ink-mute);
+    }
+    .pause .track {
+      width: 28px; height: 15px; border-radius: 999px;
+      background: var(--night-700); position: relative;
+      transition: background 0.25s ease;
+    }
+    .pause .thumb {
+      position: absolute; top: 2px; left: 2px; width: 11px; height: 11px;
+      border-radius: 50%; background: var(--ink-mute);
+      transition: transform 0.25s ease, background 0.25s ease;
+    }
+    .pause[aria-checked="true"] .track { background: var(--ember-deep); }
+    .pause[aria-checked="true"] .thumb { transform: translateX(13px); background: var(--night-950); }
+    .pause[aria-checked="true"] { color: var(--ember); }
+
+    .pause:focus-visible {
+      outline: 2px solid var(--ember);
+      outline-offset: 4px;
+      border-radius: 3px;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <span class="brand">Echo</span>
+      <button id="pauseToggle" class="pause" role="switch" aria-checked="false" title="Pause or resume all tracking">
+        <span id="pauseLabel">tracking</span>
+        <span class="track"><span class="thumb"></span></span>
+      </button>
+    </header>
+
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>

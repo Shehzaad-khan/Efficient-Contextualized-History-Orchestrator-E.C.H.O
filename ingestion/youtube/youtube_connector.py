@@ -6,20 +6,27 @@ Routes (mounted by backend/main.py under /ytc), all sent by
 extension/content/youtube_tracker.js through background.js:
 
     POST /ytc/video-detected   once per video, when the extension's intent gate passes
+    POST /ytc/revisit-check    once per video after 5 s of active watch time
     POST /ytc/heartbeat        every 5 s after that: the session's running watch time
     POST /ytc/video-closed     on leave/close: the session's final watch time
 
 Flow of /video-detected:
     1. capture setting off       -> discard
     2. bad video_id              -> discard
-    3. Redis revisit check (also records this visit for the next 24 h)
-    4. intent gate (§7.3)        -> discard if it fails
+    3. intent gate (§7.3)        -> discard if it fails
+    4. record this visit in Redis for the next 24 h
     5. store the row (empty title, NULL raw_text) and answer the extension
     6. after the response: fetch Data API metadata + transcript, fill the row
        (the ENP worker waits for that fill before embedding)
 
 The server repeats the extension's gate as a safety net (defense in depth): the
 backend must not trust whatever a client posts.
+Option C (revisit) is the one gate option a client cannot prove by its own
+numbers. The early /revisit-check route is where the server decides it: on a
+true answer it remembers "this video is a confirmed revisit" for
+REVISIT_CONFIRM_SECONDS, and /video-detected accepts triggered_by="revisit" once,
+only against that memory. The Redis key alone is not enough: /revisit-check
+itself writes it on every first visit.
 
 Threading: the routes are async, so every blocking call (Postgres via
 ste.storage_engine, the sync Redis read in settings_store) goes through
@@ -30,6 +37,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from datetime import datetime
 from typing import Optional
 
@@ -56,7 +64,7 @@ class VideoDetectedEvent(BaseModel):
     video_id: str
     is_short: bool  # the extension's own view; the server re-derives it from the URL
     watch_time_seconds: int = Field(ge=0)
-    triggered_by: str  # "watch_time" | "completion_rate" | "manual_interaction"
+    triggered_by: str  # "watch_time" | "completion_rate" | "manual_interaction" | "revisit"
     interaction_type: Optional[str] = None  # "pause" | "seek" | "speed_change"
     duration_seconds: Optional[int] = Field(default=None, ge=0)
     timestamp: datetime
@@ -72,6 +80,10 @@ class VideoClosedEvent(BaseModel):
     video_id: str
     final_watch_time_seconds: int = Field(ge=0)
     timestamp: datetime
+
+
+class VideoRevisitCheck(BaseModel):
+    video_id: str
 
 
 # Architecture §7.3 Option A. These MUST match the extension's thresholds in
@@ -128,6 +140,41 @@ async def check_revisit(video_id: str) -> bool:
         return False
 
 
+# Videos /revisit-check has just confirmed as revisits: video_id -> expiry on the
+# time.monotonic() clock. In memory on purpose (it lives seconds, and the routes
+# run on one event loop, so no lock is needed); a restart inside that window only
+# drops one revisit, and the next watch of the video is a revisit again.
+REVISIT_CONFIRM_SECONDS = 60
+_confirmed_revisits: dict[str, float] = {}
+
+
+def _confirm_revisit(video_id: str) -> None:
+    now = time.monotonic()
+    for stale_id in [vid for vid, expiry in _confirmed_revisits.items() if expiry <= now]:
+        del _confirmed_revisits[stale_id]
+    _confirmed_revisits[video_id] = now + REVISIT_CONFIRM_SECONDS
+
+
+def _consume_confirmed_revisit(video_id: str) -> bool:
+    """True once per confirmation: the entry is removed, so a client cannot replay it."""
+    expiry = _confirmed_revisits.pop(video_id, None)
+    return expiry is not None and expiry > time.monotonic()
+
+
+@router.post("/revisit-check")
+async def handle_revisit_check(event: VideoRevisitCheck):
+    """Record the early visit and let a returning video pass Option C."""
+    if not await _youtube_enabled():
+        return {"is_revisit": False}
+    if not is_valid_video_id(event.video_id):
+        return {"is_revisit": False}
+
+    is_revisit = await check_revisit(event.video_id)
+    if is_revisit:
+        _confirm_revisit(event.video_id)
+    return {"is_revisit": is_revisit}
+
+
 async def _fill_metadata(memory_id: str, video_id: str) -> None:
     """Runs after the response is sent (FastAPI BackgroundTasks). Failures are
     logged, never raised: the row stays with an empty title until a re-watch."""
@@ -150,9 +197,10 @@ async def handle_video_detected(event: VideoDetectedEvent, background_tasks: Bac
         return _discard("invalid_video_id", event.video_id)
 
     is_short = classify_video_type(event.url) == "short"
-    is_revisit = await check_revisit(event.video_id)
+    is_revisit = event.triggered_by == "revisit" and _consume_confirmed_revisit(event.video_id)
     if not passes_intent_gate(event, is_short, is_revisit):
         return _discard("intent_gate_failed", event.video_id)
+    await check_revisit(event.video_id)  # record this visit; the answer is not needed
 
     try:
         memory_id = await asyncio.to_thread(store_youtube_detection, event.video_id, is_short, event.timestamp)

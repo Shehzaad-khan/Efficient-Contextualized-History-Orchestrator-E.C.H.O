@@ -31,7 +31,7 @@
  * Intent gate (ANY ONE must pass — enforced on backend too as safety net):
  *   Option A: watch_time_seconds >= 20 (architecture §7.3) or >= 15 (Shorts)
  *   Option B: completion_rate >= 0.5 (watch_time / duration)
- *   Option C: revisit (checked by backend via Redis)
+ *   Option C: revisit (checked by backend via Redis after 5 s of watch time)
  *   Extra:    manual interaction detected (pause/seek/speed)
  *   Thresholds MUST match ingestion/youtube/youtube_connector.py.
  *
@@ -79,6 +79,7 @@
     lastActivityTime: Date.now(),  // any activity, incl. playback progress (idle gate)
     lastInputTime: 0,              // last real click / key press (manual-interaction gate)
     intentFired: false,          // true once we've sent video-detected to backend
+    revisitCheckSent: false,     // one early Redis check per video
     heartbeatInterval: null,
     lastSentWatchTime: -1,       // watch time in the last heartbeat (skip unchanged ones)
     durationSeconds: 0,          // total video length, from the <video> element
@@ -86,6 +87,7 @@
 
   const IDLE_THRESHOLD_MS = 30000;          // 30 seconds
   const HEARTBEAT_INTERVAL_MS = 5000;       // send heartbeat every 5 seconds
+  const REVISIT_CHECK_WATCH_SECONDS = 5;    // Option C needs an early server check
   const TICK_INTERVAL_MS = 1000;            // watch-time + SPA URL check
   const VIDEO_LOOKUP_RETRY_MS = 500;        // YouTube mounts <video> async
   const VIDEO_LOOKUP_MAX_TRIES = 40;        // give up after ~20s on a non-player page
@@ -105,11 +107,12 @@
   // ---------------------------------------------------------------------------
   // Messaging — never throws, extension context can disappear on reload
   // ---------------------------------------------------------------------------
-  function send(type, payload) {
+  function send(type, payload, onResponse = null) {
     try {
       if (!chrome.runtime?.id) return;
-      chrome.runtime.sendMessage({ type, payload }, () => {
+      chrome.runtime.sendMessage({ type, payload }, (response) => {
         void chrome.runtime.lastError;   // nothing to do; keeps the console clean
+        if (onResponse) onResponse(response);
       });
     } catch (error) {
       // Extension reloaded/uninstalled mid-session — stop trying.
@@ -184,6 +187,20 @@
     }
   }
 
+  function checkVideoRevisit() {
+    if (state.revisitCheckSent || state.intentFired || !state.videoId) return;
+
+    state.revisitCheckSent = true;
+    const videoId = state.videoId;
+    log("revisit check", state.watchTimeSeconds);
+
+    send("YTC_REVISIT_CHECK", { video_id: videoId }, (response) => {
+      if (!response?.ok || !response.data?.is_revisit) return;
+      if (state.videoId !== videoId || state.intentFired) return;
+      fireVideoDetected("revisit");
+    });
+  }
+
   // One always-on tick: detects SPA navigation and accumulates watch time.
   setInterval(() => {
     if (window.location.href !== currentUrl) {
@@ -196,6 +213,9 @@
     if (isCountingActive()) {
       state.watchTimeSeconds += 1;
       if (state.watchTimeSeconds % 5 === 0) log("watch", state.watchTimeSeconds);
+      if (state.watchTimeSeconds >= REVISIT_CHECK_WATCH_SECONDS) {
+        checkVideoRevisit();
+      }
       evaluateIntent();
     }
   }, TICK_INTERVAL_MS);
@@ -441,6 +461,7 @@
     state.watchTimeSeconds = 0;
     state.isPlaying = false;
     state.intentFired = false;
+    state.revisitCheckSent = false;
     state.lastSentWatchTime = -1;
     state.durationSeconds = 0;
     state.lastActivityTime = Date.now();
@@ -456,6 +477,7 @@
     state.isTabForeground = document.visibilityState === "visible";
     state.isWindowFocused = document.hasFocus();
     state.lastActivityTime = Date.now();
+    state.revisitCheckSent = false;
     lookupTries = 0;
 
     // Wait for the video element to appear in DOM (YouTube loads it async)

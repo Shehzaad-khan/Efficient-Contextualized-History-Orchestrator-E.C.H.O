@@ -33,6 +33,7 @@ from rse.llm_factory import build_chat_model
 from ste import postgresql_manager
 from wba import time_aggregator
 from wba.pattern_detector import standing_marks_sql, peak_activity_hours, session_source_sequences
+from wba.wellbeing_analytics import ensure_sessions_for_range
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +115,7 @@ def collect_weekly_aggregates(week_end: date | None = None) -> dict[str, Any]:
             group_percent[row["group_name"]] = round(row["total_seconds"] / total_seconds * 100)
 
     regrets = _weekly_regrets(start_day, end_day)
+    ensure_sessions_for_range(start_day, end_day)
 
     return {
         "week_start": start_day.isoformat(),

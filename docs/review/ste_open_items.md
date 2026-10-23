@@ -180,7 +180,13 @@ Still open — decide each:
   item. Also keep the existing query-KEY check in `is_sensitive_page` (`?password=`) in the whole-token rewrite.
   Build order: run `is_sensitive_page` on the URL BEFORE stripping the keys (`chrome_connector.py:157` today),
   or the query-key check never sees them.
-- **A7.3 built 2026-10-22:** `SECRET_QUERY_PARAMS` (the 13 keys above) + `strip_secret_query_params` in `chrome_connector.py`; `is_sensitive_page` runs on `payload.url` AND `payload.canonical_url` first, then both are stripped. Checked on 10 inputs (token / TOKEN / only-secret keys / no change / fragment kept / empty / None / `keyword` kept while `key` goes / `password=` still caught by the sensitive check). Gap found and fixed 2026-10-22: `/chrome/revisit-check` got the extension's raw `canonical_url`, so for a URL with a secret key its Redis key (a sha256 hash, so no raw URL was ever stored) differed from the stripped one `record_visit` writes and the revisit was missed. `revisit_check` now strips first (checked: same key). A7.1, A7.2, A7.4 are NOT built yet.
+- **A7.3 built 2026-10-22:** `SECRET_QUERY_PARAMS` (the 13 keys above) + `strip_secret_query_params` in `chrome_connector.py`; `is_sensitive_page` runs on `payload.url` AND `payload.canonical_url` first, then both are stripped. Checked on 10 inputs (token / TOKEN / only-secret keys / no change / fragment kept / empty / None / `keyword` kept while `key` goes / `password=` still caught by the sensitive check). Gap found and fixed 2026-10-22: `/chrome/revisit-check` got the extension's raw `canonical_url`, so for a URL with a secret key its Redis key (a sha256 hash, so no raw URL was ever stored) differed from the stripped one `record_visit` writes and the revisit was missed. `revisit_check` now strips first (checked: same key). A7.4 is NOT built yet.
+- **A7.1 + A7.2 built 2026-10-23:** `chrome_connector.py` `is_sensitive_page` rewritten to whole-token matching: splits
+  host+path on `[/_\-.]`, also collapses per-segment separators (`sign-in` → `signin`), and checks query parameter keys.
+  Same logic applied in `background.js` `isSensitiveChromeUrl` and `chrome_tracker.js` `detectSensitivePage`.
+  `SENSITIVE_PATH_TERMS` expanded to the full 38-word list (A7.2) in all three copies.
+  Probe URLs all pass (Python + JS tested): `/author/jane` kept, `/authentication-explained` kept,
+  `/reset?token=abc` dropped, `/verify-email?code=999` dropped ("verify" token), `netbanking/home` dropped.
 - **A7.4 decided 2026-10-21: option a, with the count raised (his ask) to 3.** In `chrome_tracker.js`
   `hasPrivateFormSurface`: (1) a VISIBLE password box → private; (2) 3+ visible email/tel boxes in the same
   `<form>` → private; (3) `type=number` ignored; (4) the 5-field rule counts visible fields only. Hidden sign-in
@@ -237,7 +243,7 @@ Still open — decide each:
   edit it, and have the extension fetch it (one copy instead of three).
 - **A9.1 decided 2026-10-21: skip Gmail web** — `mail.google.com` skipped in Chrome capture (`background.js`
   `shouldSkipChromeUrl` + the same server check); remove it from the app-domain lists. Gmail comes from its API.
-  - **Built 2026-10-22:** removed from the 3 app-domain lists (`background.js`, `chrome_tracker.js`, `intent_filter.py`); `shouldSkipChromeUrl` (host or `.mail.google.com`; a URL that fails to parse is skipped) and the server route (`gmail_web_excluded`) skip it. Read from the diff, JS not run in a browser. NOT done yet (A9.4): `confluence.atlassian.net` is still in `chrome_tracker.js` and `intent_filter.py`.
+  - **Built 2026-10-22:** removed from the 3 app-domain lists (`background.js`, `chrome_tracker.js`, `intent_filter.py`); `shouldSkipChromeUrl` (host or `.mail.google.com`; a URL that fails to parse is skipped) and the server route (`gmail_web_excluded`) skip it. Read from the diff, JS not run in a browser.
 - **A9.2 decided 2026-10-21: c, keep as is** (his words: "if it causes issues we will see that time"). Claude flagged
   the demo risk (the dashboard page with Luna's answer gets stored and can outrank the real source). Zero-code
   fallback if it shows up: add `localhost` in Settings → excluded domains (`settings_store.is_domain_excluded`,
@@ -256,6 +262,7 @@ Still open — decide each:
 - **A9.4 decided 2026-10-21: lenient — no additions (his words: keep the same or decrease, no need to increase).**
   The list becomes 7: slack.com, atlassian.net, notion.so, figma.com, linear.app, trello.com, asana.com
   (removed: mail.google.com per A9.1; app.slack.com, confluence.atlassian.net redundant; jira.com redirect only).
+  - **Built 2026-10-23 (working tree):** all three Chrome app-domain lists now contain exactly these seven domains. The ENP classifier's separate work-context list was left unchanged.
   Claude flagged: ChatGPT / claude.ai / Google Docs / Outlook / Teams / WhatsApp Web text stays captured as normal
   pages. Zero-code fallback per site: Settings → excluded domains (blocks the site fully, time included).
 - **A9.5 decided 2026-10-21: b, one copy on the server; the extension fetches it.** New `GET /chrome/rules`
@@ -853,6 +860,7 @@ Still open — decide each:
   suggestion stays pending until he accepts (human-in-the-loop unchanged) — EXCEPT, since A42 (2026-10-21), rule match
   AND KNN >= this bar, which is auto-accepted and shown in the Sunday review for undo. Build: `wba/group_manager.py:479`
   condition + a constant; update the docstring Phase 2 line and doc/paper wording.
+  - **Built 2026-10-23 (working tree):** `KNN_ONLY_THRESHOLD = 0.60` now allows KNN-only suggestions. The active code still uses MiniLM; retune after A40's arctic-xs model is activated and vectors are rebuilt.
 
 ### A33. The pause switch has no UI — restore the extension popup? — [x] decided 2026-10-21 (found 2026-10-19, extension/background.js review) — DISCUSS AT THE END
 - `background.js` honours `echo_tracking_paused` before every send, but the only thing that sets it is the popup
@@ -867,6 +875,7 @@ Still open — decide each:
   `chrome.storage.local.echo_tracking_paused`; add `default_popup` back to `manifest.json` `action`; update
   RESTORE.md. Later add-on if time: dashboard switches returned with `GET /chrome/rules` (A9.5) so the extension
   stops sending (today the server discards).
+  - **Built 2026-10-23 (working tree):** popup and manifest now expose only the pause toggle; popup fetches were removed and the popup files are no longer gitignored. `RESTORE.md` was updated.
 
 ### A34. YouTube "revisit" (Option C) can never decide anything — [x] decided 2026-10-21 (found 2026-10-19, extension/content/youtube_tracker.js review) — DISCUSS AT THE END
 - The server checks the revisit flag only inside `/ytc/video-detected`, and the extension sends that only AFTER
@@ -879,6 +888,8 @@ Still open — decide each:
   Build (~30 min): `youtube_tracker.js` sends it once per video at 5 s of active watch time through
   `postToBackend` (pause respected); the route calls `check_and_record_revisit_async` (Redis, 24 h TTL) and, on a
   revisit, lets the video through Option C. Add the 5 s value to the A39 timings list.
+  - **Built 2026-10-23 (working tree):** one `YTC_REVISIT_CHECK` is sent at 5 s through the background relay; a true response fires the normal video-detected path as `revisit`. The route reuses `check_revisit`, which calls `check_and_record_revisit_async` and respects the YouTube capture setting.
+  - **Gate fix 2026-10-23:** `/video-detected` no longer reads the Redis key for Option C (the 5 s call writes that key on every first visit, so the server saw a "revisit" for any video past 5 s and its own gate always passed). Now `/revisit-check` remembers a confirmed revisit in memory for 60 s (`REVISIT_CONFIRM_SECONDS`), and `/video-detected` accepts `triggered_by="revisit"` only against that entry, once. The visit is still recorded in Redis after the gate passes. Checked through the real handlers on real Redis (Postgres write patched out, test keys deleted): first visit + 2 s event refused; real revisit saved once, replay refused; forged revisit refused; 25 s watch and manual pause still saved; confirmation expired after 60 s refused; invalid/empty id false. Browser flow not run.
 
 ### A35. Store the OAuth tokens unencrypted, since everything is local? — [x] decided 2026-10-21 — PLAIN TOKENS
 - Today `token_gmail.enc` / `token_youtube.enc` are Fernet-encrypted (`ste/security.py`); the key is
@@ -1231,7 +1242,7 @@ Still open — decide each:
     `backend/wellbeing.py:107-109` `GroupCreateRequest`, `frontend/src/lib/types.ts:51`, `api.ts:155`,
     `PatternsPage.tsx:~254`. `manual_assign` must never check the parent.
 
-### A44. Automatic retry of failed ENP items — [x] decided 2026-10-21 (found by the paper agent) — STRETCH: build if time permits
+### A44. Automatic retry of failed ENP items — [x] decided 2026-10-21 (found by the paper agent) — [x] built 2026-10-23
 - Today: a row that fails any ENP step is marked `classified_by = 'failed'` and skipped by every later batch; it is
   retried only with `ENP_RETRY_FAILED=true` + a backend restart (`enp/enrichment_pipeline.py` 62, 102).
   `scripts/enp_run_once.py`, named in the module docstring, was deleted 2026-10-19 (A36) — fix that docstring.
@@ -1239,7 +1250,12 @@ Still open — decide each:
 - **Decision (his, 2026-10-21): build automatic retry, if time permits before the Sun 25 freeze.** Sketch: retry
   failed rows on worker start and then periodically, max 3 attempts per row (attempt counter: a column — schema open
   under A31.3 — or a Redis key), ~45 min.
-- **If not built by the freeze:** change the paper sentence to "kept apart and can be retried" (all drafts).
+- **Done 2026-10-23:** attempt counter in Redis (`echo:enp:retry:{memory_id}`, TTL 7d); helpers in `ste/redis_manager.py`
+  (`get_enp_retry_count`, `increment_enp_retry_count`, `clear_enp_retry_count`, `MAX_ENP_RETRIES=3`).
+  `retry_failed_items(conn)` in `enp/enrichment_pipeline.py` resets rows with `classified_by = NULL` when counter < 3;
+  called at worker startup and every `DEFAULT_RETRY_INTERVAL_SECONDS=300` s during normal polling. On success,
+  `mark_item_processed` clears the counter. No schema change (counter in Redis, not a new column).
+  - **Fix 2026-10-23 (review):** Redis down no longer lifts the cap. `get_enp_retry_count` returns `MAX_ENP_RETRIES` on a Redis error (fail closed), `increment_enp_retry_count` raises, and `retry_failed_items` skips a row whose attempt it could not record. Checked on Neon with a throwaway failed row: read failure and increment failure each reset 0 rows; normal cycles reset on 1, 2, 3 and refuse the 4th. Left: the query takes the 50 oldest failed rows, so 50 or more capped rows would hide newer failed ones.
 
 ### A45. Fresh Gmail poll for "just now" questions in the A26 tool loop — [x] decided 2026-10-21 — STRETCH: build if time permits
 - Today: `parse_intent` sets `fetch_api=True` for "latest / today / just received"; `node_fetch_api`
@@ -1304,11 +1320,16 @@ Still open — decide each:
          (2026-10-19: `scripts/enp_recompute_centroids.py`, the shim's last caller, was deleted -> the shim has
          ZERO callers now; delete it.)
 
-### C5. Chrome dwell is undercounted — `extension/background.js` — [ ]
+### C5. Chrome dwell is undercounted — `extension/background.js` — [x] 2026-10-23
 - The page is sent once, when the intent gate passes (~5–10 s), then `sentToBackend = true`. Time after that
   is never sent. A 20-minute read is stored as ~10 s → wellbeing Chrome time is far too low.
 - **Fix:** on tab close, send the extra dwell since the first send. `ste/storage_engine.py` already adds
   dwell on conflict, so the backend needs no change.
+- **Done 2026-10-23:** `background.js`: added `sentDwellSeconds` to page state; set on first send; `sendExtraDwellToBackend` sends
+  `dwellSeconds - sentDwellSeconds` to `/chrome/ingest` (which adds it via the ON CONFLICT clause);
+  `finalizeChromePage` now branches: if already sent → call `sendExtraDwellToBackend`, else evaluate+send normally.
+  Backend unchanged (ON CONFLICT already accumulates `dwell_time_seconds`).
+  - **Fix 2026-10-23 (review):** the extra send now carries `revisit_count: 0`. The server ADDS `revisit_count` on conflict, so repeating the first send's value turned 1 into 2. Replayed through `/chrome/ingest` on Neon (first send 12 s, extra 600 s): dwell 612, `revisit_count` stays 1. An extra under 10 s with no scroll or interaction is still refused by the gate (at most ~10 s lost, accepted). Browser flow not run.
 
 ### C6. YouTube re-watch time not added — `ingestion/youtube/youtube_connector.py` — [x] no change (A2 = "how far", 2026-10-21)
 - Heartbeats send the session's running total, so plain `+=` would double count.
@@ -1394,7 +1415,7 @@ Still open — decide each:
 - 2026-10-21: CLAUDE.md §5 wording fixed (his go: "fix it"). Still open: `ste/faiss_manager.py` docstrings + `rse/search_coordinator.py` comments.
 - 2026-10-22: done — `ste/faiss_manager.py` (module + class docstring, `search_all`) and `enp/system_group_classifier.py` `stage3_centroid` now say "unit-length". `rse/search_coordinator.py` needed no change (a search for "unnormali" in ste/, enp/, rse/, wba/, backend/ finds nothing).
 
-### C15. Tier-1 attachment info never reaches search — `enp/enrichment_pipeline.py` + `enp/topic_extractor.py` — [ ]
+### C15. Tier-1 attachment info never reaches search — `enp/enrichment_pipeline.py` + `enp/topic_extractor.py` — [x] 2026-10-23
 - Found 2026-10-17 while reviewing `enp/attachment_processor.py`. Doc §5.4 Tier 1: "Metadata in gmail_attachments
   table, lightweight_extract text, **embedding in FAISS**". Nothing outside storage reads `gmail_attachments`:
   filenames are in neither the embedding nor the keyword search, and `is_processed` is never set TRUE.
@@ -1402,6 +1423,12 @@ Still open — decide each:
 - Fix: in `_fetch_gmail_context` also read the attachment filenames; in `build_embeddable_text` (gmail) add them as a
   short hint (before the body, per A16); set `gmail_attachments.is_processed = TRUE` when marked processed. Then
   re-embed (B5). Optional: add filenames to the RSE keyword search.
+- **Done 2026-10-23:** `_fetch_gmail_context` now queries `gmail_attachments` in the same cursor block and stores
+  filenames in `item["attachment_filenames"]`; `build_embeddable_text` (gmail) inserts the filenames as a short hint
+  between sender_domain and body; `gmail_keywords` includes attachment filenames when computing auto-keywords;
+  `mark_item_processed` now runs `UPDATE gmail_attachments SET is_processed = TRUE WHERE memory_id = %s` for gmail
+  items and calls `clear_enp_retry_count`. B5 re-embed picks up the change for existing emails.
+  - **Fix 2026-10-23 (review):** keywords now use the filename words (`_filename_words` in `enp/topic_extractor.py`): extension dropped, `_ - .` turned into spaces, so `Offer_Letter_2026.pdf` gives `offer`, `letter` (was `offerletter2026`, `pdf`). The embedded hint keeps the raw filename. Checked on 8 name shapes and on the real mail with `thor.jpeg`/`thor1.jpeg`.
 
 ### C16. `enp/centroids.npz` is not git-ignored — `.gitignore` — [x] (2026-10-17)
 - Found 2026-10-17 reviewing `enp/faiss_manager.py`. recompute_centroids saves `enp/centroids.npz` next to the
@@ -1416,13 +1443,15 @@ Still open — decide each:
   `ECHO_FAISS_INDEX_PATH` points elsewhere — use the manager's `index_path.parent` instead.
 - **Left item done 2026-10-22:** `_centroids_path()` is now `get_manager().index_path.parent / "centroids.npz"`; the unused `DEFAULT_INDEX_PATH` import is gone. Note: the path call now loads the FAISS index first, so a broken index raises there.
 
-### C10. YouTube `seeked` may save every video at 0 s — `extension/content/youtube_tracker.js` — [ ] (verify first)
-- Found 2026-10-17 while reviewing `youtube_connector.py`. Not verified.
-- The tracker treats any `seeked` event as a manual interaction and fires `video-detected` at once.
+### C10. YouTube `seeked` may save every video at 0 s — `extension/content/youtube_tracker.js` — [x] 2026-10-23 closed by code reading; live check moved to the testing phase (no code change)
+- Found 2026-10-17 while reviewing `youtube_connector.py`. Not verified live.
+- The tracker treats a `seeked` event as a manual interaction, but only after a real click or key press (see the code check below).
 - Likely (not tested): YouTube seeks by itself when it resumes a half-watched video or opens a `&t=` link.
   If so, every such video is saved at 0 s, without real intent.
 - **Check:** set `DEBUG = true`, open a resumed video, see if "intent fired seek" appears with no click.
 - **Fix if true:** count a seek only after a user input event (click/keydown on the player).
+- **Code check 2026-10-23:** the handler already returns unless `pointerdown` or `keydown` occurred within 1.5 s, so an automatic seek without recent input cannot fire intent. The requested live reproduction remains unverified; the browser session would not allow reloading the unpacked extension for DEBUG logging.
+- **Decision (his, 2026-10-23): no live test, leave as is.** One edge case is accepted: a resume-seek within 1.5 s of the user's own click on play would count as a user seek and save the video at about 0 s. Not seen, harmless for this project.
 
 ### C17. `scope_level` is a dead intent field — `rse/query_parser.py` — [x] (found and done 2026-10-18; removed from prompt, examples, builders and `ParsedIntent`)
 - The parser prompt, examples, `_fallback_intent` and `_normalise_intent` always set `scope_level = 0`; nothing
@@ -1545,7 +1574,16 @@ Still open — decide each:
   - [ ] A4 decided 2026-10-21: extract at ingestion into `extracted_text`, merge into embedded text (shared
         800-char budget) + full text into the tsvector, set `is_processed = TRUE`.
 
-### D4. Sessions are never built — [ ] (found 2026-10-18, wba/wellbeing_analytics.py review)
+### D4. Sessions are never built — [x] 2026-10-23 (found 2026-10-18, wba/wellbeing_analytics.py review)
+- **Built 2026-10-23:** `ensure_sessions_for_range` / `ensure_sessions_for_day` in `wba/wellbeing_analytics.py`. Today is rebuilt
+  on every call; a past day once per process (`_past_days_built`), future days skipped. Called by `daily_summary`,
+  `GET /wellbeing/sessions` (`backend/wellbeing.py`) and `collect_weekly_aggregates` (`wba/insight_generator.py`).
+  `POST /sessions/rebuild` stays as a manual rebuild. `DELETE FROM sessions` was a no-op: Neon had 0 `sessions` and 0
+  `session_memory_map` rows (counted first, so no snapshot). Live check on Neon, 14 days: stored sessions and items per
+  day equal an independent SQL window-function count (2026-10-16: 10 items, 1 session; other days 0); second call
+  identical; future day, reversed range and empty day are no-ops. Gap rule checked on synthetic times (0/15/40 -> 2+1;
+  exactly 20 min stays together; 21 min splits). Left: `docs/Phase III/build/lld/build_lld.py:1007` still says sessions
+  appear only after a rebuild (generator text, `.docx` unchanged).
 - Only `POST /wellbeing/sessions/rebuild` builds sessions, and nothing calls it (no frontend call, no scheduler).
   So `sessions` stays empty: fragmentation, focus score and session patterns (insights) show nothing.
 - Options: rebuild today's sessions inside `GET /sessions` / `daily_summary` (cheap: one day of items), and past

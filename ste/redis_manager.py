@@ -171,3 +171,39 @@ def get_attachment_text(memory_id: str, attachment_id: str) -> Optional[str]:
     text_value = get_sync_client().get(attachment_cache_key(memory_id, attachment_id))
     logger.debug("Attachment cache %s for %s/%s", "hit" if text_value is not None else "miss", memory_id, attachment_id)
     return text_value
+
+
+ENP_RETRY_TTL_SECONDS = 86400 * 7  # 7 days
+MAX_ENP_RETRIES = 3
+
+
+def enp_retry_key(memory_id: str) -> str:
+    return f"echo:enp:retry:{memory_id}"
+
+
+def get_enp_retry_count(memory_id: str) -> int:
+    """Attempts used so far. Redis down -> MAX_ENP_RETRIES (fail closed): with no
+    counter the cap cannot hold, so the row is treated as used up, not retried forever."""
+    try:
+        val = get_sync_client().get(enp_retry_key(memory_id))
+        return int(val) if val else 0
+    except Exception as exc:
+        logger.warning("Failed to get ENP retry count for %s; treating it as exhausted: %s", memory_id, exc)
+        return MAX_ENP_RETRIES
+
+
+def increment_enp_retry_count(memory_id: str) -> int:
+    """Count one more attempt. Raises when Redis fails: the caller must not retry
+    a row whose attempt it could not record."""
+    client = get_sync_client()
+    key = enp_retry_key(memory_id)
+    count = client.incr(key)
+    client.expire(key, ENP_RETRY_TTL_SECONDS)
+    return count
+
+
+def clear_enp_retry_count(memory_id: str) -> None:
+    try:
+        get_sync_client().delete(enp_retry_key(memory_id))
+    except Exception as exc:
+        logger.warning("Failed to clear ENP retry count for %s: %s", memory_id, exc)

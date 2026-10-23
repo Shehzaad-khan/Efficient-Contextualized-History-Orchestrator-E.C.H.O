@@ -9,7 +9,8 @@ USER groups answer "what personal goal does this serve?" and live here.
   Phase 1 — Manual seeding: user tags items by hand. Minimum 6 confirmed
             items before auto-assignment activates for a group.
   Phase 2 — Auto-assignment: hybrid score = 0.5·rule_score + 0.5·knn_score;
-            suggestion created when score > 0.70 OR any rule matched.
+            suggestions are created for any rule match or when KNN alone
+            reaches KNN_ONLY_THRESHOLD (currently 0.60).
             knn_score = mean cosine of the 3 most similar confirmed members.
   Phase 3 — Weekly batch review: user accepts/rejects pending suggestions.
   Phase 4 — KNN improves each cycle as the confirmed set grows and cleans.
@@ -58,6 +59,7 @@ logger = logging.getLogger(__name__)
 
 MIN_CONFIRMED_FOR_KNN = 6
 AUTO_SUGGEST_THRESHOLD = 0.70
+KNN_ONLY_THRESHOLD = 0.60  # Re-tune after the A40 embedding model is active.
 KNN_TOP_K = 3
 RULE_WEIGHT = 0.5
 KNN_WEIGHT = 0.5
@@ -419,8 +421,8 @@ def _insert_suggestion(item_id: str, group_id: str, scores: dict[str, Any]) -> b
 def run_auto_assignment(limit: int = AUTO_ASSIGN_BATCH_LIMIT) -> dict[str, Any]:
     """
     Phase 2 — score recent preprocessed items against every KNN-ready group
-    and INSERT pending suggestions where the hybrid threshold fires.
-    Suggestions await the weekly review; nothing is auto-accepted.
+    and INSERT pending suggestions when any rule matches or the KNN-only
+    threshold fires. Suggestions await the weekly review; nothing is auto-accepted.
 
     Returns {"scored", "suggested"}; {"scored": 0, "suggested": 0,
     "skipped": "already running"} when another run is in progress.
@@ -474,7 +476,11 @@ def _run_auto_assignment(limit: int) -> dict[str, Any]:
                 continue
             scores = score_item_for_group(item, context, item_vector)
             scored += 1
-            if scores["final_score"] > AUTO_SUGGEST_THRESHOLD or scores["rule_score"] > 0:
+            if (
+                scores["final_score"] > AUTO_SUGGEST_THRESHOLD
+                or scores["rule_score"] > 0
+                or scores["knn_score"] >= KNN_ONLY_THRESHOLD
+            ):
                 if _insert_suggestion(item_id, context.group_id, scores):
                     suggested += 1
 

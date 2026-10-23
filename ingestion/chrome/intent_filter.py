@@ -31,19 +31,14 @@ PHASE2_MIN_INTERACTIONS = 1
 # Web apps whose content is private (§6.5): only time spent is kept, never text.
 # Matches the domain itself and every subdomain. Must match the lists in
 # extension/background.js and extension/content/chrome_tracker.js.
-# "app.slack.com" and "confluence.atlassian.net" are already covered by
-# "slack.com" and "atlassian.net"; kept so the three copies stay identical.
 APPLICATION_DOMAINS = {
     "slack.com",
-    "app.slack.com",
-    "jira.com",
     "atlassian.net",
     "notion.so",
     "figma.com",
     "linear.app",
     "trello.com",
     "asana.com",
-    "confluence.atlassian.net",
 }
 
 

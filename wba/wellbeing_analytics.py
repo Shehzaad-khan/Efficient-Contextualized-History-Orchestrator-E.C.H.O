@@ -27,6 +27,10 @@ Derived analytics (on-demand, never stored):
 daily_summary() is the facade the dashboard consumes: time totals, category
 breakdown, Shorts stats, regret rate, and focus — all descriptive.
 
+Sessions are built on demand: ensure_sessions_for_range runs before every
+reader (daily_summary, GET /sessions, the weekly insight). POST
+/sessions/rebuild stays as a manual rebuild of one day.
+
 Threading: rebuild_sessions_for_day takes a per-day Postgres advisory lock, so
 two rebuilds of the same day (two requests, or two processes) run one after
 the other instead of both deleting and both inserting (duplicate sessions).
@@ -52,6 +56,10 @@ SESSION_GAP_MINUTES = 20
 # First key of pg_advisory_xact_lock(namespace, day): keeps session-rebuild
 # locks apart from any other advisory lock. Second key = date.toordinal().
 _SESSION_REBUILD_LOCK_NAMESPACE = 4201
+
+# Past local days already rebuilt by ensure_sessions_for_range in this process.
+# Set.add is atomic in CPython, and a duplicate rebuild is harmless (idempotent).
+_past_days_built: set[date] = set()
 
 
 def _fetch_day_activity(connection: Connection, day: date) -> list[dict[str, Any]]:
@@ -186,6 +194,31 @@ def rebuild_sessions_for_day(day: date) -> dict[str, Any]:
     return {"day": day.isoformat(), "sessions": len(session_groups), "items": len(items)}
 
 
+def ensure_sessions_for_range(start_day: date, end_day: date) -> None:
+    """
+    Make sure stored sessions exist for every local day in [start_day, end_day].
+    Readers (daily_summary, GET /sessions, the weekly insight) call this first,
+    so nothing has to trigger a rebuild by hand.
+
+    Today is rebuilt on every call (still changing; one day of items is cheap).
+    A past day is rebuilt once per process, then skipped. A restart rebuilds it
+    again, which is harmless: the rebuild is idempotent. Future days are skipped.
+    Rebuild errors propagate; the route that called this reports them.
+    """
+    today = date.today()
+    day = start_day
+    while day <= min(end_day, today):
+        if day == today or day not in _past_days_built:
+            rebuild_sessions_for_day(day)
+            if day < today:
+                _past_days_built.add(day)
+        day += timedelta(days=1)
+
+
+def ensure_sessions_for_day(day: date) -> None:
+    ensure_sessions_for_range(day, day)
+
+
 def sessions_for_day(day: date) -> list[dict[str, Any]]:
     """Stored sessions for a local day with the derived focus score per session.
 
@@ -245,6 +278,7 @@ def daily_summary(day: date | None = None) -> dict[str, Any]:
     """
     day = day or date.today()
     logger.debug("daily_summary %s", day)
+    ensure_sessions_for_day(day)
     return {
         "day": day.isoformat(),
         "generated_at": datetime.now().isoformat(),

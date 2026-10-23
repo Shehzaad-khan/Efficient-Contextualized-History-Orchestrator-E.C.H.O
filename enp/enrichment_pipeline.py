@@ -58,6 +58,12 @@ from enp.text_cleaner import clean_item_text
 from enp.topic_extractor import build_embeddable_text, sender_domain_hint
 from ste.faiss_manager import EMBEDDING_VERSION, VECTOR_DIMENSION, FAISSManager, get_manager
 from ste.storage_engine import SYSTEM_GROUP_IDS
+from ste.redis_manager import (
+    MAX_ENP_RETRIES,
+    clear_enp_retry_count,
+    get_enp_retry_count,
+    increment_enp_retry_count,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +71,8 @@ DEFAULT_BATCH_SIZE = 10
 DEFAULT_POLL_INTERVAL = 10
 FAILED_CLASSIFIED_BY = "failed"
 RETRY_FAILED_ENV = "ENP_RETRY_FAILED"
+DEFAULT_RETRY_INTERVAL_SECONDS = 300
+RETRY_INTERVAL_ENV = "ENP_RETRY_INTERVAL" 
 
 # YouTube rows are inserted by /ytc/video-detected with an empty title and
 # raw_text; youtube_connector fills them from the Data API in a background task
@@ -204,6 +212,19 @@ def _fetch_gmail_context(conn, item: dict[str, Any]) -> dict[str, Any]:
         )
         row = cursor.fetchone()
 
+        cursor.execute(
+            """
+            SELECT filename
+            FROM gmail_attachments
+            WHERE memory_id = %s
+            ORDER BY filename
+            """,
+            (item["memory_id"],),
+        )
+        attachment_rows = cursor.fetchall()
+        attachment_filenames = [r[0] for r in attachment_rows if r[0]]
+
+    item["attachment_filenames"] = attachment_filenames
     if row:
         sender_str = row[2] or ""
         item.update(
@@ -391,6 +412,16 @@ def mark_item_processed(
                     """,
                     (word_count, memory_id),
                 )
+            if (source or "").lower() == "gmail":
+                cursor.execute(
+                    """
+                    UPDATE gmail_attachments
+                    SET is_processed = TRUE
+                    WHERE memory_id = %s
+                    """,
+                    (memory_id,),
+                )
+    clear_enp_retry_count(memory_id)
 
 
 def mark_item_failed(conn, memory_id: str, reason: str) -> None:
@@ -524,6 +555,68 @@ def process_batch(manager: FAISSManager, batch_size: int) -> tuple[int, int]:
         conn.close()
 
 
+def retry_failed_items(conn, max_attempts: int = MAX_ENP_RETRIES, limit: int = 50) -> int:
+    """Find rows with classified_by = 'failed' that have fewer than max_attempts
+    in Redis, increment their attempt counter, and reset them to classified_by = NULL
+    so the next batch picks them up."""
+    with conn.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT memory_id
+            FROM memory_items
+            WHERE preprocessed = FALSE
+              AND is_deleted = FALSE
+              AND classified_by = %s
+            ORDER BY first_ingested_at ASC
+            LIMIT %s
+            """,
+            (FAILED_CLASSIFIED_BY, limit),
+        )
+        rows = cursor.fetchall()
+
+    if not rows:
+        return 0
+
+    retried = 0
+    with conn:
+        with conn.cursor() as cursor:
+            for (mem_id_val,) in rows:
+                memory_id = str(mem_id_val)
+                current_attempts = get_enp_retry_count(memory_id)
+                if current_attempts >= max_attempts:
+                    logger.debug(
+                        "memory_id=%s reached max retries (%d/%d); skipping",
+                        memory_id,
+                        current_attempts,
+                        max_attempts,
+                    )
+                    continue
+
+                try:
+                    new_attempts = increment_enp_retry_count(memory_id)
+                except Exception:
+                    logger.warning("Could not record a retry attempt for memory_id=%s; leaving it failed", memory_id, exc_info=True)
+                    continue
+                cursor.execute(
+                    """
+                    UPDATE memory_items
+                    SET classified_by = NULL,
+                        last_updated_at = NOW()
+                    WHERE memory_id = %s
+                    """,
+                    (memory_id,),
+                )
+                retried += 1
+                logger.info(
+                    "Retrying failed memory_id=%s (attempt %d/%d)",
+                    memory_id,
+                    new_attempts,
+                    max_attempts,
+                )
+
+    return retried
+
+
 def run_pipeline(
     batch_size: int = DEFAULT_BATCH_SIZE,
     poll_interval: int = DEFAULT_POLL_INTERVAL,
@@ -555,9 +648,36 @@ def run_pipeline(
         VECTOR_DIMENSION,
     )
 
+    # Retry failed rows on worker start
+    try:
+        conn = get_connection()
+        try:
+            startup_retried = retry_failed_items(conn)
+            if startup_retried:
+                logger.info("ENP startup retry: queued %d failed items for retry", startup_retried)
+        finally:
+            conn.close()
+    except Exception:
+        logger.exception("ENP startup retry check failed; continuing with normal pipeline")
+
+    retry_interval = int(os.getenv(RETRY_INTERVAL_ENV, str(DEFAULT_RETRY_INTERVAL_SECONDS)))
+    last_retry_at = time.time()
     iteration = 0
     while not stop_event.is_set():
         iteration += 1
+        now = time.time()
+        if now - last_retry_at >= retry_interval:
+            last_retry_at = now
+            try:
+                conn = get_connection()
+                try:
+                    periodic_retried = retry_failed_items(conn)
+                    if periodic_retried:
+                        logger.info("ENP periodic retry: queued %d failed items for retry", periodic_retried)
+                finally:
+                    conn.close()
+            except Exception:
+                logger.exception("ENP periodic retry check failed")
         started_at = time.perf_counter()
         try:
             processed, failed = process_batch(manager, batch_size=batch_size)

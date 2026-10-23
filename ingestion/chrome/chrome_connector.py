@@ -18,6 +18,7 @@ Redis, the PostgreSQL upsert) never run on the event loop.
 from __future__ import annotations
 
 import logging
+import re
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from fastapi import APIRouter
@@ -77,22 +78,50 @@ APPLICATION_PATH_PREFIXES = (
 )
 
 # Pages that may show personal data (login, payment, account). Never captured.
+# 38-word list (A7.1 + A7.2) matched as whole tokens against host + path + query keys.
 SENSITIVE_PATH_TERMS = (
+    "2fa",
     "account",
+    "accounts",
+    "admin",
     "auth",
+    "bank",
+    "banking",
     "billing",
     "callback",
+    "cart",
     "checkout",
+    "dashboard",
+    "inbox",
+    "invoice",
+    "invoices",
     "login",
     "logout",
+    "messages",
+    "mfa",
+    "netbanking",
     "oauth",
+    "orders",
+    "otp",
     "password",
     "payment",
+    "payments",
     "profile",
+    "recover",
+    "recovery",
+    "reset",
     "settings",
     "signin",
     "signup",
+    "sso",
+    "upi",
+    "verification",
+    "verify",
+    "wallet",
 )
+SENSITIVE_PATH_SET = frozenset(SENSITIVE_PATH_TERMS)
+TOKEN_SPLIT_RE = re.compile(r"[/_\-.]+")
+COLLAPSE_RE = re.compile(r"[-_.]+")
 
 
 class ChromeIngestRequest(BaseModel):
@@ -148,14 +177,39 @@ def is_skipped_page(url: str) -> bool:
 
 
 def is_sensitive_page(url: str) -> bool:
-    """True when a sensitive term is a whole path segment ("/login"), starts a
-    path segment ("/authentication" matches "auth"), or is a query key ("password=")."""
-    parsed = urlparse(url or "")
-    target = f"{parsed.path}?{parsed.query}".lower()
-    path_parts = {part for part in parsed.path.lower().split("/") if part}
-    if any(term in path_parts for term in SENSITIVE_PATH_TERMS):
+    """True when a sensitive term is matched as a whole token in the host or path
+    (split on / - _ .), as a path segment with separators removed (e.g. 'sign-in' -> 'signin'),
+    or as a query parameter key (e.g. '?password=...')."""
+    if not url:
+        return False
+    try:
+        parsed = urlparse(url)
+    except Exception:
         return True
-    return any(f"/{term}" in target or f"{term}=" in target for term in SENSITIVE_PATH_TERMS)
+
+    # 1. Whole tokens from host and path
+    target = f"{parsed.netloc or ''}{parsed.path or ''}".lower()
+    tokens = {t for t in TOKEN_SPLIT_RE.split(target) if t}
+    if any(t in SENSITIVE_PATH_SET for t in tokens):
+        return True
+
+    # 2. Path segments with separators removed (e.g. 'sign-in' -> 'signin', 'check_out' -> 'checkout')
+    path_segments = [p.lower() for p in (parsed.path or "").split("/") if p]
+    for seg in path_segments:
+        collapsed = COLLAPSE_RE.sub("", seg)
+        if collapsed in SENSITIVE_PATH_SET:
+            return True
+
+    # 3. Query keys (e.g. ?password=..., ?reset=...)
+    if parsed.query:
+        query_keys = {k.lower() for k, _ in parse_qsl(parsed.query, keep_blank_values=True)}
+        if any(k in SENSITIVE_PATH_SET for k in query_keys):
+            return True
+        query_tokens = {t for k in query_keys for t in TOKEN_SPLIT_RE.split(k) if t}
+        if any(t in SENSITIVE_PATH_SET for t in query_tokens):
+            return True
+
+    return False
 
 
 def _discard(reason: str, domain: str) -> dict:

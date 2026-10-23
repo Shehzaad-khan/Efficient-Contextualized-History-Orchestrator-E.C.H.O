@@ -82,6 +82,20 @@ def _join_parts(parts: list[str]) -> str:
     return " ".join(part.strip() for part in parts if part and part.strip())
 
 
+_FILENAME_SEPARATORS_RE = re.compile(r"[_\-.]+")
+
+
+def _filename_words(filenames: list[str]) -> str:
+    """Words of attachment filenames for keyword extraction, without the extension:
+    "Offer_Letter_2026.pdf" -> "Offer Letter 2026". Left raw, the underscores glue
+    the name into one useless word and the extension becomes a keyword like "pdf"."""
+    words = []
+    for name in filenames:
+        stem = name.rsplit(".", 1)[0] if "." in name else name
+        words.append(_FILENAME_SEPARATORS_RE.sub(" ", stem))
+    return " ".join(words)
+
+
 def _coerce_text(value: Any) -> str:
     """Text from a str, or from a list / dict of them (message_history)."""
     if value is None:
@@ -134,7 +148,12 @@ def domain_hint(domain_or_url: str) -> str:
     return domain_or_url.strip().lower()
 
 
-def gmail_keywords(subject: str, clean_body: str, message_history: Any = None) -> list[str]:
+def gmail_keywords(
+    subject: str,
+    clean_body: str,
+    message_history: Any = None,
+    attachment_filenames: list[str] | None = None,
+) -> list[str]:
     """The email's own keywords, then up to 4 new ones from earlier thread
     messages (Thread Context Enrichment, doc §5.3).
 
@@ -142,7 +161,8 @@ def gmail_keywords(subject: str, clean_body: str, message_history: Any = None) -
     and the thread's topic never makes it in. With them apart, a bare "Thanks,
     looks good" reply still carries [os, scheduling, project] from its thread.
     """
-    own = extract_keywords(_join_parts([subject, clean_body]), limit=GMAIL_OWN_KEYWORD_LIMIT)
+    attachment_text = _filename_words(attachment_filenames or [])
+    own = extract_keywords(_join_parts([subject, clean_body, attachment_text]), limit=GMAIL_OWN_KEYWORD_LIMIT)
     thread = [
         keyword
         for keyword in extract_keywords(_coerce_text(message_history), limit=GMAIL_OWN_KEYWORD_LIMIT + THREAD_KEYWORD_LIMIT)
@@ -167,11 +187,19 @@ def build_embeddable_text(item: dict[str, Any], cleaned_text: str, headings: lis
 
     if source == "gmail":
         subject = item.get("subject") or item.get("title") or ""
-        keywords = gmail_keywords(subject, cleaned_text, item.get("message_history"))
+        attachment_filenames = item.get("attachment_filenames") or []
+        keywords = gmail_keywords(
+            subject,
+            cleaned_text,
+            item.get("message_history"),
+            attachment_filenames=attachment_filenames,
+        )
+        attachments_hint = " ".join(attachment_filenames)
         embeddable = _join_parts([
             subject,
             " ".join(keywords),
             sender_domain_hint(item.get("sender", "")),
+            attachments_hint,
             truncate(cleaned_text, GMAIL_BODY_CHARS),
         ])
         return embeddable, keywords

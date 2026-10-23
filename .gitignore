@@ -27,9 +27,7 @@ debug.log
 graphify-out/
 
 
-# Extension popup -- staged for a later review (WBA restored for Phase 3 Review 2)
-extension/popup.html
-extension/popup.js
+# Local restore notes; the pause-only popup was re-tracked in A33.
 RESTORE.md
 legacy_gmail_threads.json
 

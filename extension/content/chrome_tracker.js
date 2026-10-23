@@ -41,31 +41,52 @@
 
   const APP_DOMAINS = [
     "slack.com",
-    "app.slack.com",
-    "jira.com",
     "atlassian.net",
     "notion.so",
     "figma.com",
     "linear.app",
     "trello.com",
-    "asana.com",
-    "confluence.atlassian.net"
+    "asana.com"
   ];
   const SENSITIVE_PATH_TERMS = new Set([
+    "2fa",
     "account",
+    "accounts",
+    "admin",
     "auth",
+    "bank",
+    "banking",
     "billing",
     "callback",
+    "cart",
     "checkout",
+    "dashboard",
+    "inbox",
+    "invoice",
+    "invoices",
     "login",
     "logout",
+    "messages",
+    "mfa",
+    "netbanking",
     "oauth",
+    "orders",
+    "otp",
     "password",
     "payment",
+    "payments",
     "profile",
+    "recover",
+    "recovery",
+    "reset",
     "settings",
     "signin",
-    "signup"
+    "signup",
+    "sso",
+    "upi",
+    "verification",
+    "verify",
+    "wallet"
   ]);
 
   // Non-data-entry controls. Counting these towards the "looks like a form"
@@ -114,18 +135,39 @@
     return APP_DOMAINS.some((domain) => host === domain || host.endsWith(`.${domain}`));
   }
 
-  /** Same rule as background.js isSensitiveChromeUrl. */
+  /** Same rule as background.js isSensitiveChromeUrl (A7.1 + A7.2). */
   function detectSensitivePage() {
-    const pathParts = window.location.pathname
-      .toLowerCase()
-      .split("/")
-      .filter(Boolean);
-    // location.search already starts with "?" (or is empty).
-    const target = `${window.location.pathname}${window.location.search}`.toLowerCase();
-    return (
-      pathParts.some((part) => SENSITIVE_PATH_TERMS.has(part)) ||
-      [...SENSITIVE_PATH_TERMS].some((term) => target.includes(`/${term}`) || target.includes(`${term}=`))
-    );
+    try {
+      const target = `${window.location.hostname}${window.location.pathname}`.toLowerCase();
+      const tokens = target.split(/[/_\-.]+/).filter(Boolean);
+      if (tokens.some((token) => SENSITIVE_PATH_TERMS.has(token))) {
+        return true;
+      }
+
+      const pathSegments = window.location.pathname.toLowerCase().split("/").filter(Boolean);
+      for (const seg of pathSegments) {
+        const collapsed = seg.replace(/[-_.]+/g, "");
+        if (SENSITIVE_PATH_TERMS.has(collapsed)) {
+          return true;
+        }
+      }
+
+      const params = new URLSearchParams(window.location.search);
+      for (const key of params.keys()) {
+        const lowerKey = key.toLowerCase();
+        if (SENSITIVE_PATH_TERMS.has(lowerKey)) {
+          return true;
+        }
+        const keyTokens = lowerKey.split(/[/_\-.]+/).filter(Boolean);
+        if (keyTokens.some((token) => SENSITIVE_PATH_TERMS.has(token))) {
+          return true;
+        }
+      }
+
+      return false;
+    } catch (error) {
+      return true;
+    }
   }
 
   function isDataEntryField(element) {

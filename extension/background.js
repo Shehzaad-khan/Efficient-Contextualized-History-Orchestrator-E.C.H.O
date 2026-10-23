@@ -57,11 +57,8 @@ let currentActiveChromeTabId = null;
 
 const CHROME_APPLICATION_DOMAINS = [
   "slack.com",
-  "app.slack.com",
-  "jira.com",
   "atlassian.net",
   "notion.so",
-  "confluence.atlassian.net",
   "figma.com",
   "linear.app",
   "trello.com",
@@ -70,20 +67,44 @@ const CHROME_APPLICATION_DOMAINS = [
 
 const CHROME_APPLICATION_PATH_SNIPPETS = ["github.com/issues", "github.com/pulls"];
 const CHROME_SENSITIVE_PATH_TERMS = new Set([
+  "2fa",
   "account",
+  "accounts",
+  "admin",
   "auth",
+  "bank",
+  "banking",
   "billing",
   "callback",
+  "cart",
   "checkout",
+  "dashboard",
+  "inbox",
+  "invoice",
+  "invoices",
   "login",
   "logout",
+  "messages",
+  "mfa",
+  "netbanking",
   "oauth",
+  "orders",
+  "otp",
   "password",
   "payment",
+  "payments",
   "profile",
+  "recover",
+  "recovery",
+  "reset",
   "settings",
   "signin",
-  "signup"
+  "signup",
+  "sso",
+  "upi",
+  "verification",
+  "verify",
+  "wallet"
 ]);
 const CHROME_IGNORED_QUERY_PARAMS = new Set([
   "utm_source",
@@ -102,6 +123,7 @@ const CHROME_IGNORED_QUERY_PARAMS = new Set([
 // Content-script message type -> backend route (job 1).
 const RELAY_ROUTES = {
   YTC_VIDEO_DETECTED: "/ytc/video-detected",
+  YTC_REVISIT_CHECK: "/ytc/revisit-check",
   YTC_HEARTBEAT: "/ytc/heartbeat",
   YTC_VIDEO_CLOSED: "/ytc/video-closed",
   GMC_ENGAGEMENT: "/gmail/engagement"
@@ -186,20 +208,39 @@ function isAppDomain(host) {
   return CHROME_APPLICATION_DOMAINS.some((domain) => host === domain || host.endsWith(`.${domain}`));
 }
 
-/** Same rule as chrome_connector.is_sensitive_page: a term is a path segment,
- *  starts a path segment, or is a query key. An unparsable URL counts as sensitive. */
+/** Whole-token sensitive-page check with the 38-word list (A7.1 + A7.2).
+ *  Split host + path on / - _ .; match words against the pieces only.
+ *  Also checks path segments with separators removed (e.g. 'sign-in' -> 'signin')
+ *  and query keys. */
 function isSensitiveChromeUrl(url) {
   try {
     const parsed = new URL(url);
-    const pathParts = parsed.pathname
-      .toLowerCase()
-      .split("/")
-      .filter(Boolean);
-    const target = `${parsed.pathname}?${parsed.searchParams.toString()}`.toLowerCase();
-    return (
-      pathParts.some((part) => CHROME_SENSITIVE_PATH_TERMS.has(part)) ||
-      [...CHROME_SENSITIVE_PATH_TERMS].some((term) => target.includes(`/${term}`) || target.includes(`${term}=`))
-    );
+    const target = `${parsed.hostname}${parsed.pathname}`.toLowerCase();
+    const tokens = target.split(/[/_\-.]+/).filter(Boolean);
+    if (tokens.some((token) => CHROME_SENSITIVE_PATH_TERMS.has(token))) {
+      return true;
+    }
+
+    const pathSegments = parsed.pathname.toLowerCase().split("/").filter(Boolean);
+    for (const seg of pathSegments) {
+      const collapsed = seg.replace(/[-_.]+/g, "");
+      if (CHROME_SENSITIVE_PATH_TERMS.has(collapsed)) {
+        return true;
+      }
+    }
+
+    for (const key of parsed.searchParams.keys()) {
+      const lowerKey = key.toLowerCase();
+      if (CHROME_SENSITIVE_PATH_TERMS.has(lowerKey)) {
+        return true;
+      }
+      const keyTokens = lowerKey.split(/[/_\-.]+/).filter(Boolean);
+      if (keyTokens.some((token) => CHROME_SENSITIVE_PATH_TERMS.has(token))) {
+        return true;
+      }
+    }
+
+    return false;
   } catch (error) {
     return true;
   }
@@ -228,6 +269,7 @@ function newChromePageState(url, canonicalUrl, title) {
     revisitSignal: false,
     revisitCount: 0,
     sentToBackend: false,
+    sentDwellSeconds: 0,
     sendInFlight: false,
     nextSendAttemptAt: 0,
     contentExtract: "",
@@ -312,6 +354,7 @@ async function sendChromePageToBackend(tabState) {
       is_app_page: tabState.isAppPage
     });
     tabState.sentToBackend = true;
+    tabState.sentDwellSeconds = tabState.dwellSeconds;
   } catch (error) {
     tabState.nextSendAttemptAt = Date.now() + SEND_RETRY_DELAY_MS;
     throw error;
@@ -349,11 +392,52 @@ async function evaluateChromeIntent(tabState) {
   }
 }
 
-/** Last chance for a page that is going away: evaluate, then send ignoring the retry delay. */
+/**
+ * Send additional dwell time accumulated since the page was first ingested (C5).
+ * Called on tab close or page retirement.
+ */
+async function sendExtraDwellToBackend(tabState) {
+  if (!tabState.sentToBackend || tabState.sendInFlight) {
+    return;
+  }
+  const extraDwell = tabState.dwellSeconds - (tabState.sentDwellSeconds || 0);
+  if (extraDwell <= 0) {
+    return;
+  }
+
+  tabState.sendInFlight = true;
+  try {
+    await postToBackend("/chrome/ingest", {
+      url: tabState.url,
+      canonical_url: tabState.canonicalUrl,
+      title: tabState.title,
+      domain: tabState.domain,
+      dwell_seconds: extraDwell,
+      scroll_depth: tabState.scrollDepth,
+      interaction_count: tabState.interactionCount,
+      revisit_count: 0, // the server ADDS revisit_count on conflict; the first send already counted it
+      content_extract: tabState.isAppPage ? "" : tabState.contentExtract,
+      word_count: tabState.isAppPage ? null : tabState.wordCount,
+      referrer: tabState.referrer,
+      is_app_page: tabState.isAppPage
+    });
+    tabState.sentDwellSeconds = tabState.dwellSeconds;
+  } catch (error) {
+    console.error("[Echo background] Failed to send extra dwell on page close:", error.message);
+  } finally {
+    tabState.sendInFlight = false;
+  }
+}
+
+/** Last chance for a page that is going away: send extra dwell if already sent (C5), else evaluate and send. */
 async function finalizeChromePage(tabState) {
   try {
-    await evaluateChromeIntent(tabState);
-    await sendChromePageToBackend(tabState);
+    if (tabState.sentToBackend) {
+      await sendExtraDwellToBackend(tabState);
+    } else {
+      await evaluateChromeIntent(tabState);
+      await sendChromePageToBackend(tabState);
+    }
   } catch (error) {
     console.error("[Echo background] Chrome ingest failed on page close:", error.message);
   }
