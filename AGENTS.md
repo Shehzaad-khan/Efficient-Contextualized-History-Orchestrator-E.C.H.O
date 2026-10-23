@@ -71,14 +71,14 @@ Every feature in the architecture doc is implemented and wired:
 - Capture settings (Redis) enforced across all three connectors.
 - `DELETE /items/{id}`, `GET /export`, and `GET|POST /settings` API routes.
 - Extension popup (search, recent 5 items, pause toggle).
-- Centroid recomputation (`recompute_centroids()` in `enp/system_group_classifier.py`, persists `centroids.npz`; nothing calls it yet — decision A36: run it at ENP start when the file is missing or older than 30 days).
+- Centroid recomputation (`recompute_centroids()` in `enp/system_group_classifier.py`) runs at ENP startup when `centroids.npz` is missing or older than 30 days; it persists the updated centroids.
 - Rule-suggestion surfacing (step 9) and weekly review UI in the frontend.
 
 `rsr/` — the orphaned duplicate of `rse/` — was **deleted on 2026-08-31**. It was mounted nowhere and its internal imports (`retrival.*`) had always been broken, so `import rsr` never succeeded. `rse/` is and always was the live retrieval engine. Its only non-duplicate content was a retrieval-quality evaluation harness; recover it from history if needed: `git checkout 16bde99 -- rsr/quality_evaluator.py rsr/query_quality_eval_set.py` (its `_calculate_diversity` metric measures a prohibited feature — drop that part).
 
 ### Known Open Items
 - **OCR for image attachments is optional:** `pytesseract` is commented in `requirements.txt` (requires the Tesseract system binary).
-- **Scheduling is manual / OS-scheduler:** Weekly auto-assign and monthly centroid recomputation are run as needed; there is no in-app cron.
+- **Scheduling:** Weekly auto-assign is manual / OS-scheduler; monthly centroid recomputation runs at ENP startup when its file is missing or older than 30 days. There is no in-app cron.
 - **Frontend settings toggle:** "Memory indexing" in Settings is localStorage-only (ENP worker has no runtime switch); the three capture toggles ARE backend-wired.
 
 ---
@@ -89,7 +89,7 @@ Every feature in the architecture doc is implemented and wired:
   - `ste/postgresql_manager.py` (SQLAlchemy, `:name` params) is used by `wba/`, `enp/`, `backend/items.py`, and `ingestion/gmail/`.
   - `rse/search_coordinator.py` uses `psycopg2` + `%s` params directly.
   - *Never mix styles within the same file.*
-- **FAISS index:** Uses `IndexFlatL2` over **unnormalized** MiniLM vectors ($L_2\text{ distance} \neq \text{cosine}$). Anywhere a cosine threshold matters (0.35 quality gate, KNN group scoring, centroids), compute true cosine from `manager.vectors` — never interpret raw $L_2$ as similarity.
+- **FAISS index:** Uses `IndexFlatL2` over **unit-length** MiniLM vectors (C14: the model's pipeline ends in a Normalize layer; every saved vector has norm 1.0). For unit vectors L2 order equals cosine order, but an L2 distance is still not a similarity score. Anywhere a cosine threshold matters (0.35 quality gate, KNN group scoring, centroids), compute true cosine from the vectors (`get_manager().get_vector()` / `search_all()`; the manager's state is private). When the embedding model changes (A40), check the new model also outputs unit-length vectors, or normalize explicitly.
 - **FastAPI route ordering:** Static paths (e.g., `/groups/review`) must be declared before parametrized ones (`/groups/{group_id}/...`) in `backend/wellbeing.py`.
 - **Port bindings:** Backend CORS allows ports 3000 and 8000; the Vite dev server must stay on port 3000.
 - **Frontend conventions:** Strict TypeScript, custom Tailwind tokens only (no default arbitrary Tailwind palette), all backend calls go through `src/lib/api.ts` with `withFallback` (demo mode). Respect `prefers-reduced-motion`. Fonts are bundled locally — never add a font CDN link.

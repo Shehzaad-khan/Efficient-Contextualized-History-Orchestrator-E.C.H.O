@@ -475,6 +475,9 @@ Still open — decide each:
      query and short snippets go to the LLM, for classifying and for answering — never full mails, pages or
      transcripts"; matches A31.5). Housekeeping (option 4): add 'fallback' to the documented classified_by values.
 
+- **Checked 2026-10-22:** CLAUDE.md §3 records the per-item Stage-4 call and snippet boundary. The design doc
+  already lists `fallback` in §9.6, Table 2, and the glossary, and explains the fallback result in §9.4.
+
 ### A20. Centroids may learn the SOURCE instead of the category — [x] decided 2026-10-21
 - Your concern: a centroid could end up meaning "Gmail-like" / "YouTube-like" instead of "work" / "study".
 - **Measured offline (2026-10-17, real MiniLM, same 4 topics written in each source's embeddable-text format):**
@@ -495,6 +498,9 @@ Still open — decide each:
   confirmed vectors first, then average those per-source means (each source gets an equal vote). Check on
   Thursday's local data: confirmed items per category x source, and Stage-3 accuracy per source. Note: Stage-4
   LLM labels come from all sources and also soften the imbalance; the count shows how much.
+- **Implemented 2026-10-22:** recomputation now groups confirmed vectors by category and `source_type`, computes
+  each source mean, then averages those means equally. The existing 10-item minimum and returned counts still use
+  the total number of indexed confirmed items in that category.
 
 ### A21. Replace the Stage-4 text LLM call with a typed classifier — [x] decided 2026-10-21 (revised from 2026-10-18)
 - Today: a chat model is asked for "exactly one word" and the reply is parsed; confidence is a fixed 0.90.
@@ -817,6 +823,10 @@ Still open — decide each:
      Neon dump; all schema changes happen Thursday, before the data cleanup and re-embed; dedup
      UNIQUE(source_type, source_id) and non-NULL `system_group_id` stay unless a decision says otherwise.
      Update CLAUDE.md §2.2 + paper DB section to match.
+     Owner's decision 2026-10-23: Neon is left as is; known drift is fixed once, on the local restore.
+     Migration SQL list so far: (a) `ALTER TABLE gmail_attachments ALTER COLUMN memory_id TYPE uuid USING memory_id::uuid`,
+     then add the FK `memory_id REFERENCES gmail_metadata(memory_id) ON DELETE CASCADE` (Neon has varchar and no FK
+     since B1 dropped `gmail_memory`; all 4 ids exist in `gmail_metadata`).
   4. Time zone: **store UTC, show IST** ("the user end should always be in IST, backend anything is fine").
      Force UTC per connection in code: SQLAlchemy engine in `ste/postgresql_manager.py` + psycopg2 connect in
      `rse/search_coordinator.py` (and ENP's `get_connection`). UI already converts to IST everywhere — verify
@@ -913,11 +923,12 @@ Still open — decide each:
 - **Decision (his, 2026-10-21):** centroids -> **option 1, run at startup** when `centroids.npz` is missing or
   > 30 days old. FAISS rebuild -> **moot**: A31.2 re-embeds everything into a fresh index; C27 still fixes the
   stale "rebuild" messages in `ste/faiss_manager.py`.
-- **Build:** run `recompute_centroids()` inside the ENP worker thread at its start, before the batch loop (no extra
-  thread: CENTROIDS is written only by the ENP thread, so no lock is needed), then load the result into CENTROIDS
-  in-process (today the new file is only picked up on the next start). Categories with < 10 confirmed items keep
-  their seed. Run it AFTER the B5 re-embed has filled FAISS, or it finds no vectors (harmless: it just retries on
-  the next start). Paper/deck may then say "centroids recomputed monthly".
+- **Build (implemented 2026-10-22):** after loading FAISS and initializing seeds, the ENP worker checks the
+  centroid file age and calls `recompute_centroids()` at startup when the file is missing or older than 30 days.
+  A stale file is not loaded, so categories below the 10-item minimum retain their seeds; recomputed values update
+  the current ENP process and are persisted for later starts. If no category reaches the threshold, no file is
+  written and the trigger retries on the next startup. Run after the B5 re-embed has filled FAISS for useful
+  results. This is startup-triggered maintenance, not a calendar scheduler.
 
 ### A37. Data retention: auto-delete old data after a fixed period (PANEL, Phase 3 Review 1) — [x] decided 2026-10-21 (added 2026-10-21, from the Review 2 deck/LLD)
 - Panel: "keep captured data for a fixed period (6 months or 1 year), then delete it automatically to save storage,
@@ -1244,9 +1255,9 @@ Still open — decide each:
 
 | ID | Action | Status |
 |----|--------|--------|
-| B1 | `DROP TABLE gmail_memory` (archive `legacy_gmail_threads.json` stays local) | [ ] |
-| B2 | Remove duplicate `gmail_attachments` rows — keep one per `(memory_id, filename)` | [ ] |
-| B3 | Gmail rows wrongly marked opened: set `first_opened_at` and `last_accessed_at` to NULL where `play_sessions_count = 0` | [ ] |
+| B1 | `DROP TABLE gmail_memory` (archive `legacy_gmail_threads.json` stays local) | [x] 2026-10-23 on Neon: `DROP TABLE gmail_memory CASCADE` (30 rows). Checked first: the `semantic`/`classification`/`interaction`/`analytics`/`content_summary` columns were empty in all 30 rows; title, body, thread, sender, time and has-attachments match `memory_items`/`gmail_metadata` for all 30 (row 28 sits under a different `memory_id`, matched by `source_id`); `source_link` = `https://mail.google.com/mail/u/0/#inbox/<source_item_id>` in all 30; `message_history` was filled in 10 rows = the 10 in `legacy_gmail_threads.json`; `content_attachments` held only filename/mime/size 0 (+ stale Gmail attachment ids in 3). After: table gone, `gmail_attachments` still 4, `memory_items` gmail 70, `gmail_metadata` 70. Backup: Neon branch `backup-pre-b1-gmail-memory` (`br-shy-unit-am2pkoub`; the snapshot limit was reached) - delete it once the A31 dump is taken. Left over: `gmail_attachments.memory_id` is still `varchar` with no FK (`setup_db.py` says `UUID` -> `gmail_metadata`) - add to the A31 migration SQL |
+| B2 | Remove duplicate `gmail_attachments` rows — keep one per `(memory_id, filename)` | [x] 2026-10-23 no-op: Neon has 4 rows, 0 duplicate groups |
+| B3 | Gmail rows wrongly marked opened: set `first_opened_at` and `last_accessed_at` to NULL where `play_sessions_count = 0` | [x] 2026-10-23 on Neon: 34 rows cleared, 0 left wrong, the 3 real opens untouched (snapshot `snap-small-bonus-aml6iy9e` taken first) |
 | B4 | Shorts stored as `is_short = FALSE` — cannot be fixed from the DB; each fixes itself on a re-watch | info only |
 | B5 | Re-embed every row after the ENP review (cleaner, keywords and embeddable text changed; old vectors and
        auto_keywords — full of "the"/"and"/"for" — stay until re-processed). Set `preprocessed = FALSE` on all rows,
@@ -1278,7 +1289,7 @@ Still open — decide each:
   in `asyncio.to_thread`. Done there instead: `poll_once` now skips the fetch when `initialize_database()`
   returns False (it used to ignore the result).
 
-### C4. FAISS staleness — RSE never sees new vectors until a restart — [ ]
+### C4. FAISS staleness — RSE never sees new vectors until a restart — [x] 2026-10-23
 - **Cause:** ENP builds its own `FAISSManager` instead of the shared `get_manager()`.
 - **Order matters** (otherwise ENP's `add()` races unlocked reads → crash risk):
   1. [x] `rse/search_coordinator.py` `_search_full_index` → `manager.search_all`; drop `_cosine_similarity`
@@ -1286,8 +1297,8 @@ Still open — decide each:
   2. [x] `rse/time_anchor.py` (uses `_search_full_index`) → `get_manager().search_all` (2026-10-18).
   3. [x] `wba/group_manager.py` `_item_embedding` / `_knn_score` → `get_vector` + `cosine` (2026-10-18).
   4. [x] `enp/system_group_classifier.py` → `get_vector` (2026-10-17; also imports `ste.faiss_manager` directly).
-  5. [ ] `enp/enrichment_pipeline.py` → use `get_manager()`.
-  6. [ ] Make `index` / `vectors` / `memory_ids` private in `ste/faiss_manager.py`.
+  5. [x] 2026-10-23 `enp/enrichment_pipeline.py` → `get_manager()` (the `load_index()` call went with it; `get_manager()` loads once). Module imports; `compileall` silent. Live end-to-end run 2026-10-23 on Neon (real `run_pipeline` in a thread named `enp-worker`, real embedding model, FAISS index + `centroids.npz` in a temp copy, one synthetic chrome row, removed afterwards): 13/13 checks passed - the reader's `get_vector()` / `search_all()` saw the new vector right after ENP finished, with no reload; it ranked first for its own vector and in the top 3 for a natural-language query; `embedding_index` row written; the saved index file held it on a cold load; the worker stopped cleanly. Stage 4 got `401 Unauthorized` from OpenAI and fell back to `misc` (see chat).
+  6. [x] 2026-10-23 `ste/faiss_manager.py`: `index` → `_fresh_index`, `memory_ids` → `_memory_ids`, `memory_id_to_offset` → `_memory_id_to_offset`, public `vectors` property deleted. A grep over all `.py` files finds no outside use. A public-API round trip (add, re-embed, save, reload, search, get_vector, empty search, wrong dimension) gave identical output before and after the rename.
   7. [x] 2026-10-22 shim `enp/faiss_manager.py` deleted; module-level `add/search/save_index/load_index` and `FAISSManager.search(candidate_ids)` removed (grep: no caller; `search_all` untouched; compileall clean). (2026-10-17: shim now exports only `get_manager`, its last use.) Delete the `enp/faiss_manager.py` shim and the dead module-level `add/search/save_index/load_index`
          + `FAISSManager.search(candidate_ids)`. Point `system_group_classifier` at `ste.faiss_manager`.
          (2026-10-19: `scripts/enp_recompute_centroids.py`, the shim's last caller, was deleted -> the shim has
@@ -1322,15 +1333,19 @@ Still open — decide each:
   startup (in a background thread — it is a DB round trip), so message_store keeps only 30 days. Nothing calls
   it today.
 
-### C8. `wba/regret_system.py` — [ ]
-- `_redis()` sends a PING on every call — one wasted round trip each time.
+### C8. `wba/regret_system.py` — [x] 2026-10-22 (verified: `_redis()` returns the shared client without PING)
+- Verified: `_redis()` returns `get_sync_client()` directly; Redis availability is detected by each caller's first command.
 
-### C9. Remove `gmail_memory` leftovers (standing goal) — [ ]
+### C9. Remove `gmail_memory` leftovers (standing goal) — [x] 2026-10-22 (no code mentions it; the Neon table is dropped separately in B1)
 - [x] Legacy fallback in `enp/enrichment_pipeline.py` (2026-10-17).
 - [x] `parse_message_history` in `enp/topic_extractor.py` + its now-unused imports (2026-10-17).
 - [x] Delete `scripts/export_legacy_gmail_threads.py` (2026-10-19; the archive `legacy_gmail_threads.json`, 25 KB,
       31 Aug, already exists in the project root).
-- **Done when:** `git grep -i gmail_memory` returns only the `.gitignore` line.
+- **Done when:** `git grep -i gmail_memory -- '*.py' '*.ts' '*.tsx' '*.js' '*.jsx' '*.sql' '*.json' '*.toml' '*.txt' '*.yml' '*.yaml'`
+  returns nothing (rewritten 2026-10-22: the old test, "only the `.gitignore` line", could never pass — there is no such line,
+  and the design doc and this file must keep naming the table until B1 drops it).
+- **Verified 2026-10-22:** that command returns no hits (exit 1), and no untracked file contains the name. The remaining
+  mentions are docs only (`Echo_System_Design.md`, this file) and go with B1.
 
 ### C11. Small follow-ups from `enp/enrichment_pipeline.py` (2026-10-17) — [x] 2026-10-22
 - [x] 2026-10-22 `ste/storage_engine.py` `store_youtube_detection` docstring names `enrichment_pipeline._awaiting_hydration`;
@@ -1342,15 +1357,23 @@ Still open — decide each:
 - [x] 2026-10-22 (SQL not run against Postgres) `enp/enrichment_pipeline.py` `_fetch_thread_history`: add `AND mi.preprocessed = TRUE` — a failed earlier
       message has its ERROR TEXT in auto_keywords, which would become thread keywords of the reply.
 
-### C12. `import sentence_transformers` takes 16–23 s on this machine — investigate later — [ ]
-- Measured 2026-10-17 (3 fresh processes, offline model cache): the import line alone took 16–23 s, before any
-  model load. Likely (not profiled yet): mostly PyTorch (`torch`) import, possibly slowed by Windows Defender
-  scanning the .venv's many .dll/.pyd files.
-- Effect: the first embedding after every backend start / ENP script run waits that long (model load itself is
-  now ~0.5 s offline).
-- **To check later:** `python -X importtime -c "import sentence_transformers" 2> importtime.txt` and sort by the
-  cumulative column; then test a Defender exclusion for the .venv folder, and whether an import-time-heavy
-  submodule can be avoided.
+### C12. `import sentence_transformers` takes 16–23 s on this machine — [x] investigated 2026-10-22
+- Profiled a fresh process with `.venv\Scripts\python.exe -X importtime -c "import sentence_transformers"`:
+  44.29 s wall time; the `sentence_transformers` cumulative import entry was 43.30 s. The largest self-time
+  entry was `transformers` at 20.36 s; `torch` was 1.91 s self / 5.79 s cumulative. This points primarily to
+  Transformers' import work, not PyTorch alone.
+- The installed `sentence_transformers` 5.4.1 top-level `__init__.py` eagerly imports backend utilities,
+  cross-encoder/trainer APIs, sparse-encoder APIs and utilities alongside `SentenceTransformer`. No safe narrow
+  import path was identified: Python executes the package `__init__.py` even when importing its submodules.
+  A lower-level Transformers rewrite would change embedding/model behavior and is not a cheap safe optimization.
+- Re-measured 2026-10-22 (same command, second run): 18.7 s cumulative for `sentence_transformers` — back inside the
+  16–23 s range of the heading. `transformers` is again the largest self-time entry (2.4 s self / 8.7 s cumulative);
+  `torch` 0.9 s self / 3.7 s cumulative. So the 44 s run above was a slow (likely cold-cache) outlier; the
+  "mostly Transformers, not PyTorch" reading holds in both runs.
+- Defender exclusion test **not run**: `Get-MpPreference` requires Administrator on this machine and the current
+  shell is not elevated. No security exclusions were changed. To test later, compare the same fresh-process profile
+  with a temporary `.venv` exclusion from an elevated shell, then remove it. Backend warm before the demo remains
+  the no-change workaround; model load itself is still about 0.5 s offline.
 
 ### C13. LLM calls have no timeout — `rse/config.py` (+ synthesizer, parse_intent) — [x] 2026-10-22 (`LLM_CONFIG["timeout"] = 60`, passed by `rse/llm_factory.py`, which all 4 callers use; checked on ChatOpenAI: timeout 60.0. ChatAnthropic and ChatGoogleGenerativeAI accept `timeout` (fields checked); ChatOllama is not installed, so unchecked)
 - Found 2026-10-17 in `enp/system_group_classifier.py`. Stage 4 now uses LLM_CONFIG's `max_retries` (fail fast),
@@ -1364,6 +1387,7 @@ Still open — decide each:
   index have norm 1.0. (`normalize_embeddings=False` only skips a SECOND normalization.)
 - Nothing is broken: code that computes true cosine is still correct; for unit vectors L2 order == cosine order,
   so that extra cosine work is simply unnecessary.
+- **Also fixed 2026-10-22:** `AGENTS.md` (FAISS bullet) still said "unnormalized"; now matches CLAUDE.md §5 (unit-length).
 - Fix the wording in: project `CLAUDE.md` §5 ("FAISS is IndexFlatL2 over UNNORMALIZED MiniLM vectors" — needs your
   OK, it is the project instructions file), `ste/faiss_manager.py` docstrings, `rse/search_coordinator.py` comments.
   `enp/embedding_generator.py` already corrected.
@@ -1468,7 +1492,7 @@ Still open — decide each:
 
 ---
 
-### C27. Stale pointers to the scripts deleted on 2026-10-19 — [x] 2026-10-22: all code pointers fixed, plus CLAUDE.md §4 and `AGENTS.md:74` reworded (see "Done 2026-10-22" below); only `build_lld.py:589` (LLD generator) left (found 2026-10-19, scripts/ review)
+### C27. Stale pointers to the scripts deleted on 2026-10-19 — [x] 2026-10-22: all code pointers fixed, plus CLAUDE.md §4 and `AGENTS.md:74` reworded (see "Done 2026-10-22" below); README and the LLD generator fixed too (found 2026-10-19, scripts/ review)
 - Deleted by his decision: `redis-py.py`, `test_gmail_auth.py`, `test_youtube_auth.py`, `enp_run_once.py`,
   `enp_reprocess.py`, `enp_rebuild_faiss.py`, `enp_recompute_centroids.py`, `export_legacy_gmail_threads.py`.
 - Text that still names them (fix in the same pass as A36, since A36 decides what the messages should say):
@@ -1485,10 +1509,12 @@ Still open — decide each:
 - **Done 2026-10-22:** `ste/faiss_manager.py` — the 4 "rebuild" messages now share one `_REBUILD_HINT` (delete `data_faiss/`
   files, `UPDATE memory_items SET preprocessed = FALSE`, restart; failed rows also need `ENP_RETRY_FAILED=true`) and the
   dead script row is gone from the callers list; `enp/enrichment_pipeline.py` retry hint; `enp/embedding_generator.py`
-  callers list; `enp/system_group_classifier.py` (2 places: nothing calls `recompute_centroids` yet, A36 plans a run at
-  ENP start); `enp/faiss_manager.py` (no caller left, delete per C4 step 7).
-- **Also done 2026-10-22:** CLAUDE.md §4 and `AGENTS.md:74` now say `recompute_centroids()` exists but nothing calls it yet (A36 plans a run at ENP start); reword again once A36 is built.
-- **Left:** `docs/Phase III/build/lld/build_lld.py:589` names the deleted script too (it generates the LLD document; not an instruction file, so not touched).
+  callers list; `enp/system_group_classifier.py` (2 places; reworded again once A36 was built: the docstrings now say
+  the ENP worker runs the recompute at start); `enp/faiss_manager.py` (no caller left, delete per C4 step 7).
+- **Also done 2026-10-22:** CLAUDE.md §4 and `AGENTS.md:74` first said `recompute_centroids()` had no caller yet; reworded
+  after A36 was built (they now say ENP runs it at startup when `centroids.npz` is missing or older than 30 days).
+- **Also done 2026-10-22:** `README.md:70` no longer lists the deleted "rebuild FAISS, recompute centroids" scripts (now `setup_db.py`, `enp_status.py`, the two files left in `scripts/`).
+- **Also done 2026-10-22:** `docs/Phase III/build/lld/build_lld.py:589` (the LLD generator) now names `recompute_centroids()` run at ENP startup instead of the deleted script. The already-built `.docx` is unchanged until the generator is re-run.
 
 ### C28. Gmail sign-in can hang backend shutdown — `ingestion/gmail/router.py` + `backend/main.py` — [ ] (found 2026-10-19, YouTube sign-in change)
 - `authenticate_gmail()` opens the browser sign-in inside an `asyncio.to_thread` worker of the gmail-poller.

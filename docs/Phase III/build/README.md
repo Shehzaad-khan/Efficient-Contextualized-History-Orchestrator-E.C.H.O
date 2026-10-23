@@ -38,18 +38,26 @@ python "docs\Phase III\build\diagrams\render_mermaid.py" "docs\Phase III\build\d
 
 # Review 3 deck build
 
-Builds `../ECHO_Phase3_Review3.pptx` from the official Review 3 template (`TEMPLATE` constant in
-`build_deck_r3.py`). `build_deck.py` and the Review 2 outputs are untouched. Content, sources, placeholders and the
-diagram audit are in `r3/approved_content_r3.md`.
+Builds `../ECHO_Phase3_Review3.pptx` (20 slides) from the official Review 3 template (`TEMPLATE` constant in
+`build_deck_r3.py`). `build_deck.py` and the Review 2 outputs are untouched. The text of every slide, with its sources and
+the checklist of what must be true on the review day, is in `r3/slide_text_draft.md`. `r3/approved_content_r3.md` is the
+older (revision 2) content record.
 
 ```powershell
 python "docs\Phase III\build\build_deck_r3.py"                       # also regenerates r3/backgrounds + r3/assets
 python "docs\Phase III\build\build_deck_r3.py" "$env:TEMP\r3.pptx"   # deck open in PowerPoint
 ```
-- Template slides are kept in order; their instruction boxes are removed. Extra section slides clone the section's
-  own title and rule (snapshotted before anything is drawn).
-- Backgrounds are set as slide backgrounds (`p:bg`), so the master's PES logo stays on top.
+- Design (v3, 2026-10-22): near-white backgrounds, one blue accent, grey for stores and detail; no module colours.
+  Backgrounds are slide backgrounds (`p:bg`), so the master's PES logo stays on top. `bg_plain` has no decoration (for the
+  guide-approval screenshot); `bg_title` and `bg_thanks` have a slim navy band.
+- Slides: template slides are kept in order and their instruction boxes removed. Implementation uses 6 slides (2 per module):
+  Module 1 capture + enrichment, Module 2 pipeline + worked example, Module 3 measures + groups. If the guide reads the
+  template's "max 4 slides" as a total, merge each pair.
+- Removed in v3: "What changed since Review 2" and "Results (1/2) measured". No decision IDs on any slide; speaker notes
+  carry the detail.
 - `EMBEDDING_MODEL` and `INCLUDE_GUIDE_APPROVAL_SLIDE` are one-line switches at the top of the script.
+- `check_font_sizes()` fails the build below 18 pt. Do not run the build and `render_pptx.ps1` at the same time
+  (the render holds the files open).
 - `render_pptx.ps1` cannot open the template's en-dash file name; render the ASCII-named output, or a copy.
 
 # Review 2 LLD document build

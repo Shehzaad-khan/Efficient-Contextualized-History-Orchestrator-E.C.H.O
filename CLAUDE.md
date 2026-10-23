@@ -25,11 +25,15 @@ whenever a decision or change makes it wrong: edit it directly, no need to ask.
 
 ## 2. Hard constraints — never violate
 
-1. **Database execution disabled by default (explicit user request required).**
-   No connecting to PostgreSQL/Redis, inserting test data, or running live queries/migrations
-   by default. Live DB inspection, SQL queries, and Neon operations are permitted ONLY
-   when the user explicitly asks. Never search for or expose credentials/tokens/.env values.
-   Verify by compilation only unless requested:
+1. **Database access is allowed (owner's standing permission, 2026-10-22, final-build run before the 28 Oct review).**
+   PostgreSQL/Neon and Redis/Upstash: live queries, test data, migrations and Neon/Upstash operations need no
+   per-task ask. Guardrails that stay: never search for or expose credentials/tokens/.env values; before any
+   destructive step (DROP, bulk DELETE/UPDATE, deleting a branch or project) take a Neon snapshot or branch, count
+   the affected rows first, and report what ran (see Section B of `docs/review/ste_open_items.md`).
+   **Current state (2026-10-23): the live database is still Neon (`echo-dev`) and Redis is still Upstash.** The A31
+   move to local PostgreSQL + Redis is decided but NOT done (no `pg_dump` yet). Run B1–B3 and all DB work against
+   Neon through the Neon MCP until the owner says the local restore is finished; then delete this note.
+   At the end of a session also verify by compilation:
    `python -m compileall -q backend enp ingestion rse ste wba scripts` and
    `cd frontend && npm run build` (tsc strict + vite).
 2. **The schema is open, but every change must belong to a decided item** (owner's
@@ -87,6 +91,11 @@ whenever a decision or change makes it wrong: edit it directly, no need to ask.
 - **App pages (Slack/Notion/Jira) are stored as per-page memory items** with their tab title and
   `raw_text = NULL` (owner's decision A8, 2026-10-21), not §6.5's "session duration only". Their text is
   never captured; the title is embedded and searchable.
+- **Stage-4 classification runs per ambiguous item**, inside the ENP batch, rather than one batched LLM call
+  as §9.4 describes (A19). Classification sends the source, a title capped at 200 characters, and a clean-text
+  snippet capped at 300 characters for every source, including Gmail. It never sends full emails, pages, or
+  transcripts. Missing LLM, call failure, or an invalid category falls back to `misc` with
+  `classified_by = 'fallback'`.
 - **Conversation history keeps the `PostgresChatMessageHistory` table format, not the class.**
   `rse/conversation_memory.py` reads and writes the `message_store` table directly through the RSE psycopg2 pool.
 - File names differ from the doc's "Key Files" lists in places (e.g. `gmail_api.py`
@@ -102,8 +111,8 @@ Gmail poll for "today/just received" queries), capture settings (Redis) enforced
 all three connectors, `DELETE /items/{id}` + `GET /export` + `GET|POST /settings`,
 extension popup (search / recent 5 / pause toggle), centroid recomputation
 (`recompute_centroids()` in `enp/system_group_classifier.py`, persists `centroids.npz`;
-nothing calls it yet — decision A36: run it at ENP start when the file is missing or
-older than 30 days), rule-suggestion surfacing (step 9) + weekly review UI in the frontend.
+ENP runs it at startup when the file is missing or older than 30 days), rule-suggestion
+surfacing (step 9) + weekly review UI in the frontend.
 
 `rsr/` — the orphaned duplicate of `rse/` — was **deleted on 2026-08-31**. It was
 mounted nowhere and its internal imports (`retrival.*`) had always been broken, so
@@ -116,8 +125,8 @@ history if Review 2 needs it:
 Known open items:
 - OCR for image attachments is optional (pytesseract commented in requirements.txt —
   needs the Tesseract system binary).
-- Scheduling (weekly auto-assign, monthly centroid recompute) is manual/OS-scheduler;
-  there is no in-app cron.
+- Weekly auto-assign is manual/OS-scheduler; monthly centroid recomputation runs at ENP
+  startup when its file is missing or older than 30 days. There is no in-app cron.
 - Frontend "Memory indexing" toggle in Settings is localStorage-only (ENP worker has
   no runtime switch); the three capture toggles ARE backend-wired.
 
@@ -133,7 +142,7 @@ Known open items:
   in a Normalize layer; every saved vector has norm 1.0). For unit vectors, L2 order equals
   cosine order, but an L2 distance is still not a similarity score. Anywhere a cosine
   threshold matters (0.35 quality gate, KNN group scoring, centroids), compute cosine from
-  `manager.vectors`. When the embedding model changes (A40), check the new model also
+  the vectors (`get_manager().get_vector()` / `search_all()`; the manager's state is private). When the embedding model changes (A40), check the new model also
   outputs unit-length vectors, or normalize explicitly.
 - **FastAPI route ordering**: static paths (`/groups/review`) must be declared before
   parametrized ones (`/groups/{group_id}/...`) in `backend/wellbeing.py`.

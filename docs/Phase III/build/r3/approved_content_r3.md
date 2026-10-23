@@ -1,6 +1,7 @@
 # Content and sources — E.C.H.O. Capstone Phase 3 Review 3 deck
 
 Built by `../build_deck_r3.py` → `docs/Phase III/ECHO_Phase3_Review3.pptx` (20 slides). Revision 2, 2026-10-21.
+**SUPERSEDED on 2026-10-22 by `slide_text_draft.md` (v3 text and design). Kept as the record of revision 2.**
 - Review: Wed 28 Oct 2026, 8 min talk + 8 min demo + 4 min Q&A, shown on a TV.
 - Milestone: 100% implementation. Guide approval is due Fri 23 Oct.
 - **Framing (owner):** the deck shows every decided item as built and every phase up to the review as done.

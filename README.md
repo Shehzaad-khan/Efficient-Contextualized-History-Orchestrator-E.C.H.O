@@ -67,7 +67,7 @@ Echo finds the interview email, resolves its timestamp as a hard time anchor, re
 | `rse/` | **RSE** | LangGraph hybrid retrieval graph, conversation memory, LLM synthesis |
 | `backend/` | **UIL** | FastAPI gateway (`main.py`) — all routers, data export/deletion/settings |
 | `frontend/` | **UIL** | React + TypeScript dashboard: Recall |
-| `scripts/` | — | DB setup, ENP maintenance (rebuild FAISS, recompute centroids) |
+| `scripts/` | — | DB setup (`setup_db.py`), ENP queue status (`enp_status.py`) |
 | `docs/Timeless_docs/` | — | **`Echo_System_Design.md` — architecture + DB design, the source of truth** |
 
 ---

@@ -10,33 +10,30 @@ similarity score must compute true cosine from the vectors (cosine()).
 
 On disk: data_faiss/echo_faiss.index (the vectors) +
 data_faiss/echo_faiss.index.meta.json (the memory_id of each row, in order).
-Row offset N in the index belongs to memory_ids[N]. The same folder holds the
+Row offset N in the index belongs to the Nth memory id in that list. The same folder holds the
 classifier's centroids.npz. data_faiss/ is git-ignored (personal data); set
 ECHO_FAISS_INDEX_PATH to use another location.
 
 Callers:
-    Writes   enp/enrichment_pipeline.py   its OWN FAISSManager (ENP thread):
+    Writes   enp/enrichment_pipeline.py   get_manager() (ENP thread):
                                           add() per item, save_index() per batch
-    Reads    get_manager() — the shared process-wide instance:
+    Reads    get_manager() — the same shared process-wide instance:
              rse/search_coordinator.py    full-index search (request threads)
              rse/time_anchor.py           nearest item for an anchor phrase
              wba/group_manager.py         item vectors for KNN group scoring
              enp/system_group_classifier.py  centroid recomputation
 
-Known gap (tracked; fixed in enrichment_pipeline.py's review): the ENP thread
-writes to its own instance, and get_manager() loads the files from disk once.
-So items embedded after the first query are not semantically searchable until
-the backend restarts. The fix is for ENP to use get_manager() too — this file
-is ready for that (all state is behind one lock).
+ENP and the readers share one instance (C4), so an item is semantically
+searchable as soon as add() returns; the files on disk are only read once, at
+startup.
 
 Thread safety:
     - `self._lock` (RLock) guards every field. All methods take it, so one
       instance can be shared by the ENP thread and request threads. FAISS
       itself is NOT safe for add() running during search() on the same index.
     - search_all() and get_vector() are the locked read paths for outside
-      callers. The public attributes (index, vectors, memory_ids,
-      memory_id_to_offset) are read WITHOUT the lock by the callers above;
-      those callers move to the locked methods when each is reviewed.
+      callers. The state behind them (_index, _buffer, _memory_ids,
+      _memory_id_to_offset) is private; nothing outside this file touches it.
     - The PostgreSQL upsert in add() runs outside the lock, so a slow Neon
       round trip never blocks searches.
     - `_manager_lock` guards creation of the shared instance in get_manager().
@@ -127,13 +124,13 @@ class FAISSManager:
     """
     IndexFlatL2 over unit-length MiniLM vectors, mirrored by a numpy cache.
 
-    The numpy cache (``vectors``) is the source of truth; ``index`` is derived
+    The numpy cache (``_buffer``) is the source of truth; ``_index`` is derived
     from it and kept in sync incrementally:
 
       * appending a new memory_id   -> index.add() (O(1)) plus one buffer row
       * re-embedding an existing id -> buffer row overwritten in place and the
         index marked stale. IndexFlatL2 exposes no single-row update, so the
-        index is rebuilt lazily on the next read of ``.index`` — once per batch
+        index is rebuilt lazily on the next read of ``_fresh_index`` — once per batch
         rather than once per changed item.
     """
 
@@ -153,10 +150,10 @@ class FAISSManager:
         self.dimension = dimension
         self.embedding_version = embedding_version
         self.index_path = Path(index_path or os.getenv("ECHO_FAISS_INDEX_PATH", DEFAULT_INDEX_PATH))
-        # RLock: public methods read `self.index`, whose property takes the lock again.
+        # RLock: public methods read `self._fresh_index`, whose property takes the lock again.
         self._lock = threading.RLock()
-        self.memory_ids: list[str] = []
-        self.memory_id_to_offset: dict[str, int] = {}
+        self._memory_ids: list[str] = []
+        self._memory_id_to_offset: dict[str, int] = {}
         self._index = faiss.IndexFlatL2(self.dimension)
         self._index_stale = False
         self._buffer = np.empty((0, self.dimension), dtype=np.float32)
@@ -165,18 +162,12 @@ class FAISSManager:
     # -- Derived views --------------------------------------------------------
 
     @property
-    def index(self):
+    def _fresh_index(self):
         """The FAISS index, rebuilt first if in-place updates left it stale."""
         with self._lock:
             if self._index_stale:
                 self._materialize_index()
             return self._index
-
-    @property
-    def vectors(self) -> np.ndarray:
-        """Live (n, dim) view of the cached vectors — not a copy, not locked.
-        Outside callers should use get_vector()."""
-        return self._buffer[: self._count]
 
     @property
     def metadata_path(self) -> Path:
@@ -191,7 +182,7 @@ class FAISSManager:
         return arr
 
     def _rebuild_mappings(self) -> None:
-        self.memory_id_to_offset = {memory_id: idx for idx, memory_id in enumerate(self.memory_ids)}
+        self._memory_id_to_offset = {memory_id: idx for idx, memory_id in enumerate(self._memory_ids)}
 
     def _reserve(self, needed: int) -> None:
         capacity = self._buffer.shape[0]
@@ -208,7 +199,7 @@ class FAISSManager:
         started_at = time.perf_counter()
         index = faiss.IndexFlatL2(self.dimension)
         if self._count:
-            index.add(np.ascontiguousarray(self.vectors))
+            index.add(np.ascontiguousarray(self._buffer[: self._count]))
         self._index = index
         self._index_stale = False
         # DEBUG, not INFO: with a shared instance this can run once per query
@@ -245,8 +236,8 @@ class FAISSManager:
         )
 
     def _clear(self) -> None:
-        self.memory_ids = []
-        self.memory_id_to_offset = {}
+        self._memory_ids = []
+        self._memory_id_to_offset = {}
         self._index = faiss.IndexFlatL2(self.dimension)
         self._index_stale = False
         self._buffer = np.empty((0, self.dimension), dtype=np.float32)
@@ -271,10 +262,10 @@ class FAISSManager:
         arr = self._ensure_vector(vector)
 
         with self._lock:
-            offset = self.memory_id_to_offset.get(memory_id)
+            offset = self._memory_id_to_offset.get(memory_id)
             if offset is not None:
                 # Re-embedding a known item: overwrite its row and defer the index
-                # rebuild to the next read of `.index`.
+                # rebuild to the next read of `_fresh_index`.
                 self._buffer[offset] = arr[0]
                 self._index_stale = True
                 is_new = False
@@ -282,8 +273,8 @@ class FAISSManager:
                 self._reserve(self._count + 1)
                 self._buffer[self._count] = arr[0]
                 self._count += 1
-                self.memory_ids.append(memory_id)
-                self.memory_id_to_offset[memory_id] = self._count - 1
+                self._memory_ids.append(memory_id)
+                self._memory_id_to_offset[memory_id] = self._count - 1
                 if not self._index_stale:
                     # A stale index gets rebuilt wholesale on its next read; appending
                     # to it now would only be thrown away.
@@ -309,14 +300,14 @@ class FAISSManager:
         """
         query = self._ensure_vector(query_vector)
         with self._lock:
-            index = self.index
+            index = self._fresh_index
             total = index.ntotal
             if total == 0:
                 return []
             _, offsets = index.search(query, min(max(k, 1), total))
             # Copy the rows while locked: a re-embed may overwrite them in place.
             hits = [
-                (self.memory_ids[offset], self._buffer[offset].copy())
+                (self._memory_ids[offset], self._buffer[offset].copy())
                 for offset in offsets[0]
                 if offset >= 0
             ]
@@ -328,7 +319,7 @@ class FAISSManager:
     def get_vector(self, memory_id: str) -> np.ndarray | None:
         """A copy of the item's vector, or None when it is not indexed yet."""
         with self._lock:
-            offset = self.memory_id_to_offset.get(str(memory_id))
+            offset = self._memory_id_to_offset.get(str(memory_id))
             if offset is None:
                 return None
             return self._buffer[offset].copy()
@@ -347,12 +338,12 @@ class FAISSManager:
             temp_index_path = _temp_path_for(target)
             temp_metadata_path = _metadata_path_for(temp_index_path)
 
-            index = self.index
+            index = self._fresh_index
             total = index.ntotal
             metadata = {
                 "dimension": self.dimension,
                 "embedding_version": self.embedding_version,
-                "memory_ids": self.memory_ids,
+                "memory_ids": self._memory_ids,
             }
             faiss.write_index(index, str(temp_index_path))
             temp_metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
@@ -423,7 +414,7 @@ class FAISSManager:
 
             self._index = index
             self._index_stale = False
-            self.memory_ids = memory_ids
+            self._memory_ids = memory_ids
             self._rebuild_mappings()
             self._load_vector_cache(index)
             self.index_path = target

@@ -23,9 +23,9 @@ again).
 Threading: run_pipeline is blocking. backend/main.py runs it in a worker
 thread named 'enp-worker', so nothing here touches the event loop. Pass a
 threading.Event as stop_event and set it to stop the loop between batches.
-Known gap (tracked as C4): this thread builds its own FAISSManager, so RSE does
-not see new vectors until a restart. Switching to get_manager() must wait until
-the RSE / WBA readers use the locked FAISS API.
+FAISS: this thread uses the shared get_manager(), the same instance RSE and WBA
+read through its locked methods, so a new vector is searchable as soon as add()
+returns (C4).
 
 Database: psycopg2 with %s params. One connection per batch, reused for every
 read and write in it. Each item's writes commit on their own.
@@ -48,10 +48,15 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from enp.embedding_generator import generate_embedding, generate_embeddings
-from enp.system_group_classifier import classify_system_group, initialize_centroids
+from enp.system_group_classifier import (
+    centroids_need_recompute,
+    classify_system_group,
+    initialize_centroids,
+    recompute_centroids,
+)
 from enp.text_cleaner import clean_item_text
 from enp.topic_extractor import build_embeddable_text, sender_domain_hint
-from ste.faiss_manager import EMBEDDING_VERSION, VECTOR_DIMENSION, FAISSManager
+from ste.faiss_manager import EMBEDDING_VERSION, VECTOR_DIMENSION, FAISSManager, get_manager
 from ste.storage_engine import SYSTEM_GROUP_IDS
 
 logger = logging.getLogger(__name__)
@@ -531,11 +536,17 @@ def run_pipeline(
     """
     stop_event = stop_event or threading.Event()
 
-    manager = FAISSManager()
-    manager.load_index()
+    manager = get_manager()
 
     logger.info("Initializing Stage 3 centroid seeds")
     initialize_centroids(generate_embedding)
+    if centroids_need_recompute():
+        try:
+            updated = recompute_centroids()
+            logger.info("ENP startup centroid recompute updated %d categories", len(updated))
+        except Exception:
+            # Centroid maintenance must not prevent the enrichment queue from running.
+            logger.exception("ENP startup centroid recompute failed; continuing with available centroids")
     logger.info(
         "ENP started: batch_size=%s poll_interval=%ss embedding_version=%s dim=%s",
         batch_size,

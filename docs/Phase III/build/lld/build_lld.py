@@ -586,7 +586,8 @@ def module_memory(d: TemplateDocument) -> None:
         "labels, .edu senders, and YouTube categories; (2) a lookup table of 200+ known domains; (3) the "
         "nearest category centroid by cosine similarity; (4) an LLM fallback that answers with one word. If the "
         "LLM is unavailable the item becomes `misc`, so enrichment never blocks. Centroids start from seed "
-        "texts and are improved by `scripts/enp_recompute_centroids.py` from confirmed items.",
+            "texts and are improved by `recompute_centroids()` from confirmed items; the ENP worker runs it at "
+        "startup when `centroids.npz` is missing or older than 30 days.",
     ], [
         ["dict[str, str]", "DOMAIN_CATEGORY_MAP", "public, constant", "200+ entries", "Stage 2 domain → category"],
         ["dict[str, ndarray]", "CENTROIDS", "public", "{}", "Category → centroid vector (stage 3)"],

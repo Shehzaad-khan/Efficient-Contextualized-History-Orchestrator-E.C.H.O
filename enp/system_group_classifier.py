@@ -20,14 +20,14 @@ Caller: enrichment_pipeline.classify_item -> classify_system_group(item, embeddi
 Centroids (CENTROIDS):
   - initialize_centroids (ENP start): embed the 5 SEED_TEXTS, then override them
     with data/.../centroids.npz when a recompute has saved one.
-  - recompute_centroids (nothing calls it today; decision A36: run it at ENP
-    start when centroids.npz is missing or > 30 days old): per category, the mean stored FAISS vector of items classified
-    'structural', 'user_override' or 'llm' (needs >= 10 such items), saved
-    to centroids.npz. The ENP thread picks it up on its next start.
+  - recompute_centroids (ENP start when centroids.npz is missing or > 30 days
+    old): per category, average the per-source means of stored FAISS vectors
+    classified 'structural', 'user_override' or 'llm' (needs >= 10 items), and
+    save the result to centroids.npz and the current process's CENTROIDS.
 
 Threading: CENTROIDS and the Stage-4 client are module globals written only by
-the ENP thread (and by the recompute script, a separate process); nothing else
-in the backend calls this module, so no lock. Never logs titles or content.
+the ENP thread (including its startup recompute); nothing else in the backend
+calls this module, so no lock. Never logs titles or content.
 """
 
 import logging
@@ -35,6 +35,7 @@ import os
 from pathlib import Path
 import re
 import tempfile
+import time
 from typing import Any, Dict
 from urllib.parse import urlparse
 
@@ -301,6 +302,13 @@ def _load_persisted_centroids() -> bool:
     if not path.exists():
         return False
     try:
+        if time.time() - path.stat().st_mtime > _CENTROID_MAX_AGE_SECONDS:
+            logger.info("Ignoring centroids.npz older than 30 days; using seeds before recompute")
+            return False
+    except OSError:
+        logger.warning("Could not inspect persisted centroid age at %s; using seeds", path)
+        return False
+    try:
         with np.load(path) as stored:
             for category in stored.files:
                 if category in SEED_TEXTS:
@@ -501,6 +509,25 @@ def stage4_llm_fallback(item):
 # CENTROID RECOMPUTATION (architecture §9.3 — "How Centroids Improve Over Time")
 # -------------------------
 _MIN_CONFIRMED_FOR_RECOMPUTE = 10
+_CENTROID_MAX_AGE_SECONDS = 30 * 24 * 60 * 60
+
+
+def centroids_need_recompute() -> bool:
+    """Return True when no saved centroids exist or they are over 30 days old."""
+    path = _centroids_path()
+    try:
+        age_seconds = time.time() - path.stat().st_mtime
+    except FileNotFoundError:
+        logger.info("No persisted centroids found; recomputing at ENP start")
+        return True
+    except OSError:
+        logger.exception("Could not inspect persisted centroids at %s; attempting recompute", path)
+        return True
+
+    if age_seconds > _CENTROID_MAX_AGE_SECONDS:
+        logger.info("Persisted centroids are older than 30 days; recomputing at ENP start")
+        return True
+    return False
 
 
 def _save_centroids(categories: set[str]) -> None:
@@ -520,13 +547,14 @@ def _save_centroids(categories: set[str]) -> None:
 
 def recompute_centroids() -> Dict[str, int]:
     """
-    Recompute each category centroid as the mean embedding of confirmed items
+    Recompute each category centroid as the mean of its per-source mean embeddings
     (classified_by IN structural/user_override — plus llm results, which the
     architecture also feeds back into the monthly recomputation, doc §9.4).
+    Each source with vectors gets one equal vote, regardless of its item count.
 
     A category keeps its current centroid until it has at least 10 confirmed
-    items. Nothing calls it yet; decision A36 is to run it inside the ENP worker
-    at start when centroids.npz is missing or > 30 days old — passive learning,
+    items. The ENP worker runs this at startup when centroids.npz is missing or
+    > 30 days old — passive learning,
     no retraining. Expects the shared FAISS manager to be loaded and
     initialize_centroids() to have run.
 
@@ -537,7 +565,7 @@ def recompute_centroids() -> Dict[str, int]:
 
     rows = postgresql_manager.fetchall(
         """
-        SELECT sg.group_name, m.memory_id
+        SELECT sg.group_name, m.source_type, m.memory_id
         FROM memory_items m
         JOIN system_groups sg ON m.system_group_id = sg.system_group_id
         WHERE m.is_deleted = FALSE
@@ -547,30 +575,35 @@ def recompute_centroids() -> Dict[str, int]:
     )
 
     manager = get_manager()
-    by_category: Dict[str, list] = {}
+    by_category: Dict[str, Dict[str, list]] = {}
     not_indexed = 0
     for row in rows:
         vector = manager.get_vector(str(row["memory_id"]))  # locked read (tracker C4)
         if vector is None:
             not_indexed += 1
             continue
-        by_category.setdefault(row["group_name"], []).append(vector)
+        by_category.setdefault(row["group_name"], {}).setdefault(row["source_type"], []).append(vector)
     if not_indexed:
         logger.warning("recompute_centroids: %d confirmed items have no FAISS vector; skipped", not_indexed)
 
     updated: Dict[str, int] = {}
-    for category, vectors in by_category.items():
-        if category not in _VALID_CATEGORIES or len(vectors) < _MIN_CONFIRMED_FOR_RECOMPUTE:
+    for category, vectors_by_source in by_category.items():
+        item_count = sum(len(vectors) for vectors in vectors_by_source.values())
+        if category not in _VALID_CATEGORIES or item_count < _MIN_CONFIRMED_FOR_RECOMPUTE:
             logger.info("recompute_centroids: %s kept (%d confirmed items, need %d)",
-                        category, len(vectors), _MIN_CONFIRMED_FOR_RECOMPUTE)
+                        category, item_count, _MIN_CONFIRMED_FOR_RECOMPUTE)
             continue
-        CENTROIDS[category] = np.mean(np.asarray(vectors, dtype=np.float32), axis=0)
-        updated[category] = len(vectors)
-        logger.info("recompute_centroids: %s updated from %d confirmed items", category, len(vectors))
+        source_means = [
+            np.mean(np.asarray(vectors, dtype=np.float32), axis=0)
+            for vectors in vectors_by_source.values()
+        ]
+        CENTROIDS[category] = np.mean(np.asarray(source_means, dtype=np.float32), axis=0)
+        updated[category] = item_count
+        logger.info("recompute_centroids: %s updated from %d confirmed items across %d sources",
+                    category, item_count, len(source_means))
 
     if updated:
-        # Persist so the ENP worker picks the new centroids up on its next start
-        # via initialize_centroids(). Categories recomputed in an earlier run are
+        # Persist for future starts. Categories recomputed in an earlier run are
         # saved again too, so a run that updates fewer never drops them.
         to_save = set(updated) | _persisted_categories
         try:
