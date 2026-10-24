@@ -111,15 +111,15 @@ Summary: 45 decisions · 5 live-DB repairs · 29 cross-file fixes · 5 build ite
   missing key, one full listing, then save the new id. Dedup (`UNIQUE(source_type, source_id)`) makes the fallback
   safe. Why not the webhook: needs GCP Pub/Sub + a tunnel, and puts a cloud piece in the local privacy story.
 
-### A6. Gmail HTML/body cleaning gaps — [x] decided 2026-10-21 (found 2026-10-15, `gmail_api.py`) — DISCUSS AT THE END
+### A6. Gmail HTML/body cleaning gaps — [x] decided 2026-10-21, A6.1 + A6.2 built (found 2026-10-15, `gmail_api.py`) — DISCUSS AT THE END
 Fixed already: HTML keeps line breaks (ENP can now strip quotes/signatures), script/style/head/comments/
 tracking pixels removed, entities and zero-width characters cleaned, charset honoured, drafts skipped.
 Still open — decide each:
-- [ ] **Hidden preview text.** Marketing mail hides a preview line in a `display:none` span; it survives into
+- [x] **Hidden preview text.** Marketing mail hides a preview line in a `display:none` span; it survives into
       `raw_text` and the embedding. Fix: drop hidden elements with BeautifulSoup (as ENP's pixel remover does).
-- [ ] **Body split into several text parts.** Some mail apps split one body around an inline image; only the
+- [x] **Body split into several text parts.** Some mail apps split one body around an inline image; only the
       first text part is kept. Fix: join all non-attachment text parts inside `multipart/mixed`.
-- [ ] **Signature logos counted as attachments.** Inline images (`logo.png`, `Content-ID`) are stored in
+- [x] **Signature logos counted as attachments.** Inline images (`logo.png`, `Content-ID`) are stored in
       `gmail_attachments`. Fix: skip inline images under a size limit, or mark them. Affects D2.
 - **Decision (2026-10-21):**
   1. Hidden preview text: **drop hidden elements** — BeautifulSoup in `_html_to_text` removes elements whose inline
@@ -127,6 +127,18 @@ Still open — decide each:
   2. Split body: **join all body text parts in order**; inside multipart/alternative pick one (plain, else HTML);
      parts with a filename stay attachments; test a forwarded (nested message) mail so nothing is joined twice.
   3. Signature logos: already settled by A22 (skip inline logos).
+- **Built (his, verified by him; light re-check 2026-10-24, cloud session):** `ingestion/gmail/gmail_api.py`.
+  - A6.1 `_html_to_text` drops elements whose inline style hides them (`_element_is_hidden`): display:none and opacity:0
+    always; max-height:0 only with overflow:hidden; visibility:hidden and font-size:0 only when nothing inside can
+    still show (block-level child or a child that re-declares the property), because Outlook wraps real text in
+    font-size:0 cells. A mail with no hiding property in its text skips BeautifulSoup. Class-based hiding not caught.
+  - A6.2 `_collect_body_parts` / `extract_body` join all body text parts in order; multipart/alternative picks plain,
+    else the first HTML; parts with a filename stay attachments; the same part is never walked twice. An attached
+    message (`message/rfc822`) is skipped when the mail has other text (so a bounce does not repeat the original it
+    quotes) and used only when it is the mail's only text. Consequence: a "forward as attachment" WITH a note keeps the
+    note and not the forwarded text.
+  - Re-check: synthetic MIME trees with the BeautifulSoup path (preview span, Outlook cell, opacity, visibility),
+    split text parts, alternative, HTML-only, forward with and without a note, a repeated part object: all as above.
 
 ### A7. How to detect sensitive Chrome pages — [x] decided 2026-10-21 (found 2026-10-17, `chrome_connector.py`) — DISCUSS AT THE END
 - **Today:** a fixed list of 14 words (`login`, `auth`, `payment`, ...) matched as plain substrings of the URL,
@@ -615,6 +627,14 @@ Still open — decide each:
   3. **Same filename: match on filename + size** in `enp/attachment_processor._download_attachment_data` (size is
      already stored in `gmail_attachments.file_size`). No schema change. Gmail's attachmentId stays unused (not
      stable between fetches).
+- **Status 2026-10-24:**
+  - Part 2 (skip signature logos) BUILT by him, light re-check done: `gmail_api.extract_attachments` drops parts with
+    Content-Disposition inline, parts with a Content-ID unless the disposition is `attachment`, and images with a known
+    size under 10 KB (`_MIN_ATTACHMENT_IMAGE_BYTES`); an unknown size (0) is kept. A PDF or DOCX under 10 KB stays.
+  - Part 1 (types): XLSX, PPTX and EML built in the cloud session (D2, standard library instead of openpyxl/python-pptx,
+    plus RTF/ODF, which this decision had skipped). OCR for images and scanned PDFs is still open (Tesseract).
+  - Part 3 (same filename: filename + size) NOT built: `_download_attachment_data` still takes the first part with a
+    matching filename.
 
 ### A23. Attachment text is sent to the LLM — the doc says it never is — [x] decided 2026-10-21
 - Doc line 702: "The LLM API never receives: raw email bodies, full page content, video transcripts, **attachment
@@ -1036,6 +1056,13 @@ Still open — decide each:
   allows redis:// to localhost, so local Redis works); drop `ECHO_TOKEN_ENCRYPTION_KEY` from .env / README;
   existing `.enc` tokens: one-time decrypt to .json, or just sign in again. `.gitignore` already covers
   `token_*.json`.
+- **Built (his, verified by him; light re-check 2026-10-24):** `gmail_api.py` and `youtube_api_client.py` read and write
+  plain `token_gmail.json` / `token_youtube.json` through `ste.security.read_token_text` / `write_token_text` (UTF-8 with
+  BOM tolerated, same-folder temp file + atomic replace, one lock); the Fernet helpers are gone, `validate_redis_tls_url`
+  stays; `.gitignore` covers `token_*.json`, `token_*.json.tmp` and the old `.enc` names; no `ECHO_TOKEN_ENCRYPTION_KEY`
+  or `cryptography` left in `requirements.txt`, README or the code. Old `.enc` files are not migrated: the first start
+  signs in again. Re-check: missing file -> None, write leaves no temp file, BOM file reads clean. C28 (sign-in at startup
+  on a daemon thread, poller never opens a browser) came with it.
 - **Guards:** paper/deck must NOT claim "tokens encrypted at rest". A token shown on the projector is a live key
   to the test mailbox — revoke it after the demo (Google Account -> Security -> third-party access) and sign in
   again.
