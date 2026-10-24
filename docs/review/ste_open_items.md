@@ -269,6 +269,28 @@ Still open — decide each:
   (app domains, public paths + subdomains, sensitive words, secret query keys); `background.js` fetches at startup
   into `chrome.storage`; `chrome_tracker.js` reads it from there. Build detail: until the rules have loaded, the
   content script extracts no text (fail closed); no built-in fallback list (backend down = nothing stored anyway).
+- **A9.3 + A9.5 built 2026-10-24 (cloud session):**
+  - Server (`ingestion/chrome/intent_filter.py`): `PUBLIC_PATHS` (the 38), `PUBLIC_SUBDOMAINS` (the 10), `PUBLIC_SUBDOMAIN_EXCEPTIONS`
+    (`atlassian.net`) and `is_application_page(domain, path="")`; `chrome_connector.py` passes the URL path and serves
+    `GET /chrome/rules` = `app_domains`, `public_paths`, `public_subdomains`, `public_subdomain_exceptions`, `sensitive_terms`,
+    `secret_query_params` (static, sorted, no DB / Redis).
+  - Extension: the literal app-domain and sensitive-word lists are DELETED from `background.js` and `chrome_tracker.js`
+    (the A9.4 "three lists" note above is superseded). `background.js` fetches the rules through `postToBackend(..., "GET")`
+    (so the pause flag still gates it) on browser start / install, and also when storage holds none (at most every 30 s), keeps
+    them in `chrome.storage.local.echo_chrome_rules`; `chrome_tracker.js` reads them from there and watches `storage.onChanged`.
+    Fail closed: with no rules `shouldSkipChromeUrl` skips every page and the content script extracts no text.
+    `secret_query_params` is served but the extension does not use it (the server strips them).
+  - Still duplicated by hand (not in the A9.5 list): `CHROME_APPLICATION_PATH_SNIPPETS` (GitHub skip) and
+    `CHROME_IGNORED_QUERY_PARAMS` in `background.js` vs `chrome_connector.py`.
+  - Checked: `is_application_page` on 21 cases (private app page, `/help` `/blog` `/pricing` public, `help.` `blog.` `status.`
+    public subdomain, `docs.atlassian.net` stays private, `notslack.com`, empty); `GET /chrome/rules` and `POST /chrome/ingest`
+    through FastAPI's test client with DB / Redis stubbed. End to end in headless Chromium with the REAL unpacked extension
+    against the real router (stubbed storage): rules arrive in `chrome.storage.local`; a normal article is saved with text and
+    `## ` headings (A13); `slack.com/help/articles/1` is saved as a normal page with text; `app.slack.com/...` and
+    `acme.atlassian.net/wiki/...` are saved engagement-only; `/login` is never sent. With `/chrome/rules` answering 503 nothing
+    is saved (fail closed). Not run: the live Postgres / Redis, a long-lived worker restart, Settings > pause while fetching.
+  - Behaviour to know: a SPA like Notion/Slack keeps one URL per canonical page, so the app-page flag is decided per page;
+    a Chrome restart with the backend down means no capture until the backend is up (the next signal or tab event retries).
 - **Decision:** A9 fully decided 2026-10-21 (A9.1–A9.5).
 
 ### A10. A brief (< 5 s) visit never counts as a revisit — doc conflict — [x] decided 2026-10-21 (found 2026-10-17) — DISCUSS AT THE END
@@ -348,6 +370,19 @@ Still open — decide each:
     `build_embeddable_text` already joins title + headings + domain + snippet (snippet 800 per A24) — check the
     total still fits MiniLM's ~256 tokens.
   - Old pages: no headings (their text is already flattened); B5 re-embed cannot recover them.
+  - **Built 2026-10-24 (cloud session):** `chrome_tracker.js` `headingLinesFrom` collects visible h1-h3 of the chosen content
+    node (skips nav / aside / footer / form / hidden / duplicates; max 10, 200 chars each, whitespace collapsed) and puts them
+    first as `## <text>` lines; the 12,000-char cap covers headings + body together; the body stays one line.
+    `enp/text_cleaner.py` `lift_heading_lines` lifts the leading `## ` lines (consecutive, <= 10, <= 200 chars, so an old flat
+    row that starts with `## ` is not mistaken) into `CleanedContent.headings`; `topic_extractor` already joins them.
+    No schema change. Checked: 8 Python inputs (headings + body, old flat row, flat row starting `## `, 11 headings, CRLF,
+    empty heading, empty) and the extension script in headless Chromium on 4 pages (menu / footer / hidden / duplicate
+    headings skipped, 300-char heading cut to 200, 14 sections -> 10 headings, 5,000-word page -> exactly 12,000 chars total).
+    Not run: the full extension in Chrome, ENP against the live DB.
+  - **Side effects to know:** (1) a Chrome page revisited after this change sends different `raw_text`, so A3 re-embeds it
+    (intended; this is how old pages gain headings). (2) The stored `raw_text` now begins with `## ` lines, so keyword search
+    and the 1000-char answer snippet (`raw_snippet`) see them. (3) Worst case 10 x 200 chars of headings sit before the
+    snippet in the embedded text; the token-window fit is A16's job (`fit_to_window`), not built yet.
   - Fallback if the build runs short: option 3.
 
 ### A14. Quoted replies: Outlook headers are not cut, inline replies are lost — [x] decided 2026-10-21 (found 2026-10-17) — DISCUSS AT THE END
@@ -1110,6 +1145,16 @@ Still open — decide each:
   - Build (~15 min, extension only; the server just compares the count): in `chrome_tracker.js` the click
     listener skips events whose target is inside an `a[href]` (`event.target.closest("a[href]")`). Known cost:
     an in-page link (table-of-contents jump) no longer counts; such pages still pass by scroll (15 %) or 10 s.
+- **A39 built 2026-10-24 (cloud session; read from the diff and checked offline, extension NOT run in Chrome):**
+  - Chrome scroll 0.25 -> 0.15 in `extension/background.js` and `ingestion/chrome/intent_filter.py` (+ comments).
+  - YouTube: `INTENT_WATCH_SHORT` 15 -> 10, `INTENT_COMPLETION_THRESHOLD` 0.5 -> 0.1, new `INTENT_COMPLETION_MIN_SECONDS = 5`
+    in `youtube_tracker.js`; `SHORT_MIN_WATCH_SECONDS` 10, `COMPLETION_RATE_THRESHOLD` 0.1, new `COMPLETION_MIN_WATCH_SECONDS = 5`
+    in `youtube_connector.py`. Gate checked on 8 cases (short 10 s passes; 9 s of 100 s fails; 4 s of 20 s fails the floor;
+    5 s of 20 s passes; regular 19 s of 600 s fails; 60 s of 600 s passes; 20 s passes; revisit passes).
+  - `wba/group_manager.py` `MIN_CONFIRMED_FOR_KNN` 6 -> 5 (docstring too).
+  - `chrome_tracker.js` click listener skips targets inside `a[href]` (stand-in DOM check: link click not counted, others counted).
+  - `node --check` clean on the three JS files; `compileall` silent. Doc §6.2 / §7.3 numbers and the paper/deck numbers are still to be changed.
+  - Not changed: the dead-doc line in A39's first list (values above) and the other "kept as is" numbers.
 
 ### A40. Embedding model and cross-encoder model — keep or upgrade? — [x] decided 2026-10-21 (his ask, 2026-10-21)
 - Today: embeddings = `all-MiniLM-L6-v2` (`enp/embedding_generator.py:56`; 384-d, reads ~256 tokens; used by ENP,

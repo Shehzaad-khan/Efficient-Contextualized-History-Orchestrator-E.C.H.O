@@ -12,14 +12,15 @@ What arrives here (raw_text as stored by each connector):
            breaks kept). Rows stored before that change may still hold HTML,
            so HTML is detected and converted here too.
   chrome   plain text. The extension sends the innerText of <article>/<main>/
-           <body> with all whitespace collapsed, so no tags and no headings
-           reach the backend. The Readability branch runs only if a row really
-           holds HTML (decision A13).
+           <body> with whitespace collapsed to one line, behind up to 10 leading
+           "## <heading>" lines (A13 option 1). Rows stored before that change
+           have no heading lines. The Readability branch runs only if a row
+           really holds HTML.
   youtube  title + description (+ transcript, empty today — decision A11).
 
 Steps per source:
   gmail    [HTML -> text] -> drop quoted replies -> normalize
-  chrome   [HTML -> Readability -> text + headings] or normalize
+  chrome   [HTML -> Readability -> text + headings] or lift "## " lines -> normalize
   youtube  join title, description, transcript -> normalize
 
 Tracking pixels (doc §5.2) need no step of their own: an <img> holds no text,
@@ -50,6 +51,13 @@ except ImportError:  # pragma: no cover - dependency-driven
 logger = logging.getLogger(__name__)
 
 SNIPPET_LIMIT = 500
+
+# A13: the extension (chrome_tracker.js) puts the page's h1-h3 texts first, one per
+# line, as "## <text>". MAX_HEADING_CHARS must match the extension: a longer "## "
+# line is ordinary body text (an old flat row that happens to begin with "## ").
+HEADING_PREFIX = "## "
+MAX_HEADINGS = 10
+MAX_HEADING_CHARS = 200
 
 # Real HTML markup, not just a "<" in prose ("if a < b and b > c").
 HTML_SNIFF_RE = re.compile(
@@ -228,13 +236,36 @@ def _fallback_extract_article_html(raw_html: str) -> str:
     return str(best_node or soup)
 
 
+def lift_heading_lines(text: str) -> tuple[list[str], str]:
+    """Split the extension's leading "## <heading>" lines off the page text.
+
+    Only consecutive lines at the very start count, at most MAX_HEADINGS of them,
+    each no longer than MAX_HEADING_CHARS. The body is returned untouched.
+    """
+    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    headings: list[str] = []
+    index = 0
+    while index < len(lines) and len(headings) < MAX_HEADINGS:
+        line = lines[index].strip()
+        if not line.startswith(HEADING_PREFIX):
+            break
+        heading = normalize_text(line[len(HEADING_PREFIX):])
+        if not heading or len(heading) > MAX_HEADING_CHARS:
+            break
+        headings.append(heading)
+        index += 1
+    return headings, "\n".join(lines[index:])
+
+
 def clean_chrome_text(raw_text: str) -> CleanedContent:
     if not raw_text:
         return CleanedContent(clean_text="")
 
     if not looks_like_html(raw_text):
-        # The normal case: the extension already sent the main text.
-        return CleanedContent(clean_text=normalize_text(raw_text))
+        # The normal case: the extension already sent the main text, behind its
+        # "## " heading lines (rows from before A13 have none).
+        headings, body = lift_heading_lines(raw_text)
+        return CleanedContent(clean_text=normalize_text(body), headings=headings)
 
     if Document is not None:
         try:

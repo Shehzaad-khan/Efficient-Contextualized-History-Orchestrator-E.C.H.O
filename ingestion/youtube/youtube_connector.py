@@ -90,9 +90,10 @@ class VideoRevisitCheck(BaseModel):
 # extension/content/youtube_tracker.js: the extension sends /ytc/video-detected
 # exactly once (intentFired latches), so a stricter server gate silently
 # discards the video with no retry ever happening.
-SHORT_MIN_WATCH_SECONDS = 15
+SHORT_MIN_WATCH_SECONDS = 10
 REGULAR_MIN_WATCH_SECONDS = 20
-COMPLETION_RATE_THRESHOLD = 0.5
+COMPLETION_RATE_THRESHOLD = 0.1
+COMPLETION_MIN_WATCH_SECONDS = 5  # floor for Option B, so a Shorts-feed swipe is not a completion
 
 
 def passes_intent_gate(event: VideoDetectedEvent, is_short: bool, is_revisit: bool) -> bool:
@@ -103,7 +104,11 @@ def passes_intent_gate(event: VideoDetectedEvent, is_short: bool, is_revisit: bo
     if event.watch_time_seconds >= min_watch:
         return True
     # Option B — completion rate (only computable when client reports duration)
-    if event.duration_seconds and event.duration_seconds > 0:
+    if (
+        event.duration_seconds
+        and event.duration_seconds > 0
+        and event.watch_time_seconds >= COMPLETION_MIN_WATCH_SECONDS
+    ):
         completion_rate = event.watch_time_seconds / event.duration_seconds
         if completion_rate >= COMPLETION_RATE_THRESHOLD:
             return True

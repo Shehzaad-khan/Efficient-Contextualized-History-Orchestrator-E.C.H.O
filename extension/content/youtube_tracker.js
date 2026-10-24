@@ -29,8 +29,8 @@
  *      via conditions 2 and 3.
  *
  * Intent gate (ANY ONE must pass — enforced on backend too as safety net):
- *   Option A: watch_time_seconds >= 20 (architecture §7.3) or >= 15 (Shorts)
- *   Option B: completion_rate >= 0.5 (watch_time / duration)
+ *   Option A: watch_time_seconds >= 20 (architecture §7.3) or >= 10 (Shorts)
+ *   Option B: completion_rate >= 0.1 (watch_time / duration) AND watch_time >= 5 s
  *   Option C: revisit (checked by backend via Redis after 5 s of watch time)
  *   Extra:    manual interaction detected (pause/seek/speed)
  *   Thresholds MUST match ingestion/youtube/youtube_connector.py.
@@ -91,9 +91,10 @@
   const TICK_INTERVAL_MS = 1000;            // watch-time + SPA URL check
   const VIDEO_LOOKUP_RETRY_MS = 500;        // YouTube mounts <video> async
   const VIDEO_LOOKUP_MAX_TRIES = 40;        // give up after ~20s on a non-player page
-  const INTENT_WATCH_SHORT = 15;            // Option A — Shorts threshold (seconds)
+  const INTENT_WATCH_SHORT = 10;            // Option A — Shorts threshold (seconds)
   const INTENT_WATCH_REGULAR = 20;          // Option A — architecture §7.3
-  const INTENT_COMPLETION_THRESHOLD = 0.5;  // Option B — completion ratio
+  const INTENT_COMPLETION_THRESHOLD = 0.1;  // Option B — completion ratio
+  const INTENT_COMPLETION_MIN_SECONDS = 5;  // Option B — floor, so a Shorts-feed swipe is not a completion
   const MANUAL_INPUT_WINDOW_MS = 1500;      // a manual event needs a click/key this recently
   const MANUAL_CONFIRM_DELAY_MS = 500;      // then must survive this long without a navigation
 
@@ -178,8 +179,8 @@
       return;
     }
 
-    // Option B — completion rate (watched at least half the video)
-    if (state.durationSeconds > 0) {
+    // Option B — completion rate (at least 10 % of the video, and at least 5 s watched)
+    if (state.durationSeconds > 0 && state.watchTimeSeconds >= INTENT_COMPLETION_MIN_SECONDS) {
       const completionRate = state.watchTimeSeconds / state.durationSeconds;
       if (completionRate >= INTENT_COMPLETION_THRESHOLD) {
         fireVideoDetected("completion_rate");
