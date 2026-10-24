@@ -9,7 +9,11 @@ Working file — committed to the repo from 2026-10-22 so Claude web can read it
 3. Section B needs a backup before any statement runs: a Neon snapshot or branch for Neon (B1–B3, done), a `pg_dump -Fc` of `echo_db` into `C:\Users\mdshe\echo_backups\` for the local database (B5).
 4. Section D is built after the whole review is finished.
 
-Summary: 45 decisions · 5 live-DB repairs · 29 cross-file fixes · 5 build items + 2 later items = **86** (C29 delete the pending-answers file added 2026-10-22; A44 auto-retry of failed ENP items + A45 fresh Gmail poll added 2026-10-21 as stretch; A42 auto-accept confident group suggestions + A43 user groups under system groups added 2026-10-21; A41 Gmail open tracking added 2026-10-21; A40 model choice added 2026-10-21; E2 personal-data import added 2026-10-21; A37–A39 added 2026-10-21: panel retention + spam suggestions, timings review; A5, A6 added 2026-10-15; A7–A24 added 2026-10-17 — all decisions on hold until the review pass ends; A25–A28 added 2026-10-18 and DECIDED, build in Step 2; A25 dependency upgrade DONE 2026-10-18; E1 MCP added 2026-10-18 for after completion).
+**Audit snapshot — 2026-10-24 (top-level IDs):** 86 entries = **80 complete/resolved + 6 not fully complete**. Counting rule: A1–A45 are owner-decision entries, counted complete when the decision is recorded; their implementation follow-ups are audited separately below. B4 is informational/no action. Breakdown: A 45/45 decisions recorded; B 4 resolved (B1–B3 and informational B4), B5 open; C 29/29 resolved; D 2 complete, D2/D3 open, D5 partial; E1 partial (decision made, implementation absent), E2 open. The six not-fully-complete top-level IDs are B5, D2, D3, D5, E1, E2 (4 open, 2 partial). This top-level count is not a claim that all decided features are implemented.
+
+**Implementation follow-ups inside decided A entries (not additional top-level IDs):** 13 decision IDs still have an implementation step open or partial: 9 have build work remaining; 4 conflict with current AGENTS hard constraints (A23/A24 with hard constraint 3, A26 with hard constraint 5, A42 with hard constraint 4). Their status is checked after A45 below. In particular, A16/A40 are prerequisites for B5; do not run B5 before those decisions' implementation work is complete.
+
+Original inventory: 45 decisions · 5 live-DB entries · 29 cross-file fixes · 5 build items · 2 later items = **86**. C29 (delete pending-answers file) was added 2026-10-22; A44 retry + A45 fresh Gmail poll were added 2026-10-21 as stretch (A45 closed with no build on 2026-10-24); A42 auto-accept + A43 user-group nesting, A41 Gmail open tracking, A40 model choice, E2 personal-data import, and A37–A39 (retention, spam, timings) were added 2026-10-21; A5/A6 were added 2026-10-15; A7–A24 were added 2026-10-17; A25–A28 were added 2026-10-18; E1 MCP was added 2026-10-18.
 
 ---
 
@@ -1444,27 +1448,47 @@ Still open — decide each:
   `mark_item_processed` clears the counter. No schema change (counter in Redis, not a new column).
   - **Fix 2026-10-23 (review):** Redis down no longer lifts the cap. `get_enp_retry_count` returns `MAX_ENP_RETRIES` on a Redis error (fail closed), `increment_enp_retry_count` raises, and `retry_failed_items` skips a row whose attempt it could not record. Checked on Neon with a throwaway failed row: read failure and increment failure each reset 0 rows; normal cycles reset on 1, 2, 3 and refuse the 4th. Left: the query takes the 50 oldest failed rows, so 50 or more capped rows would hide newer failed ones.
 
-### A45. Fresh Gmail poll for "just now" questions in the A26 tool loop — [x] decided 2026-10-21 — STRETCH: build if time permits
+### A45. Fresh Gmail poll for "just now" questions in the A26 tool loop — [x] closed 2026-10-24; no build needed
 - Today: `parse_intent` sets `fetch_api=True` for "latest / today / just received"; `node_fetch_api`
   (`rse/graph_nodes.py:281`) runs a live Gmail `poll_once` and loads today's items. A26 replaces the fixed graph with
   Luna's `search_memories` tool loop, and no decision placed this live poll in it. Without it a new mail appears
   after the next background poll (every 30 s, A5).
-- **Decision (his, 2026-10-21): keep it — a `fresh` option on `search_memories` that runs a Gmail poll before
-  searching, if time permits before the freeze** (~30–45 min). Then add one sentence to the paper's retrieval loop.
-- **If not built:** the paper stays silent (as now); demo pre-flight sends the test mail early, so the 30 s gap
-  never shows.
+- **Decision updated 2026-10-24:** drop the `fresh` option. The existing 30-second poll delay is acceptable; this
+  is a rare scenario and does not justify a separate query-time path. No implementation or paper change is needed.
+
+### Build-status cross-check for decided A entries — 2026-10-24
+
+The `[x] decided` marks above mean the owner's decision is recorded. They do not mean the feature was built. Static review of the current workspace found these 13 decision IDs still have implementation work:
+
+| ID | Current implementation check |
+|----|-------------------------------|
+| A7 | A7.4 is still open: `hasPrivateFormSurface` in `extension/content/chrome_tracker.js` still blocks on any email, tel, or number input; the decided visible-field/form rules are absent. |
+| A16 | The tokenizer-based 512-token `fit_to_window` path is absent; `enp/topic_extractor.py` still uses character caps. |
+| A17 | The 29 hand-added domains are present, but the decided review of the real top 50–100 Stage-4 domains in the restored local data remains open. |
+| A18 | `SEED_TEXTS` are still the short word bags and `CENTROID_MIN_SCORE` remains 0.55; the richer seeds and seed-specific measured threshold are not built. |
+| A21 | Stage 4 still uses a single-word text reply and `_parse_category`; the decided OpenAI Decisions API path is absent. |
+| A23 | Tier-2 attachment content still starts at the beginning of extracted text; query-matched top passages are not selected. This plan conflicts with current AGENTS hard constraint 3 (no dynamic context compression), so hold pending scope reconciliation. |
+| A24 | A24.3 full-text keyword indexing is built, but A24.2 query-matched cleaned-text windows are absent; the synthesizer still uses the leading snippet. This plan conflicts with current AGENTS hard constraint 3 (no dynamic context compression), so hold pending scope reconciliation. |
+| A26 | The agent/tool loop is not wired; `rse/README.md` still lists it under “Not yet wired.” The approved loop changes current AGENTS hard constraint 5 (exactly two LLM calls per query), so hold pending scope reconciliation. |
+| A27 | The backend response model omits `answer_markdown` and `answer_sources`; the pill/moment-strip UI and chat-session list/resume flow are not wired. |
+| A28 | No live-progress streaming route or frontend stream is present. |
+| A37 | No retention setting or age-based hard-delete job is present. |
+| A40 | `enp/embedding_generator.py` and `ste/faiss_manager.py` still use all-MiniLM; the decided Arctic model switch and threshold retune are not built. |
+| A42 | Group suggestions still require manual acceptance; no confident auto-accept path or threshold is present. The approved auto-accept path conflicts with current AGENTS hard constraint 4 (explicit human acceptance), so hold pending scope reconciliation. |
 
 ## B. Live database actions — your explicit go + backup first (B1–B3 ran on Neon; B5 runs on local `echo_db`)
 
 | ID | Action | Status |
 |----|--------|--------|
-| B1 | `DROP TABLE gmail_memory` (archive `legacy_gmail_threads.json` stays local) | [x] 2026-10-23 on Neon: `DROP TABLE gmail_memory CASCADE` (30 rows). Checked first: the `semantic`/`classification`/`interaction`/`analytics`/`content_summary` columns were empty in all 30 rows; title, body, thread, sender, time and has-attachments match `memory_items`/`gmail_metadata` for all 30 (row 28 sits under a different `memory_id`, matched by `source_id`); `source_link` = `https://mail.google.com/mail/u/0/#inbox/<source_item_id>` in all 30; `message_history` was filled in 10 rows = the 10 in `legacy_gmail_threads.json`; `content_attachments` held only filename/mime/size 0 (+ stale Gmail attachment ids in 3). After: table gone, `gmail_attachments` still 4, `memory_items` gmail 70, `gmail_metadata` 70. Backup: Neon branch `backup-pre-b1-gmail-memory` (`br-shy-unit-am2pkoub`; the snapshot limit was reached) - delete it once the A31 dump is taken. Left over: `gmail_attachments.memory_id` is still `varchar` with no FK (`setup_db.py` says `UUID` -> `gmail_metadata`) - add to the A31 migration SQL |
-| B2 | Remove duplicate `gmail_attachments` rows — keep one per `(memory_id, filename)` | [x] 2026-10-23 no-op: Neon has 4 rows, 0 duplicate groups |
-| B3 | Gmail rows wrongly marked opened: set `first_opened_at` and `last_accessed_at` to NULL where `play_sessions_count = 0` | [x] 2026-10-23 on Neon: 34 rows cleared, 0 left wrong, the 3 real opens untouched (snapshot `snap-small-bonus-aml6iy9e` taken first) |
-| B4 | Shorts stored as `is_short = FALSE` — cannot be fixed from the DB; each fixes itself on a re-watch | info only |
+| B1 | `DROP TABLE gmail_memory` (archive `legacy_gmail_threads.json` stays local) | [x] 2026-10-23 on Neon: `DROP TABLE gmail_memory CASCADE` (30 rows). Checked first: the `semantic`/`classification`/`interaction`/`analytics`/`content_summary` columns were empty in all 30 rows; title, body, thread, sender, time and has-attachments match `memory_items`/`gmail_metadata` for all 30 (row 28 sits under a different `memory_id`, matched by `source_id`); `source_link` = `https://mail.google.com/mail/u/0/#inbox/<source_item_id>` in all 30; `message_history` was filled in 10 rows = the 10 in `legacy_gmail_threads.json`; `content_attachments` held only filename/mime/size 0 (+ stale Gmail attachment ids in 3). After: table gone, `gmail_attachments` still 4, `memory_items` gmail 70, `gmail_metadata` 70. Backup: Neon branch `backup-pre-b1-gmail-memory` (`br-shy-unit-am2pkoub`; the snapshot limit was reached); its cleanup was not checked. Neon is frozen by current instructions, so no remote cleanup was attempted. The `varchar`/no-FK drift in `gmail_attachments.memory_id` was fixed on the local restore by A31.3; local read-only check 2026-10-24 confirms UUID + FK. Local `echo_db` rechecked read-only 2026-10-24: table absent. |
+| B2 | Remove duplicate `gmail_attachments` rows — keep one per `(memory_id, filename)` | [x] 2026-10-23 no-op: Neon has 4 rows, 0 duplicate groups; local `echo_db` rechecked read-only 2026-10-24: 0 duplicate groups |
+| B3 | Gmail rows wrongly marked opened: set `first_opened_at` and `last_accessed_at` to NULL where `play_sessions_count = 0` | [x] 2026-10-23 on Neon: 34 rows cleared, 0 left wrong, the 3 real opens untouched (snapshot `snap-small-bonus-aml6iy9e` taken first); local `echo_db` rechecked read-only 2026-10-24: 0 Gmail rows with `play_sessions_count = 0` and either open timestamp set |
+| B4 | Shorts stored as `is_short = FALSE` — cannot be fixed from the DB; each fixes itself on a re-watch | [x] informational; no action required |
 | B5 | Re-embed every row after the ENP review (cleaner, keywords and embeddable text changed; old vectors and
        auto_keywords — full of "the"/"and"/"for" — stay until re-processed). Set `preprocessed = FALSE` on all rows,
-       run ENP. Do it ONCE, after all of enp/ is reviewed and A12–A15 are decided. | [ ] |
+       run ENP. Do it ONCE, after all of enp/ is reviewed, A12–A15 are decided, and the A16/A40 implementations are complete. Rebuild FAISS from a fresh index so stale vector IDs are removed. | [ ] |
+
+- **Read-only check 2026-10-24:** local `echo_db` has 109 live items, 0 unprocessed, and 109 active `embedding_index` rows; the FAISS metadata lists 110 IDs. B5 is still open: no full re-embed was run after the new embedding-text/schema work, and the FAISS/index counts differ. Take the required `pg_dump -Fc` first, preserve the current FAISS backup, then rebuild the index from the 109 live rows; simply re-embedding into the current index could leave its extra ID behind.
 
 - Do B2 only after C1 is done, or new duplicates keep appearing.
 - For each: count the affected rows first, show the count, then run.
@@ -1525,10 +1549,9 @@ Still open — decide each:
 ### C7. `backend/main.py` — [x] (main.py side 2026-10-19; leftovers 2026-10-22: dead `redis_client` in youtube_connector.py deleted, gmail/config.py comment and conversation_memory.py docstring fixed; D1 engine dispose is tracked separately)
 - **Done in main.py:** all six bullets below. Startup now pings `redis_manager.get_async_client()` and closes it
   (`aclose`) on shutdown; ENP stops via `threading.Event` with a 60 s wait for its batch; cleanup runs once at startup.
-- **Leftover:** `ingestion/youtube/youtube_connector.py` lines 53–55 — the dead `redis_client = None` and its
-  comment ("backend/main.py still sets and closes it") are now stale. Delete those 3 lines (already-reviewed file).
-  Two stale comments too: `ingestion/gmail/config.py` lines 19–21 (main.py now loads .env first; keep the call,
-  fix the reason) and `rse/conversation_memory.py` `cleanup_old_sessions` docstring ("Not called anywhere yet").
+  - **Original leftovers (fixed 2026-10-22):** the dead `redis_client = None` and its comment were deleted from
+    `ingestion/youtube/youtube_connector.py`; the comments in `ingestion/gmail/config.py` and
+    `rse/conversation_memory.py` were corrected.
 - D1 (engine dispose): done 2026-10-22 — see D1.
 - Remove the dead `ytc_module.redis_client`.
 - Close `redis_manager`'s async client on shutdown.
@@ -1674,14 +1697,13 @@ Still open — decide each:
   key), used by all four. New file → needs his OK (structure rule). Otherwise copy the same block into the
   ENP/WBA callers when they are reviewed.
 
-### C22. `regret_events.marked_at` is LOCAL time, everything else naive UTC — `wba/regret_system.py` — [~] (found 2026-10-18; KEPT LOCAL + documented in regret_system.py and time_aggregator.py during review; revisit with A31)
+### C22. `regret_events.marked_at` is LOCAL time, everything else naive UTC — `wba/regret_system.py` — [x] closed 2026-10-24 under A31.4 (keep `marked_at` local; UTC for other database timestamps)
 - `toggle_regret` inserts `marked_at = datetime.now()` (local, IST); the column default and every other
   timestamp is `NOW()` = UTC on Neon. `wba/time_aggregator.activity_heatmap` therefore compares `marked_at`
   with local days directly (commented there).
-- Fix with regret_system: write UTC (`utc_now_naive`) and keep `regret_hour` / `regret_day_of_week` local.
-  Then the heatmap regret query must switch to `local_day_range_utc` + the offset shift, like the activity
-  query, and existing rows need a one-time `- 5:30` repair (new B item, his go + snapshot). Or keep local and
-  document it as the one local-time column.
+- **Resolution under A31.4:** keep `marked_at`, `regret_hour` and `regret_day_of_week` local and document them as
+  the local-time exception. Other database timestamps are UTC; the connection timezone is forced to UTC. No row
+  repair is needed for this choice.
 
 ### C23. Shared WBA helpers are imported by their private names — `wba/time_aggregator.py`, `wba/regret_system.py` — [x] 2026-10-22 (4 names now public: `utc_offset_seconds`, `CURRENTLY_REGRETTED_CTE`, `MARK_EVENTS_CTE`, `standing_marks_sql`; the first three renamed by him, `standing_marks_sql` + `insight_generator.py` import by Claude; checked in 3 import orders) (found 2026-10-18, wba/pattern_detector.py review)
 - `pattern_detector` imports `time_aggregator._utc_offset_seconds` and `regret_system._CURRENTLY_REGRETTED_CTE` /
@@ -1830,7 +1852,7 @@ Still open — decide each:
   - Build on a separate branch (it lands after the Sun 25 freeze); merge only if it works end to end.
 - Frontend "export my data" button (GET /export already exists). Not in the demo unless fully ready.
 
-### E1. Echo as an MCP server (Claude Desktop or any MCP client) — [x] decided 2026-10-21: IN THIS BUILD (added 2026-10-18, his idea)
+### E1. Echo as an MCP server (Claude Desktop or any MCP client) — [~] decision complete 2026-10-21; build still open (checked 2026-10-24)
 - **Decision (his, 2026-10-21): build it this week** (moved from "later" into the Thu 22 – Sun 25 build).
   Scope for the build: tools `search_memories` (same contract as A26), `get_memory`, `recent_activity`; stdio
   transport; Claude Desktop config snippet + an MCP README with the privacy note below. The wellbeing tool set
@@ -1848,3 +1870,4 @@ Still open — decide each:
   provider then sees those snippets — call this out in the MCP README.
 - Likely stack: official MCP Python SDK, stdio transport for Claude Desktop, reusing `rse/` and `wba/`
   functions directly (no HTTP hop). Decide when we get here.
+- **Status check 2026-10-24:** no MCP server entry point/config/README was found in the workspace, and `mcp` is not in `requirements.txt`. The decision is complete; the implementation is not.
