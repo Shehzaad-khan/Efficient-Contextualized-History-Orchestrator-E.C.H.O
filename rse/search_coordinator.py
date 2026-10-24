@@ -81,7 +81,8 @@ RESULT_COLUMNS = """
     ym.channel_name,
     ym.video_id,
     ym.is_short,
-    ym.duration_seconds
+    ym.duration_seconds,
+    (SELECT MAX(v.visited_at) FROM visits v WHERE v.memory_id = m.memory_id) AS last_visit_at
 """
 
 RESULT_JOINS = """
@@ -97,21 +98,11 @@ WHERE m.is_deleted = FALSE
   AND m.preprocessed = TRUE
 """
 
-# Searchable document for FTS — computed on the fly. raw_text is capped so the
-# tsvector stays cheap; with the current dataset size no stored column or GIN
-# index is needed yet (add one when the table crosses ~50k rows).
-# gm.sender is included so "emails from Neon" matches by WHO sent it, not only
-# by whether the sender's name happens to appear in the subject or body.
-_FTS_DOCUMENT = (
-    "to_tsvector('english', "
-    "COALESCE(m.title, '') || ' ' || "
-    "LEFT(COALESCE(m.raw_text, ''), 5000) || ' ' || "
-    "array_to_string(m.auto_keywords, ' ') || ' ' || "
-    "COALESCE(gm.subject, '') || ' ' || "
-    "COALESCE(gm.sender, '') || ' ' || "
-    "COALESCE(cm.domain, '') || ' ' || "
-    "COALESCE(ym.channel_name, ''))"
-)
+# Searchable document for FTS: the stored vector memory_items.search_vector (A24.3),
+# written by ENP when it marks an item processed. It holds title, the FULL raw_text,
+# keywords, subject, sender (so "emails from Neon" matches by WHO sent it), domain,
+# channel and attachment text, and a GIN index serves the @@ lookup.
+_FTS_DOCUMENT = "m.search_vector"
 
 
 # ── Connection pool ───────────────────────────────────────────────────────────
@@ -261,6 +252,23 @@ def local_to_utc_naive(value: str) -> datetime:
     return parsed.astimezone(timezone.utc).replace(tzinfo=None)
 
 
+def filter_time_of(item: dict[str, Any]) -> Optional[datetime]:
+    """The moment an item is compared with the time filter (start-only, A1.1/A1.2).
+
+    Gmail: when the mail arrived (created_at). Chrome and YouTube: their latest
+    visit, because "any visit on or after the start" is the same as "the latest
+    visit is on or after the start". An item with no visit row falls back to
+    created_at. Mirrors the clause in _dynamic_filters (EXISTS visit >= start, or no
+    visit at all and created_at >= start).
+    """
+    if item.get("source_type") != "gmail":
+        last_visit = item.get("last_visit_at")
+        if isinstance(last_visit, datetime):
+            return last_visit
+    created_at = item.get("created_at")
+    return created_at if isinstance(created_at, datetime) else None
+
+
 def _anchor_constraint(state: EchoState) -> tuple[list[str], list[Any]]:
     """
     Deterministic time-anchor constraint resolved by resolve_time_anchor.
@@ -292,8 +300,17 @@ def _dynamic_filters(intent: ParsedIntent) -> tuple[list[str], list[Any]]:
         except ValueError:
             logger.warning("postgres_keyword_search: invalid time_filter ignored (len=%d)", len(str(time_filter)))
         else:
-            clauses.append("m.created_at >= %s")
-            params.append(start_utc)
+            # A1.1: Gmail is filtered by when the mail arrived; Chrome and YouTube
+            # match when ANY of their visits falls on or after the start. A page or
+            # video with no visit row at all (captured while the visit writers did not
+            # exist) falls back to created_at, the same rule as filter_time_of.
+            clauses.append(
+                "((m.source_type = 'gmail' AND m.created_at >= %s)"
+                " OR (m.source_type <> 'gmail' AND ("
+                "EXISTS (SELECT 1 FROM visits v WHERE v.memory_id = m.memory_id AND v.visited_at >= %s)"
+                " OR (NOT EXISTS (SELECT 1 FROM visits v WHERE v.memory_id = m.memory_id) AND m.created_at >= %s))))"
+            )
+            params.extend([start_utc, start_utc, start_utc])
 
     return clauses, params
 
@@ -304,8 +321,9 @@ def postgres_keyword_search(state: EchoState) -> dict[str, Any]:
     """
     Keyword branch of the hybrid retrieval (Node 2a).
 
-    Runs PostgreSQL FTS over title/raw_text/auto_keywords/subject/sender/
-    domain/channel with an ILIKE fallback in the same query, ranked by ts_rank.
+    Runs PostgreSQL FTS over the stored search_vector (title, full raw_text,
+    auto_keywords, subject, sender, domain, channel, attachment text) with an
+    ILIKE fallback on the short fields in the same query, ranked by ts_rank.
     Applies deterministic source, absolute-time, and time-anchor constraints —
     except on widen attempt 3 (skip_postgres_filter), when the same keyword
     match runs without them. Result order defines Rank_postgres for RRF.
@@ -481,6 +499,45 @@ def hydrate_memory_items(memory_ids: Sequence[str]) -> list[dict[str, Any]]:
         return []
     logger.info("hydrate_memory_items: %d of %d ids hydrated", len(rows), len(ids))
     return [normalise_row(row) for row in rows]
+
+
+def fetch_visit_times(memory_ids: Sequence[str], since_utc: datetime) -> dict[str, list[datetime]]:
+    """
+    Visit times (naive UTC, oldest first) on or after `since_utc` for the given
+    Chrome/YouTube items, so the answer can show which visits fall inside the asked
+    period (A1.2). Items with no visit in range are left out; Gmail has no visits.
+
+    Args:
+        memory_ids: memory_id strings (UUIDs).
+        since_utc: the time filter as naive UTC.
+
+    Returns:
+        {memory_id: [visited_at, ...]}; empty on error or empty input.
+    """
+    ids = [str(mid) for mid in memory_ids]
+    if not ids:
+        return {}
+    sql = (
+        "SELECT memory_id::text AS memory_id, visited_at FROM visits "
+        "WHERE memory_id = ANY(%s::uuid[]) AND visited_at >= %s "
+        "ORDER BY memory_id, visited_at"
+    )
+    try:
+        conn = get_connection()
+        try:
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute(sql, (ids, since_utc))
+                    rows = cur.fetchall()
+        finally:
+            conn.close()
+    except Exception as exc:
+        logger.error("fetch_visit_times: database error — %s: %s", type(exc).__name__, exc)
+        return {}
+    visits: dict[str, list[datetime]] = {}
+    for memory_id, visited_at in rows:
+        visits.setdefault(memory_id, []).append(visited_at)
+    return visits
 
 
 def fetch_recent_items(sources: Sequence[str], limit: int = 10) -> list[dict[str, Any]]:

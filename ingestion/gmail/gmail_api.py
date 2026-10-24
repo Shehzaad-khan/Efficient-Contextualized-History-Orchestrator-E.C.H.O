@@ -3,6 +3,7 @@ gmail_api.py — Gmail API access and email parsing
 Echo Personal Memory System
 
     authenticate_gmail()              OAuth -> Gmail API service object
+    sign_in_gmail()                   browser sign-in at backend startup if needed
     fetch_and_store_new_emails(svc)   one poll: list -> find new -> parse -> store
     extract_body(message)             readable body text from a Gmail message
     extract_attachments(message, id)  attachment metadata (no file content)
@@ -22,6 +23,7 @@ Skipped on purpose: drafts (unsent typed text — privacy rule) and senders the
 user excluded in settings.
 
 Callers and threads:
+    backend.main                     sign_in_gmail() on a daemon thread at startup
     ingestion/gmail/router.poll_once   via asyncio.to_thread (poll loop + POST /poll)
     enp/attachment_processor           authenticate_gmail() for Tier-2 downloads
 
@@ -44,26 +46,28 @@ from html import unescape
 from pathlib import Path
 from typing import Any, Callable
 
+from bs4 import BeautifulSoup
+from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 
 from ste import postgresql_manager, settings_store
-from ste.security import migrate_plaintext_file, write_encrypted_text
+from ste.security import read_token_text, write_token_text
 from .config import SCOPES
 from .database import store_in_postgresql
 
 logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-TOKEN_PATH = PROJECT_ROOT / "token_gmail.enc"
-LEGACY_TOKEN_PATH = PROJECT_ROOT / "token_gmail.json"
+TOKEN_PATH = PROJECT_ROOT / "token_gmail.json"
 CREDENTIALS_PATH = PROJECT_ROOT / "credentials.json"
 
 _LIST_PAGE_SIZE = 100          # Gmail's messages.list page size
 _MAX_API_ATTEMPTS = 4          # 1 call + 3 retries: waits 2 s, 4 s, 8 s
 _FIRST_RETRY_DELAY_SECONDS = 2
+_MIN_ATTACHMENT_IMAGE_BYTES = 10 * 1024
 
 _poll_lock = threading.Lock()
 
@@ -76,47 +80,100 @@ _excluded_ids: dict[str, str] = {}
 
 # ── Authentication ───────────────────────────────────────────────────────────
 
-def authenticate_gmail():
-    """Return an authorised Gmail API service.
+class GmailAuthError(RuntimeError):
+    """No usable Gmail token; finish the browser sign-in opened at startup."""
 
-    Token source: the encrypted local file token_gmail.enc (a plaintext
-    token_gmail.json is migrated into it once). An expired token is refreshed
-    and saved back. With no usable token, the browser consent flow runs —
-    that blocks this thread until the user finishes signing in.
-    """
-    creds = None
-    token_json = migrate_plaintext_file(LEGACY_TOKEN_PATH, TOKEN_PATH)
-    if token_json:
-        try:
-            creds = Credentials.from_authorized_user_info(json.loads(token_json), SCOPES)
-        except Exception as exc:
-            logger.warning("Stored Gmail token is unreadable — deleting it and signing in again: %s", exc)
-            TOKEN_PATH.unlink(missing_ok=True)
-            creds = None
 
-    if creds and creds.valid:
+class GmailUnavailableError(RuntimeError):
+    """The stored token may be fine, but Google could not be reached (network error).
+
+    Not a GmailAuthError on purpose: sign_in_gmail() must not open a browser for it."""
+
+
+# The token file is never deleted here. The poller and ENP threads call this too, and
+# a deleted file would leave Gmail capture dead until a restart. A new sign-in
+# overwrites the file atomically (write_token_text).
+def _load_gmail_credentials() -> Credentials:
+    """Load or refresh the stored Gmail token without opening a browser."""
+    try:
+        token_json = read_token_text(TOKEN_PATH)
+    except Exception as exc:
+        logger.warning("Stored Gmail token is unreadable: %s", type(exc).__name__)
+        raise GmailAuthError("Stored Gmail token is unreadable; sign in again") from exc
+
+    if token_json is None:
+        raise GmailAuthError("No stored Gmail token; finish the browser sign-in opened at startup")
+
+    try:
+        creds = Credentials.from_authorized_user_info(json.loads(token_json), SCOPES)
+    except Exception as exc:
+        logger.warning("Stored Gmail token is unreadable: %s", type(exc).__name__)
+        raise GmailAuthError("Stored Gmail token is unreadable; sign in again") from exc
+
+    if creds.valid:
         logger.info("Gmail authenticated from the stored token")
-        return build("gmail", "v1", credentials=creds)
+        return creds
 
-    if creds and creds.expired and creds.refresh_token:
+    if creds.expired and creds.refresh_token:
         try:
             creds.refresh(Request())
-            logger.info("Gmail access token refreshed")
+        except RefreshError as exc:
+            # Google answered and refused: revoked or expired refresh token.
+            logger.warning("Gmail token refresh was refused: %s", type(exc).__name__)
+            raise GmailAuthError("Gmail token could not be refreshed; sign in again") from exc
         except Exception as exc:
-            logger.warning("Gmail token refresh failed — signing in again: %s", exc)
-            creds = None
-    else:
-        # No token, or a token that can't be refreshed (no refresh_token).
-        creds = None
+            # Google was not reached (offline, DNS, timeout): the token may still be good.
+            logger.warning("Gmail token refresh could not reach Google: %s", type(exc).__name__)
+            raise GmailUnavailableError("Google could not be reached to refresh the Gmail token") from exc
 
-    if creds is None:
-        logger.warning("No usable Gmail token — starting the browser sign-in flow")
+        if not creds.valid:
+            raise GmailAuthError("Gmail token refresh did not produce valid credentials")
+        try:
+            write_token_text(TOKEN_PATH, creds.to_json())
+        except OSError as exc:
+            # The refresh worked; an editor or sync client holding the file must not fail the poll.
+            logger.warning("Refreshed Gmail token could not be saved (%s); using it in memory", type(exc).__name__)
+        else:
+            logger.info("Gmail access token refreshed")
+        return creds
+
+    raise GmailAuthError("No usable Gmail token; finish the browser sign-in opened at startup")
+
+
+def authenticate_gmail():
+    """Return an authorised Gmail API service or raise GmailAuthError.
+
+    This function never opens a browser; sign_in_gmail() owns that flow.
+    """
+    return build("gmail", "v1", credentials=_load_gmail_credentials())
+
+
+def sign_in_gmail() -> None:
+    """Ensure a usable Gmail token exists, opening the browser when needed.
+
+    Called once at backend startup on its own daemon thread. The token-file
+    helpers lock only individual reads and writes, so no lock is held while the
+    browser is open. Failures are logged and never raised.
+    """
+    try:
+        _load_gmail_credentials()
+        logger.info("Gmail token is already usable")
+        return
+    except GmailAuthError:
+        pass
+    except Exception as exc:
+        logger.error("Gmail token check failed: %s", type(exc).__name__)
+        return
+
+    logger.warning("No usable Gmail token — starting the browser sign-in flow")
+    try:
         flow = InstalledAppFlow.from_client_secrets_file(str(CREDENTIALS_PATH), SCOPES)
         creds = flow.run_local_server(port=0)
-        logger.info("Gmail sign-in completed")
-
-    write_encrypted_text(TOKEN_PATH, creds.to_json())
-    return build("gmail", "v1", credentials=creds)
+        write_token_text(TOKEN_PATH, creds.to_json())
+    except Exception as exc:
+        logger.error("Gmail sign-in failed: %s", type(exc).__name__)
+        return
+    logger.info("Gmail sign-in completed")
 
 
 # ── Body extraction ──────────────────────────────────────────────────────────
@@ -136,6 +193,19 @@ _ANY_TAG_RE = re.compile(r"<[^>]+>")
 _SPACES_RE = re.compile(r"[ \t\f\v\xa0]+")
 _BLANK_LINES_RE = re.compile(r"\n{3,}")
 _CHARSET_RE = re.compile(r"charset\s*=\s*\"?([\w.:-]+)", re.IGNORECASE)
+# Inline style properties that can hide an element (A6.1). Hiding done by a CSS class
+# is not caught (accepted limitation).
+_HIDING_PROPERTIES = ("display", "visibility", "max-height", "font-size", "opacity")
+_IMPORTANT_RE = re.compile(r"\s*!\s*important\s*$", re.IGNORECASE)
+# 0, 0.0, .0, 0px, 0em, 0% ...: a zero length with an optional unit.
+_ZERO_LENGTH_RE = re.compile(r"^[+-]?(0+(\.0*)?|\.0+)(px|pt|em|rem|ex|ch|vh|vw|%)?$")
+# A child of these can show its own text even when its parent sets font-size:0 or
+# visibility:hidden, and its text may be styled by a class we cannot see.
+_BLOCK_TAGS = frozenset({
+    "p", "div", "table", "tbody", "thead", "tfoot", "tr", "td", "th", "ul", "ol", "li",
+    "h1", "h2", "h3", "h4", "h5", "h6", "blockquote", "section", "article", "header",
+    "footer", "center", "pre", "form",
+})
 
 
 def _part_charset(part: dict) -> str:
@@ -165,25 +235,6 @@ def _decode_part_data(part: dict) -> str:
     return raw.decode(_part_charset(part), errors="replace")
 
 
-def _find_mime_part(part: dict, target_mime: str) -> str:
-    """Depth-first search for the first `target_mime` BODY part with inline data.
-
-    Gmail nests the real body inside multipart/alternative — and inside
-    multipart/mixed once a forward or an attachment is involved. Parts with a
-    filename are attachments (an attached notes.txt is text/plain too) and are
-    never taken as the body.
-    """
-    if part.get("mimeType") == target_mime and not part.get("filename"):
-        text = _decode_part_data(part)
-        if text:
-            return text
-    for child in part.get("parts", []) or []:
-        found = _find_mime_part(child, target_mime)
-        if found:
-            return found
-    return ""
-
-
 def _normalize_text(text: str) -> str:
     """Unify line endings, drop invisible characters, collapse runs of spaces
     and blank lines. Line breaks themselves are kept."""
@@ -197,6 +248,23 @@ def _html_to_text(html: str) -> str:
     """HTML mail -> readable text with its line structure kept."""
     if not html:
         return ""
+    # Parsing with BeautifulSoup is ~30x slower than the regexes below, so a mail whose
+    # text never mentions a hiding property is not parsed at all (same output).
+    if _may_contain_hidden_element(html):
+        soup = BeautifulSoup(html, "html.parser")
+        removed_hidden_element = False
+        for element in soup.find_all(style=True):
+            # An element inside an already removed hidden parent is destroyed with it.
+            if element.decomposed:
+                continue
+            if _element_is_hidden(element):
+                element.decompose()
+                removed_hidden_element = True
+        if removed_hidden_element:
+            html = str(soup)
+
+    # Keep this regex pipeline stable: its newlines preserve reply/signature
+    # boundaries for ENP's line-oriented cleaner.
     text = _COMMENT_RE.sub(" ", html)          # includes Outlook's <!--[if mso]> blocks
     text = _DROP_BLOCK_RE.sub(" ", text)
     text = _LINE_BREAK_TAG_RE.sub("\n", text)
@@ -204,33 +272,176 @@ def _html_to_text(html: str) -> str:
     return _normalize_text(unescape(text))
 
 
+def _may_contain_hidden_element(html: str) -> bool:
+    """Cheap pre-check: an inline style that names one of the hiding properties exists."""
+    lowered = html.lower()
+    return "style" in lowered and any(name in lowered for name in _HIDING_PROPERTIES)
+
+
+def _style_declarations(style: str) -> dict[str, str]:
+    """'a: b; c: d !important' -> {'a': 'b', 'c': 'd'} (lower case, !important removed)."""
+    declarations: dict[str, str] = {}
+    for declaration in style.split(";"):
+        name, separator, value = declaration.partition(":")
+        if separator:
+            declarations[name.strip().lower()] = _IMPORTANT_RE.sub("", value.strip().lower()).strip()
+    return declarations
+
+
+def _declaration_hides(name: str, value: str) -> bool:
+    if name == "display":
+        return value == "none"
+    if name == "visibility":
+        return value in {"hidden", "collapse"}
+    if name in {"opacity", "max-height", "font-size"}:
+        return bool(_ZERO_LENGTH_RE.match(value))
+    return False
+
+
+def _has_visible_descendant(element: Any, property_names: list[str]) -> bool:
+    """True when something inside the element can still be seen even though the
+    element itself sets a hiding value: a block-level child, or a child that
+    re-declares the property with a visible value."""
+    for child in element.find_all(True):
+        if child.name in _BLOCK_TAGS:
+            return True
+        child_declarations = _style_declarations(child.get("style", ""))
+        for name in property_names:
+            if name in child_declarations and not _declaration_hides(name, child_declarations[name]):
+                return True
+    return False
+
+
+def _element_is_hidden(element: Any) -> bool:
+    """Whether an element's inline style hides it from the reader (A6.1).
+
+    display:none and opacity:0 hide the whole subtree and a child cannot undo them;
+    max-height:0 does so only together with overflow:hidden. visibility:hidden and
+    font-size:0 are overridable by children (Outlook templates wrap real text in
+    font-size:0 cells), so the element is dropped only when nothing inside it can show.
+    """
+    declarations = _style_declarations(element.get("style", ""))
+    hiding = [name for name in _HIDING_PROPERTIES if name in declarations and _declaration_hides(name, declarations[name])]
+    if not hiding:
+        return False
+    overflow_clipped = declarations.get("overflow") in {"hidden", "clip"} or declarations.get("overflow-y") in {"hidden", "clip"}
+    if "display" in hiding or "opacity" in hiding or ("max-height" in hiding and overflow_clipped):
+        return True
+    overridable = [name for name in hiding if name in {"visibility", "font-size"}]
+    return bool(overridable) and not _has_visible_descendant(element, overridable)
+
+
+def _prefer_plain(body_parts: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """When siblings carry the same body twice (text/plain next to text/html), keep the plain one."""
+    if any(kind == "text/plain" for kind, _ in body_parts):
+        return [entry for entry in body_parts if entry[0] == "text/plain"]
+    return body_parts
+
+
+def _collect_body_parts(part: dict, include_attached_messages: bool = False) -> list[tuple[str, str]]:
+    """Collect ordered body text, choosing one representation per alternative.
+
+    An attached message (message/rfc822: a bounce's original, "forward as attachment")
+    is skipped unless include_attached_messages is set; extract_body sets it only when
+    the mail has no other text, so a bounce does not repeat the original it quotes.
+    """
+    def walk(current: dict, seen: set[int]) -> list[tuple[str, str]]:
+        if not isinstance(current, dict) or id(current) in seen:
+            return []
+        seen.add(id(current))
+
+        mime_type = str(current.get("mimeType") or "").lower()
+        is_attached_message = mime_type == "message/rfc822"
+        if is_attached_message and not include_attached_messages:
+            return []
+
+        filename = current.get("filename")
+        if filename and str(filename).strip() and not is_attached_message:
+            return []
+
+        if mime_type in {"text/plain", "text/html"}:
+            text = _decode_part_data(current)
+            text = _normalize_text(text) if mime_type == "text/plain" else _html_to_text(text)
+            return [(mime_type, text)] if text else []
+
+        children = current.get("parts", []) or []
+        if not isinstance(children, (list, tuple)):
+            return []
+
+        if mime_type == "multipart/alternative":
+            first_html = None
+            for child in children:
+                branch_seen = seen.copy()
+                branch_parts = walk(child, branch_seen)
+                if not branch_parts:
+                    continue
+                candidate = (branch_parts, branch_seen)
+                if any(kind == "text/plain" for kind, _ in branch_parts):
+                    seen.update(branch_seen)
+                    return branch_parts
+                if first_html is None and any(kind == "text/html" for kind, _ in branch_parts):
+                    first_html = candidate
+            if first_html is not None:
+                seen.update(first_html[1])
+                return first_html[0]
+            return []
+
+        body_parts = []
+        for child in children:
+            body_parts.extend(walk(child, seen))
+        return _prefer_plain(body_parts)
+
+    return walk(part, set())
+
+
 def extract_body(message: dict) -> str:
-    """Return the email body as text, preferring text/plain and falling back to HTML."""
+    """Return all ordered body text, with one representation per alternative."""
     payload = message.get("payload", {})
-    plain = _find_mime_part(payload, "text/plain")
-    if plain:
-        return _normalize_text(plain)
-    return _html_to_text(_find_mime_part(payload, "text/html"))
+    body_parts = _collect_body_parts(payload)
+    if not body_parts:
+        # A mail that is only an attached message ("forward as attachment", no note).
+        body_parts = _collect_body_parts(payload, include_attached_messages=True)
+    return _normalize_text("\n\n".join(text for _, text in body_parts))
 
 
 def extract_attachments(message: dict, message_id: str) -> list[dict[str, Any]]:
-    """Collect every attachment part (any part with a filename), including
-    ones nested inside multipart and inline images such as signature logos."""
+    """Collect filename-bearing attachments, excluding inline and small images."""
     attachments: list[dict[str, Any]] = []
 
     def walk(part: dict) -> None:
         filename = (part.get("filename") or "").strip()
         body = part.get("body", {})
         if filename:
-            attachments.append(
-                {
-                    "filename": filename,
-                    "mime_type": part.get("mimeType", "application/octet-stream"),
-                    # Size lives on body, not on the part itself.
-                    "size": int(body.get("size") or 0),
-                    "attachment_id": body.get("attachmentId"),
-                }
+            disposition = ""
+            content_id_present = False
+            for header in part.get("headers", []) or []:
+                name = str(header.get("name") or "").lower()
+                value = str(header.get("value") or "")
+                if name == "content-disposition":
+                    disposition = value.strip().lower()
+                elif name == "content-id":
+                    content_id_present = True
+
+            mime_type = part.get("mimeType", "application/octet-stream")
+            # Size lives on body, not on the part itself.
+            size = int(body.get("size") or 0)
+            disposition_kind = disposition.split(";", 1)[0].strip()
+            is_inline = disposition.startswith("inline")
+            has_non_attachment_content_id = content_id_present and disposition_kind != "attachment"
+            # An unknown size (0) is not "under 10 KB": keep it rather than drop a real image.
+            is_small_image = (
+                str(mime_type).lower().startswith("image/")
+                and 0 < size < _MIN_ATTACHMENT_IMAGE_BYTES
             )
+            if not (is_inline or has_non_attachment_content_id or is_small_image):
+                attachments.append(
+                    {
+                        "filename": filename,
+                        "mime_type": mime_type,
+                        "size": size,
+                        "attachment_id": body.get("attachmentId"),
+                    }
+                )
         for child in part.get("parts", []) or []:
             walk(child)
 

@@ -857,8 +857,10 @@ Still open — decide each:
     KEY (memory_id) REFERENCES gmail_metadata(memory_id) ON DELETE CASCADE;` (4 rows, 0 orphans). `scripts/setup_db.py`
     already declared this, so no change there.
   - Schema diff, restored vs fresh `setup_db.py` on a scratch database (dropped afterwards): the only differences are
-    (1) a leftover enum type `userrole` (ADMIN/FACULTY/STUDENT) from the removed auth layer, which nothing uses;
-    (2) the two CHECK constraints print in a different but equivalent form. Neither was changed (no decided item).
+    (1) a leftover enum type `userrole` (ADMIN/FACULTY/STUDENT) from the removed auth layer, which nothing used;
+    (2) the two CHECK constraints print in a different but equivalent form (same accept/reject result on 7 test values).
+    (1) was dropped on 2026-10-24 with `DROP TYPE userrole` (no CASCADE; 0 columns and 0 dependents; `pg_dump -Fc` taken first:
+    `echo_db_before_drop_userrole_2026-10-24.dump`). (2) was left as is.
   - UTC per connection (A31.4) built in `ste/postgresql_manager.py`, `rse/search_coordinator.py` (this pool also serves
     `conversation_memory.py`) and `enp/enrichment_pipeline.py`. Shown on a database WITHOUT the ALTER DATABASE setting:
     plain connection = Asia/Calcutta, with the option = UTC. `scripts/setup_db.py` and `scripts/enp_status.py` open plain
@@ -871,6 +873,62 @@ Still open — decide each:
     rows (the B5 re-embed rebuilds the index), and the LLM synthesis step got HTTP 401 from OpenAI (the `OPENAI_API_KEY`
     in `.env` is rejected).
   - Neon `echo-dev` and Upstash are untouched. Rollback = put the two lines from `env.neon-upstash.bak` back in `.env`.
+- **Built 2026-10-24, schema batch (his picks for all four small decisions; schema only, the code that uses the new structures is a later stage):**
+  - Migration file `scripts/migrations/2026-10-24_schema_batch.sql`, one transaction, run as role `echo`. Order: `pg_dump -Fc` backup
+    (`echo_db_before_schema_batch_2026-10-24.dump`) and a count + md5 baseline of all 16 tables; restore into scratch database `echo_scratch`
+    (identical); run the migration on scratch and pass 20 checks; build `echo_fresh` with `scripts/setup_db.py`; run on `echo_db`; same 20 checks.
+  - A21: `ALTER TABLE memory_items DROP COLUMN classification_confidence` (109 of 109 rows had a value; nothing read it). Required code edit in
+    `enp/enrichment_pipeline.py`: `mark_item_processed` lost its `confidence` parameter and both `UPDATE`s stopped writing the column
+    (the debug log line still prints the confidence). Run against the migrated scratch copy: `mark_item_processed` and `mark_item_failed`
+    (600-char reason cut to 500) both work.
+  - A4: `ALTER TABLE gmail_attachments ADD COLUMN extracted_text TEXT` (4 rows, all NULL).
+  - A1.1/A1.1b: new table `visits (visit_id UUID PK, memory_id UUID FK ON DELETE CASCADE, visited_at TIMESTAMP, dwell_seconds INTEGER)`
+    with `idx_visits_memory (memory_id, visited_at DESC)` and `idx_visits_visited_at`. Backfill: 66 rows over 39 items (27 items with 2 visits, 12 with 1;
+    Gmail has none). The stored total (Chrome `dwell_time_seconds`, YouTube `watch_time_seconds`) sits on the last visit, the first has 0: sum 2,449 s
+    = 1,520 + 929, and every item's visit sum equals its stored total. FK rejects an unknown `memory_id`; deleting an item deletes its visits.
+  - A24.3/A4: `memory_items.search_vector TSVECTOR` + `idx_memory_items_search` (GIN), filled for all 109 rows by one `UPDATE`. A generated
+    column was ruled out (it cannot read `gmail_metadata`, `chrome_metadata`, `youtube_metadata` or `gmail_attachments`); ENP writes it from now on
+    (not built yet). Check: for the 104 rows with `raw_text` ≤ 5,000 chars the vector equals today's `_FTS_DOCUMENT` (101 of 104 exactly; the other 3
+    differ only in the very last word, because the new text ends with a space and `to_tsvector` tokenizes the final word differently at the end
+    of a string; 104 of 104 when the old expression gets the same trailing space). All 5 rows over 5,000 chars now carry their tail (a word past
+    character 5,000 is found by the new vector and missed by the old); the planner uses the GIN index when sequential scans are off (the table has
+    109 rows, so by default it will not).
+  - Result: 17 tables. The other 14 tables are identical to the baseline (count + md5); in `memory_items` and `gmail_attachments` the untouched columns are
+    identical. Schema diff `echo_db` vs fresh `setup_db.py`: 114 columns and 40 indexes identical, constraints differ only in the two known CHECK
+    spellings (left as is). `compileall` silent, `npm run build` ok.
+  - Left for the code stage on purpose (done the same day, see the next "Built" block): `store_chrome_page` / `store_youtube_detection` writing `visits`;
+    time filters (`search_coordinator`, `fusion`, `evaluate_quality`) and `wba/time_aggregator.py` reading them; ENP writing `search_vector` and
+    `extracted_text`; `search_coordinator` reading `search_vector`.
+  - Risk to check at that stage: if YouTube metadata (title, channel) arrives after ENP ran and does not reset `preprocessed`, the stored vector goes stale.
+- **Built 2026-10-24, code wiring for the schema batch (tested on a scratch copy of `echo_db`; the live DB, real FAISS index and Gmail were not touched by tests):**
+  - A1.1 writers, `ste/storage_engine.py`: `_store_visit`; `store_chrome_page` inserts a visit with `payload.dwell_seconds`; `store_youtube_detection` inserts a visit at the
+    detection time with dwell 0; `update_youtube_watch_time` sets the video's NEWEST visit to `GREATEST(its dwell, session watch time)`. Gmail writes none.
+  - A1.1 readers: `rse/search_coordinator.py` — `last_visit_at` (latest visit) is a result column; the keyword time filter is `(gmail AND created_at >= start) OR
+    (not gmail AND EXISTS visit >= start)`; `filter_time_of(item)` is the one Python rule (Gmail arrival, Chrome/YouTube latest visit, no visit -> `created_at`), used by
+    `rse/fusion.py` and `evaluate_quality`. Anchors, neighbours and `fetch_recent_items` still use `created_at` (not part of A1.1).
+  - A1.1b wellbeing: `wba/time_aggregator.py` `TIME_UNION_SQL` (public): Gmail unchanged; Chrome/YouTube rows come from `visits` (YouTube only dwell > 0); item counts are
+    `COUNT(DISTINCT)`; shorts and heatmap follow. `wba/regret_system.regret_rate` and `wba/pattern_detector.peak_activity_hours` reuse the union so regretted seconds stay
+    inside the total. Sessions (`wellbeing_analytics._fetch_day_activity`) are built from the same union (review finding: otherwise one dashboard payload showed totals
+    and session durations attributed to different days), so a visit is a session point and session durations add up to `total_seconds`.
+  - A1.2: `rse/llm_synthesizer.py` — `TODAY: <date> (<weekday>)` line, the rule "use ONLY items inside the asked period", and a "Visits in the asked period" line for
+    Chrome/YouTube items (`search_coordinator.fetch_visit_times`, at most the latest 5). Re-check after A26 (the Luna tool loop may change the prompt layout).
+  - A24.3: `enp/enrichment_pipeline.mark_item_processed` writes `search_vector` in the same `UPDATE` as `preprocessed = TRUE` (raw_text and attachment text each cut at 300,000
+    characters); `search_coordinator._FTS_DOCUMENT = "m.search_vector"` (the 5,000-character cap is gone).
+  - A4: ENP step 2 (`_load_attachment_texts`) reads each Gmail attachment not yet extracted through `enp/attachment_processor.extract_full_text` (types without an extractor are
+    not downloaded; cut at `MAX_EXTRACTED_TEXT_CHARS` = 200,000; PDF reading stops at the same cap), stores `extracted_text`, and a failure on one attachment (no Gmail, API error,
+    unreadable file) is logged and skipped. `LazyGmailService` builds one Gmail service per batch and remembers a failed sign-in for that batch. `item["attachment_texts"]` is ready for A16.
+  - Independent review (`opus5-reviewer`) found 8 points; fixed: (1) the SQL time filter and `filter_time_of` now agree on an item with NO visit row (fall back to
+    `created_at`); (2) `update_youtube_metadata` sends a processed video back to ENP when its title or text changes, so a late transcript reaches the vector and the
+    embedding (same idea as A3); (4) `extract_full_text` skips files over `MAX_INGEST_ATTACHMENT_BYTES` = 10 MB (my choice, change if you want another limit; size 0 = unknown is
+    tried); (5) sessions from the same rows as totals; (6) a heartbeat for a video with no visit row logs a WARNING and ties on `visited_at` break by `visit_id`; (7) stale comments;
+    (8) `attachment_texts` is documented as unused until A16. Not fixed on purpose: (3) an attachment that gives no text is read again whenever its mail is processed again
+    (B5, A3, a retry): there is no column to record "tried" and the schema is closed for this change, and a mail is processed once otherwise.
+    Left as a named risk: the end of a period ("yesterday") is enforced by the prompt, not in code (the filter has always been start-only, A1.2).
+  - Tests (72 checks, all pass: 50 + 10 + 12): visits per capture/revisit/re-watch/heartbeat/unknown video; day totals with a page reopened on a later day (time stays on each visit's own day);
+    regret rate 31.0 % and 100.0 % (never above); empty day 0; a page captured in August and reopened on 20 Oct IS found for "since 10 Oct" while a page captured today but last
+    opened in September is NOT; a word past character 5,000 and a sender address found through the stored vector; a 600,000-character body is cut and still saves; attachment text
+    stored once and reused; failed download leaves NULL and the mail still loads; prompt gets the TODAY line and the visits line only where it applies.
+  - Not done: merging attachment text into the embedded text (A16 token budget, part of the model switch); the retry-duplicates-a-visit gap (needs a visit time from the extension).
 
 ### A32. KNN alone can never create a group suggestion — [x] decided 2026-10-21 (found 2026-10-18, wba/group_manager.py review) — DISCUSS AT THE END
 - Hybrid score = 0.5 × rule_score + 0.5 × knn_score; a suggestion needs score > 0.70 OR a rule match.

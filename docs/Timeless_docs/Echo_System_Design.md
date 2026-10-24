@@ -26,7 +26,7 @@ Numbering: §1–§21 keep the section numbers of architecture v2.1, because cod
 ("DB design Table 14"), and adds Table 17. Appendix A lists every change from the earlier design.
 
 Open items at a glance (details in §24): no design decision is open. A1–A45 and E1 are decided; the last four
-(A16, A40, A42, A43) were closed on 21 Oct 2026. Still open are build-or-drop items D3 / D4 / D5, not design questions.
+(A16, A40, A42, A43) were closed on 21 Oct 2026. Still open are build-or-drop items D3 and D5 (D4 was built on 23 Oct 2026), not design questions.
 
 ---
 
@@ -261,9 +261,12 @@ sequenceDiagram
     connector. Pool 5 + overflow 10, recycle 240 s, slow-query warning at 1.0 s.
   - psycopg2 with `%s` parameters — `rse/search_coordinator.py` (pool 1–10, idle ping after 60 s) and `rse/conversation_memory.py`.
   - `enp/enrichment_pipeline.py` opens one psycopg2 connection per batch.
-- **Schema.** 16 tables today; Table 17 and two columns are added during the build (Part II). The 16-table lock is
+- **Schema.** 17 tables since 2026-10-24: the schema batch added Table 17 (`visits`), `memory_items.search_vector` and
+  `gmail_attachments.extracted_text`, and dropped `memory_items.classification_confidence` (Part II, D9). The 16-table lock is
   lifted (A31.3): every schema change must belong to a decided item and is written twice — in `scripts/setup_db.py`
-  and as ALTER SQL on the restored dump — all on Thursday, before data cleanup and re-embedding.
+  and as ALTER SQL on the restored database — before the full re-embedding. The code that fills and reads them was wired on
+  2026-10-24: visit writes (`ste/storage_engine.py`), ENP writing `search_vector` and `extracted_text`, keyword search and the
+  time filters reading them, wellbeing summing visits by day. Still open: merging attachment text into the embedded text (A16).
 
 ### 4.2 FAISS — Semantic Search Index
 
@@ -368,7 +371,7 @@ earlier message carries error text in `auto_keywords`.
 | | Today (built) | Decided (built Thu–Sun) |
 |---|---|---|
 | At ingestion | One `gmail_attachments` row per attachment; `lightweight_extract = "filename \| mime \| size"` (no file content, keeps the hot path fast) | Same row. Inline parts (Content-Disposition inline / Content-ID) and images under ~10 KB are skipped (A22.2; exact size TBD at build) |
-| Text extraction | Only at query time (Tier 2), for a top-3 Gmail result when the query asks for file content | In the ENP worker for every new attachment; text stored in the new column `gmail_attachments.extracted_text` (A4); `is_processed = TRUE` once merged |
+| Text extraction | Only at query time (Tier 2), for a top-3 Gmail result when the query asks for file content | In the ENP worker for every attachment not read yet (built 2026-10-24); text stored in `gmail_attachments.extracted_text` (A4), cut at 200,000 characters (`MAX_EXTRACTED_TEXT_CHARS`, so the stored vector stays under PostgreSQL's 1 MB limit); types with no extractor are not downloaded; a failed download leaves it NULL and the mail is still enriched; `is_processed = TRUE` once merged |
 | Types | PDF (pypdf → pdfplumber), DOCX (incl. tables, header/footer), TXT/MD/CSV/TSV/LOG/JSON/XML/ICS, HTML. Images only if Tesseract is installed (it is not) | Add XLSX (`openpyxl`), PPTX (`python-pptx`), `.eml` (stdlib), OCR for images and scanned PDFs (Tesseract + `pytesseract`). Skipped: `.doc`, RTF, ODT, ZIP, HEIC (A22.1) |
 | Embedding | Not embedded at all (C15) | Token budget (A16, replaces A4's 800-char split): body up to 300 tokens, then attachments fill the rest of the 512-token window, each attachment's start in turn (§8.2) |
 | Keyword search | Not searchable | Full extracted text goes into the stored tsvector (A4, A24.3) |
@@ -382,7 +385,7 @@ Binary files are never stored. Audio and video attachments are out of scope.
 `ingestion/gmail/gmail_api.py` (OAuth, listing, parsing), `ingestion/gmail/router.py` (`/gmail/health`, `/gmail/poll`,
 `/gmail/engagement`, `poll_forever`), `ingestion/gmail/database.py`, `ingestion/gmail/config.py`,
 `extension/content/gmail_tracker.js`, `enp/attachment_processor.py`.
-OAuth token: `token_gmail.enc` (Fernet) today → plain `token_gmail.json` (built Thu–Sun, A35, §13.1). Scope `gmail.readonly`.
+OAuth token: plain `token_gmail.json` (A35, built 2026-10-24; it was the Fernet file `token_gmail.enc`, which is now ignored, so the first start signs in again; §13.1). Scope `gmail.readonly`. The browser sign-in runs once at startup on a daemon thread (`sign_in_gmail`, C28); the poller only uses the token and skips while signed out.
 
 ## 6. Chrome Browsing Module (CHC)
 
@@ -731,7 +734,7 @@ Decided client (A21, final 2026-10-21, built Thu–Sun):
 - provider `openai` → OpenAI **Decisions API** (`langchain_openai` `OpenAIDecisions`, beta), choices = the 5 names; its probabilities are not stored.
 - any other provider → the text call with a strict one-word reply; anything other than the 5 names → `misc` / `'fallback'`.
 - If the Decisions call raises, that item falls back to the one-word path.
-- `classification_confidence` is no longer stored; the column is dropped on Thursday (Table 2).
+- `classification_confidence` is no longer stored; the column was dropped on 2026-10-24 and ENP no longer writes it (Table 2).
 
 Result: `'llm'`; no LLM configured, LLM failure, or bad reply → `misc` with `classified_by = 'fallback'`.
 
@@ -780,7 +783,7 @@ Decided (A26): a round counter for the tool loop.
 |---|---|---|---|
 | 1 | `parse_intent` | Query + last 10 history messages (500 chars each) → `ParsedIntent` JSON. On any error: fallback intent with `is_ambiguous = True` | Call 1 |
 | 2 | `resolve_time_anchor` | "after the interview email": finds the anchor item by FTS/ILIKE (best `ts_rank`, newest on ties, source hint from words like "email"), else by FAISS (cosine ≥ 0.35; start 0.55 with arctic-xs, tuned Thursday, A40); exposes `anchor_time` | no |
-| 3 | `postgres_keyword_search` | `websearch_to_tsquery` over title, `raw_text` (first 5,000 chars today), keywords, subject, sender, domain, channel, plus ILIKE fallbacks; up to 200 rows (`PG_KEYWORD_LIMIT`); anchor applied as `created_at > / <` | no |
+| 3 | `postgres_keyword_search` | `websearch_to_tsquery` over the stored `memory_items.search_vector` (title, full `raw_text`, keywords, subject, sender, domain, channel, attachment text; GIN index), plus ILIKE fallbacks; up to 200 rows (`PG_KEYWORD_LIMIT`); time filter: Gmail `created_at >= start`, Chrome/YouTube any visit `>= start` (A1.1); anchor applied as `created_at > / <` | no |
 | 4 | `faiss_semantic_search` | Each query variant embedded (with the model's query prefix, A40.1, built Thu–Sun); top 30 per variant (`FAISS_TOP_K_PER_VARIANT`) | no |
 | 5 | `merge_and_rrf` | Reciprocal Rank Fusion, `score = Σ 1 / (60 + rank)` (`RRF_K = 60`); keeps 50 (`RRF_POOL_SIZE`); hydrates rows; applies time filter + anchor to semantic-only hits | no |
 | 6 | `evaluate_quality` | 5 checks: empty pool → empty; requested source absent → empty; nothing in the time window → weak; fewer than 2 candidates → weak; best cosine < 0.35 → weak (start 0.55 with arctic-xs, tuned Thursday, A40); else strong | no |
@@ -979,8 +982,12 @@ Time is computed on demand from the source tables, never stored as a total (`wba
 | Source | Counts when | Seconds from |
 |---|---|---|
 | Gmail | the mail was opened (`first_opened_at IS NOT NULL`) | `dwell_time_seconds`, attributed to the day of `last_accessed_at` |
-| Chrome | every stored page (it passed the gate) | today: `dwell_time_seconds` on the last-accessed day → per-visit `dwell_seconds` summed by the visit's day (built Thu–Sun, A1.1b) |
-| YouTube | watch time > 0 | today: longest session on the last-accessed day → per-visit rows summed by day (built Thu–Sun, A1.1b) |
+| Chrome | every stored page (it passed the gate) | `visits.dwell_seconds`, summed by each visit's local day (built 2026-10-24, A1.1b) |
+| YouTube | a visit with `dwell_seconds` > 0 | `visits.dwell_seconds` (each heartbeat raises the latest visit to the session's running watch time), summed by each visit's local day (built 2026-10-24, A1.1b) |
+
+`wba/time_aggregator.TIME_UNION_SQL` holds these rules once. `regret_rate` and `peak_activity_hours` reuse it, so regretted
+seconds stay inside the day's total (rate ≤ 100 %). Item counts use `COUNT(DISTINCT memory_id)` because one item can have several
+visits in a day. Sessions (§11.5) are built from the same rows.
 
 Days are the user's local days; each local day becomes a UTC range before querying.
 Why the visit table (A30, settled by A1.1b): with one running total per item, reopening an old item moved all its earlier
@@ -1069,13 +1076,17 @@ When 5 or more accepted items share a pattern (`RULE_SUGGESTION_MIN_MATCHES = 5`
 ### 11.5 Session Computation
 
 A session is a run of items whose consecutive times are within **20 minutes** (`wba/wellbeing_analytics.py`
-`SESSION_GAP_MINUTES = 20`; deviation from v2.1's 5 minutes, decided 2026-10-18: an item is one point in time, so a 15-minute
-read followed by the next page split one sitting into two sessions). Item time = `COALESCE(last_accessed_at, first_ingested_at)`.
+`SESSION_GAP_MINUTES = 20`; deviation from v2.1's 5 minutes, decided 2026-10-18: an activity is one point in time, so a 15-minute
+read followed by the next page split one sitting into two sessions). Points come from `time_aggregator.TIME_UNION_SQL`, the same
+rows the day totals use (since 2026-10-24): a Chrome/YouTube visit is one point at its `visited_at`, a Gmail item one point at its last
+open, so session durations add up to `total_seconds`. An item with two visits in one session is mapped once.
 Sessions are built per local day (a sitting across midnight becomes two). Stored: `session_start`, `session_end`,
 `total_duration_seconds`, `dominant_group_id`, `source_switch_count`. Derived on demand: `focus_score = 1 / unique source types`,
 `fragmentation = sessions per day / average session minutes`. A per-day Postgres advisory lock stops two rebuilds of the same day
 from duplicating sessions.
-Open build item (D4): only `POST /wellbeing/sessions/rebuild` builds sessions and nothing calls it, so the table stays empty.
+Built 2026-10-23 (D4): sessions are built on demand. `ensure_sessions_for_day` (`wba/wellbeing_analytics.py`) runs before the daily
+summary, `GET /wellbeing/sessions` and the weekly insight; today is rebuilt on every call, a past day once per process, future days are
+skipped. `POST /wellbeing/sessions/rebuild` stays as a manual rebuild.
 
 ### 11.6 Regret System
 
@@ -1292,9 +1303,9 @@ Scheduling: no in-app cron. Centroid recompute runs at ENP start when stale (A36
 Thursday, in this order (A31.3 guardrails):
 1. Done 2026-10-24: `pg_dump -Fc` of Neon (PostgreSQL 16.15, so no extra client tools were needed).
 2. Done 2026-10-24: restored into local PostgreSQL 16 (`echo_db`); local Redis running in WSL.
-3. All schema changes (Part II, D9): the `gmail_attachments.memory_id` UUID + foreign key fix is done (2026-10-24). Still open: Table 17,
-   `gmail_attachments.extracted_text`, stored tsvector + GIN, drop `classification_confidence` — in `scripts/setup_db.py` and as
-   ALTER SQL on the restored database.
+3. Done 2026-10-24: all schema changes (Part II, D9) — the `gmail_attachments.memory_id` UUID + foreign key fix, then the schema batch
+   (Table 17 `visits`, `gmail_attachments.extracted_text`, `memory_items.search_vector` + GIN, drop `classification_confidence`), in
+   `scripts/setup_db.py` and as `scripts/migrations/2026-10-24_schema_batch.sql` on the restored database.
 4. Data cleanup: B1 (drop the legacy `gmail_memory` table), B2 (dedupe `gmail_attachments`) and B3 (clear open times of Gmail rows
    never opened) were run on Neon on 2026-10-23, before the dump. The restored data already carries them.
 5. A11 transcript test (morning, final by noon).
@@ -1426,7 +1437,7 @@ query latency and tokens per round (A25), embed speed of arctic-xs on the real d
 | Attachments | Sent to LLM | top 3 passages, ~1,500 chars total | `MAX_CHARS_PER_ATTACHMENT = 6000`, `MAX_CHARS_TOTAL = 12000` | A23 |
 | Attachments | Redis cache | 1 h | `ATTACHMENT_CACHE_TTL_SECONDS = 3600` | §4.3 |
 | RSE | Keyword candidates | 200 | `rse/config.py` : `PG_KEYWORD_LIMIT` | §10.3 |
-| RSE | FTS text | full text, stored tsvector | `search_coordinator.py` : `_FTS_DOCUMENT` (first 5,000 chars) | A24.3 |
+| RSE | FTS text | full text, stored tsvector | `search_coordinator.py` : `_FTS_DOCUMENT = "m.search_vector"` (built 2026-10-24) | A24.3 |
 | RSE | FAISS per variant / widen × | 30 / × 3 | `FAISS_TOP_K_PER_VARIANT`, `FULL_SCAN_K_MULTIPLIER` | §10.3 |
 | RSE | RRF k / pool | 60 / 50 | `RRF_K`, `RRF_POOL_SIZE` | §10.5 |
 | RSE | Widen attempts / first widening | 3 / time window −4 days | `MAX_WIDEN_ATTEMPTS`; `graph_nodes.node_widen_scope` | §10.3 |
@@ -1486,7 +1497,7 @@ query latency and tokens per round (A25), embed speed of arctic-xs on the real d
 Known gaps (recorded, not yet fixed): C4 — recall does not see new vectors until a restart; C5 — Chrome dwell after the first
 send is lost; C10 — YouTube auto-seek may save videos at 0 s (unverified); C13 — no LLM timeout; C25 — SQLAlchemy errors can
 print bound values into logs (fix: `hide_parameters=True`); C26 — capture settings logged in full (excluded senders);
-C28 — Gmail sign-in can hang shutdown; D1 — DB pool not disposed; D3 — reminders never shown; D4 — sessions never built automatically.
+C28 — Gmail sign-in can hang shutdown; D1 — DB pool not disposed; D3 — reminders never shown.
 
 ## 24. Pending Decisions and Decided-but-Unbuilt Items
 
@@ -1495,7 +1506,7 @@ Still open, as build-or-drop items rather than design questions:
 
 | Id | Topic | Where it matters |
 |---|---|---|
-| D3 / D4 / D5 | Build or drop: regret reminders UI, automatic session building, rule pause toggle in the UI (route done) | §11.4–§11.6 |
+| D3 / D5 | Build or drop: regret reminders UI, rule pause toggle in the UI (route done). D4 (automatic session building) is built, 2026-10-23 | §11.4–§11.6 |
 
 **Decided, no build:** A40.2 (keep the cross-encoder model), A41 (Gmail open tracking kept), A43 (user groups stay unlinked).
 
@@ -1520,8 +1531,10 @@ attempts; if not built, the paper says "kept apart and can be retried"), A45 (`f
 
 # Part II — Database Design
 
-Source of truth for DDL: `scripts/setup_db.py` (schema v5.0, 16 tables). Changes marked (built Thu–Sun) are written into
-that file **and** as ALTER SQL on the restored local database, before the full re-embed (B5) (A31.3).
+Source of truth for DDL: `scripts/setup_db.py` (schema v5.0, 17 tables). Changes marked (built Thu–Sun) are written into
+that file **and** as ALTER SQL on the restored local database, before the full re-embed (B5) (A31.3). The four structural
+changes (Table 17, `search_vector`, `extracted_text`, dropped `classification_confidence`) were applied on 2026-10-24 with
+`scripts/migrations/2026-10-24_schema_batch.sql`; the code that fills and reads them was wired the same day.
 
 ## D1. Overview
 
@@ -1547,7 +1560,7 @@ Every timestamp column is naive UTC (`TIMESTAMP` without time zone, `NOW()` in a
 | 14 `group_rules` | Workflow | UUID | Persistent rules for user groups |
 | 15 `group_suggestions` | Workflow (audit trail) | UUID | Review queue: pending suggestions (human-in-the-loop) and auto-accepted ones awaiting undo (human-on-the-loop, A42) |
 | 16 `message_store` | Chat history | SERIAL | Multi-turn conversation history |
-| 17 visit table (built Thu–Sun) | Weak multi-valued 1:N | (TBD at build) | One row per gated Chrome/YouTube visit with its dwell (A1.1, A1.1b) |
+| 17 `visits` (built 2026-10-24) | Weak multi-valued 1:N | UUID (`visit_id`) | One row per gated Chrome/YouTube visit with its dwell (A1.1, A1.1b) |
 
 Not in the schema: the legacy `gmail_memory` table was dropped on Neon on 2026-10-23 (B1), before the dump, so it does not exist in `echo_db`.
 
@@ -1593,12 +1606,12 @@ Why a table and not a string column: analytics join a named entity, and the CHEC
 | `auto_keywords` | TEXT[] | `'{}'` | Up to 8 frequent words (§8.2) |
 | `preprocessed` | BOOLEAN | FALSE | TRUE after ENP finished; set back to FALSE to re-embed (A3, B5) |
 | `classified_by` | VARCHAR(20) | `'pending'` | structural, domain, centroid, llm, user_override, fallback, failed, pending. No CHECK |
-| `classification_confidence` | FLOAT | NULL | **Dropped (built Thu–Sun, A21).** Written today by `enp/enrichment_pipeline.py` |
+| `classification_confidence` | FLOAT | NULL | **Dropped 2026-10-24 (A21).** It was written by `enp/enrichment_pipeline.py` and never read; ENP no longer writes it |
 | `created_at` | TIMESTAMP | NOT NULL | Source time: mail arrival (`internalDate`), first capture for Chrome/YouTube |
 | `first_ingested_at` | TIMESTAMP | `NOW()` | When Echo first stored it |
 | `last_updated_at` | TIMESTAMP | `NOW()` | Last change |
 | `is_deleted` | BOOLEAN | FALSE | Soft delete |
-| stored tsvector (name TBD) | TSVECTOR | GIN index | **New (built Thu–Sun, A24.3, A4).** Full text for keyword search: title, full `raw_text`, keywords, subject, sender, domain, channel, attachment `extracted_text`. Fill mechanism (generated column or written by the app/ENP): (TBD at build) |
+| `search_vector` | TSVECTOR | GIN index `idx_memory_items_search` | **New 2026-10-24 (A24.3, A4).** Full text for keyword search: title, full `raw_text`, keywords, subject, sender, domain, channel, attachment `extracted_text`. **Written by ENP** (step 9), not a generated column: a generated column cannot read the metadata and attachment tables. Backfilled for the 109 existing rows on 2026-10-24. ENP writes it in step 9 (`mark_item_processed`, same `UPDATE` that sets `preprocessed`; `raw_text` and attachment text each cut at 300,000 characters) and `rse/search_coordinator.py` reads it |
 
 Constraint: `unique_source_entry UNIQUE (source_type, source_id)`.
 
@@ -1630,7 +1643,7 @@ Constraint: `unique_source_entry UNIQUE (source_type, source_id)`.
 | `is_processed` | BOOLEAN | FALSE | TRUE once the text is merged into the email's embedded text (A4) |
 | `full_extract_cached` | BOOLEAN | FALSE | Set by the query-time path today |
 | `full_extract_generated_at` | TIMESTAMP | NULL | Same |
-| `extracted_text` | TEXT | | **New (built Thu–Sun, A4).** Full extracted text; kept out of `raw_text`, which stays the real body |
+| `extracted_text` | TEXT | | **New 2026-10-24 (A4).** Full extracted text; kept out of `raw_text`, which stays the real body. NULL in all 4 rows until the next ENP pass over those mails (B5); ENP fills it for every attachment it can read |
 
 Old rows: B2 found no duplicates per `(memory_id, filename)` on 2026-10-23 (4 rows). In the restored copy `memory_id` was
 `character varying` with no foreign key (B1 had dropped the table it pointed at). On 2026-10-24 it was changed to UUID with the
@@ -1785,23 +1798,32 @@ Remove turns it into `rejected` and deletes the membership. No schema change (`d
 | `message` | JSONB | NOT NULL | LangChain message JSON (type + content). A26 `store=true` (decided 2026-10-21, built Thu–Sun): the turn's last OpenAI `response_id` is saved inside the AI message JSON; no new column (§10.7) |
 | `created_at` | TIMESTAMP | `NOW()` | Chat list times (A27); rows older than 30 days deleted at startup |
 
-### Table 17 — visit table (built Thu–Sun, A1.1 / A1.1b)
-
-Working name in this document only; final table name, key and indexes: (TBD at build).
+### Table 17 — `visits` (built 2026-10-24, A1.1 / A1.1b)
 
 | Column | Type | Notes |
 |---|---|---|
-| `memory_id` | UUID | FK → `memory_items` ON DELETE CASCADE |
-| `visited_at` | TIMESTAMP | UTC time of the gated visit |
-| `dwell_seconds` | INTEGER | Seconds of that visit; YouTube heartbeats update the latest visit row |
+| `visit_id` | UUID | PK, `gen_random_uuid()` |
+| `memory_id` | UUID | NOT NULL, FK → `memory_items` ON DELETE CASCADE |
+| `visited_at` | TIMESTAMP | NOT NULL, `NOW()`; UTC time of the gated visit |
+| `dwell_seconds` | INTEGER | NOT NULL, 0; seconds of that visit; YouTube heartbeats update the latest visit row |
 
 - **Written by** `ste/storage_engine.store_chrome_page` and `store_youtube_detection` (both run once per gated visit), inside the capture transaction.
 - **Read by** the time filter (`rse/search_coordinator.py`: EXISTS a visit in range; `rse/fusion.py`; `evaluate_quality`) and wellbeing
   (`wba/time_aggregator.py` sums visits by the visit's local day).
 - **Not used for Gmail**: mail is filtered by arrival; Gmail reading time stays on `memory_engagement` (A1.1b, A41).
-- **Backfill** for restored rows: one visit at `first_opened_at` (else `created_at`) and one at `last_accessed_at` (A1.1).
-  Backfilled `dwell_seconds`: (TBD at build — A31.2 allows looking values up from the test profile's Chrome `History`, approximating, or NULL).
-- **Queries need** lookup by `memory_id` and range scans on `visited_at`, so both need an index (exact DDL TBD at build).
+- **Backfill** (done 2026-10-24, 66 rows over the 39 Chrome/YouTube items): one visit at `first_opened_at` (else `created_at`) and,
+  when it is a different moment, one at `last_accessed_at` (A1.1): 27 items got 2 visits, 12 got 1. The item's whole stored total
+  (Chrome `dwell_time_seconds`, YouTube `watch_time_seconds`) sits on the LAST visit and the first visit has 0, so day sums keep
+  today's totals on today's day (A30). Total backfilled: 2,449 s (1,520 Chrome + 929 YouTube). No lookup in Chrome's `History`.
+  The backfilled visit COUNT is an undercount for items captured before 2026-10-24 (at most 2 rows per item, while those 39 items
+  have 114 `play_sessions_count` in total), so do not read old visit counts as real history. Totals and day sums are exact.
+- **Indexes**: `idx_visits_memory (memory_id, visited_at DESC)` serves "visits of one item" and "latest visit of one item";
+  `idx_visits_visited_at (visited_at)` serves range scans.
+- **Wired 2026-10-24**: `store_chrome_page` and `store_youtube_detection` insert a visit; `update_youtube_watch_time` raises the
+  newest visit with `GREATEST`; the keyword filter, `fusion`, `evaluate_quality` (via `filter_time_of`: Gmail arrival, Chrome/YouTube
+  latest visit), `wba/time_aggregator` and the synthesizer's "Visits in the asked period" line read it. A Chrome capture that the
+  extension retries after a lost response would add a second visit (and a second dwell on `memory_engagement`, which already
+  behaved this way); closing that needs a visit time sent by the extension, not a schema change.
 
 ## D4. Indexes
 
@@ -1826,8 +1848,9 @@ Working name in this document only; final table name, key and indexes: (TBD at b
 | `idx_suggestions_item` | `group_suggestions (memory_id, decision)` | Suggestions of one item (enforces "suggest once per group" cheaply) |
 | `idx_suggestions_group` | `group_suggestions (group_id, decision)` | Review queue |
 | `idx_message_store_session` | `message_store (session_id)` | Load one chat |
-| GIN on the stored tsvector (built Thu–Sun) | `memory_items (<tsvector column>)` | Full-text search over the full text without recomputing `to_tsvector` per row (A24.3) |
-| Visit table indexes (built Thu–Sun) | Table 17 (`memory_id`), (`visited_at`) | Filters and day sums (TBD at build) |
+| `idx_memory_items_search` (built 2026-10-24) | `memory_items (search_vector)` USING GIN | Full-text search over the full text without recomputing `to_tsvector` per row (A24.3) |
+| `idx_visits_memory` (built 2026-10-24) | `visits (memory_id, visited_at DESC)` | Visits of one item, its latest visit |
+| `idx_visits_visited_at` (built 2026-10-24) | `visits (visited_at)` | Time-range filters and day sums |
 
 ## D5. Relationship Map
 
@@ -1841,7 +1864,7 @@ erDiagram
     memory_items ||--|| memory_engagement : "always one"
     memory_items ||--o| embedding_index : "after ENP"
     memory_items ||--o{ regret_events : "marks"
-    memory_items ||--o{ visits : "Table 17, built Thu-Sun"
+    memory_items ||--o{ visits : "Table 17, built 2026-10-24"
     memory_items ||--o{ group_suggestions : "suggested"
     memory_items ||--o{ memory_user_groups : "member"
     user_groups ||--o{ memory_user_groups : "contains"
@@ -1937,7 +1960,9 @@ a stored column with a GIN (inverted) index answers `@@` lookups from the index.
    (A24.3), drop `memory_items.classification_confidence` (A21). A43 (decided: unlinked) and A42 (`decision` is VARCHAR(20) with no CHECK)
    need no schema change.
 2. Each change is written twice: in `scripts/setup_db.py` (fresh installs) and as ALTER SQL run on the restored dump.
-3. All schema changes happen on Thursday, before data cleanup (B1–B3) and the full re-embed (B5).
+3. All schema changes happen before the full re-embed (B5). Done 2026-10-24 for the four items in point 1, in one transaction
+   (`scripts/migrations/2026-10-24_schema_batch.sql`), after a `pg_dump -Fc` backup and a full rehearsal on a scratch copy; a
+   database built by `scripts/setup_db.py` matches the migrated one (columns and indexes identical).
 4. `UNIQUE(source_type, source_id)` and NOT NULL `system_group_id` stay unless a decision says otherwise.
 5. Update CLAUDE.md §2.2 and the paper's DB section to match (owner's files; CLAUDE.md §2.2 was updated to the open schema on 2026-10-21).
 
@@ -2042,7 +2067,7 @@ the project history; "—" where no date was recorded.
 | D1 | open | Dispose the DB pool on shutdown |
 | D2 | decided via A4/A22 | Full attachment support |
 | D3 | open (build or drop) | Show regret reminders; snooze route |
-| D4 | open (build or drop) | Build sessions automatically |
+| D4 | built 2026-10-23 | Sessions are built on demand (`ensure_sessions_for_day`) |
 | D5 | partly done (route built 2026-10-22) | UI toggle to pause/resume a group rule; surface dead rules |
 | E1 | decided 2026-10-21 — in this build | Echo as an MCP server: `search_memories`, `get_memory`, `recent_activity` over stdio (§10.11); wellbeing tools optional |
 | E2 | stretch, from Mon 26 Oct | Import personal history (Takeout, Chrome `History`) and an export button; separate branch |

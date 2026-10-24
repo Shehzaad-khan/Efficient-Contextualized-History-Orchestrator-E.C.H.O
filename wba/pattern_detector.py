@@ -25,7 +25,7 @@ from datetime import date, datetime, time, timedelta
 from typing import Any
 
 from ste import postgresql_manager
-from wba.time_aggregator import local_day_range_utc, utc_offset_seconds
+from wba.time_aggregator import TIME_UNION_SQL, local_day_range_utc, utc_offset_seconds
 
 logger = logging.getLogger(__name__)
 
@@ -128,18 +128,16 @@ def has_habitual_regret_pattern(source_type: str, hour: int) -> bool:
 def peak_activity_hours(start_day: date, end_day: date, top_n: int = 3) -> list[dict[str, Any]]:
     """Local hours of day with the most engaged items — 'peak_hours' insight input.
 
-    An item counts once, at the hour it was last accessed (same attribution as
-    time_aggregator). Ties go to the earlier hour.
+    An item counts once per hour it was active: each Chrome/YouTube visit at its
+    own hour, a Gmail item at the hour of its last open (same rows as
+    time_aggregator.TIME_UNION_SQL). Ties go to the earlier hour.
     """
     rows = postgresql_manager.fetchall(
         """
-        SELECT EXTRACT(HOUR FROM me.last_accessed_at
+        SELECT EXTRACT(HOUR FROM t.activity_at
                        + make_interval(secs => :utc_offset_seconds))::int AS hour,
-               COUNT(*) AS item_count
-        FROM memory_items m
-        JOIN memory_engagement me ON m.memory_id = me.memory_id
-        WHERE m.is_deleted = FALSE
-          AND me.last_accessed_at >= :start_utc AND me.last_accessed_at < :end_utc
+               COUNT(DISTINCT t.memory_id) AS item_count
+        FROM (""" + TIME_UNION_SQL + """) AS t
         GROUP BY hour
         ORDER BY item_count DESC, hour
         LIMIT :top_n

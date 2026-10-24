@@ -2,9 +2,15 @@
 attachment_processor.py — ENP Module
 Echo Personal Memory System
 
-Tier-2 (heavyweight, on-demand) attachment extraction — architecture §8.3 / §5.4.
+Attachment extraction — architecture §8.3 / §5.4. Two callers share the extractors:
 
-Triggered by the LangGraph RSE fetch_attachment node when a top-3 search result
+  * ENP worker, at ingestion (A4): extract_full_text() reads each Gmail attachment
+    not read yet into gmail_attachments.extracted_text. It runs on the ENP thread
+    with the batch's shared Gmail service and skips types it cannot read and files
+    over MAX_INGEST_ATTACHMENT_BYTES.
+  * Tier-2, on demand (below): fetch_attachment_text_for_memory().
+
+Tier-2 (heavyweight, on-demand) is triggered by the LangGraph RSE fetch_attachment node when a top-3 search result
 is a Gmail item with attachments and the parsed intent requested file content.
 
 Flow per attachment:
@@ -45,6 +51,7 @@ from __future__ import annotations
 
 import base64
 import codecs
+import importlib.util
 import io
 import logging
 from pathlib import PurePath
@@ -65,6 +72,17 @@ MAX_AUTO_FETCH_SIZE_BYTES = 500 * 1024
 MAX_CHARS_PER_ATTACHMENT = 6000
 MAX_CHARS_TOTAL = 12000
 
+# Ingestion keeps the FULL text in gmail_attachments.extracted_text (A4), but not
+# without limit: the text also goes into the stored tsvector, which PostgreSQL
+# rejects above 1 MB, and a rejected vector would leave the mail unprocessed.
+# 200,000 characters is about 40 pages of text.
+MAX_EXTRACTED_TEXT_CHARS = 200_000
+
+# Ingestion downloads each attachment once, on the single ENP thread, so a very large
+# file would stall the whole batch. Bigger than this is skipped (no text, the mail is
+# still enriched from its body). A size of 0 means "unknown" and is tried.
+MAX_INGEST_ATTACHMENT_BYTES = 10 * 1024 * 1024
+
 # Query words that never count as a filename match: shorter than 3 letters,
 # English stopwords ("the" would match "theory_notes.pdf"), or words naming a
 # file type, which match nearly every attachment.
@@ -84,12 +102,12 @@ def _extension(filename: str) -> str:
 
 # ── Text extraction by type ───────────────────────────────────────────────────
 
-def _extract_pdf(data: bytes) -> Optional[str]:
+def _extract_pdf(data: bytes, max_chars: int) -> Optional[str]:
     try:
         from pypdf import PdfReader
     except ImportError:
         logger.warning("attachment_processor: pypdf not installed — trying pdfplumber")
-        return _extract_pdf_plumber(data)
+        return _extract_pdf_plumber(data, max_chars)
     try:
         reader = PdfReader(io.BytesIO(data))
         if reader.is_encrypted and not reader.decrypt(""):
@@ -101,18 +119,18 @@ def _extract_pdf(data: bytes) -> Optional[str]:
             page_text = page.extract_text() or ""
             pages.append(page_text)
             total += len(page_text)
-            if total >= MAX_CHARS_PER_ATTACHMENT:
+            if total >= max_chars:
                 break
         text = "\n".join(pages).strip()
         if not text:
             logger.info("attachment_processor: PDF has no text layer (scanned?) — trying pdfplumber")
-        return text or _extract_pdf_plumber(data)
+        return text or _extract_pdf_plumber(data, max_chars)
     except Exception as exc:
         logger.warning("attachment_processor: pypdf failed (%s) — trying pdfplumber", type(exc).__name__)
-        return _extract_pdf_plumber(data)
+        return _extract_pdf_plumber(data, max_chars)
 
 
-def _extract_pdf_plumber(data: bytes) -> Optional[str]:
+def _extract_pdf_plumber(data: bytes, max_chars: int) -> Optional[str]:
     try:
         import pdfplumber
     except ImportError:
@@ -125,7 +143,7 @@ def _extract_pdf_plumber(data: bytes) -> Optional[str]:
                 page_text = page.extract_text() or ""
                 pages.append(page_text)
                 total += len(page_text)
-                if total >= MAX_CHARS_PER_ATTACHMENT:
+                if total >= max_chars:
                     break
             return "\n".join(pages).strip() or None
     except Exception as exc:
@@ -208,17 +226,45 @@ def _extract_image_ocr(data: bytes) -> Optional[str]:
         return None
 
 
-def extract_text(data: bytes, mime_type: str, filename: str) -> Optional[str]:
+def can_extract_text(mime_type: str, filename: str) -> bool:
+    """True when extract_text has an extractor for this type, so ingestion does not
+    download files it cannot read. Mirrors the routing in extract_text; images count
+    only when OCR is installed."""
+    mime = (mime_type or "").lower()
+    ext = _extension(filename)
+    if "pdf" in mime or ext in PDF_EXTENSIONS:
+        return True
+    if "wordprocessingml" in mime or ext in DOCX_EXTENSIONS:
+        return True
+    if "msword" in mime or ext == ".doc":
+        return False
+    if mime == "text/html" or ext in HTML_EXTENSIONS:
+        return True
+    if mime.startswith("text/") or ext in TEXT_EXTENSIONS:
+        return True
+    if mime.startswith("image/") or ext in IMAGE_EXTENSIONS:
+        return importlib.util.find_spec("pytesseract") is not None
+    return False
+
+
+def extract_text(
+    data: bytes,
+    mime_type: str,
+    filename: str,
+    max_chars: int = MAX_CHARS_PER_ATTACHMENT,
+) -> Optional[str]:
     """Route binary data to the right extractor by mime type, then extension.
 
-    Returns None for unsupported types and failed extractions (the caller then
-    falls back to the Tier-1 lightweight_extract).
+    max_chars only stops PDF page reading early (the cheap way to bound a 300-page
+    file); the caller still trims the returned text. Returns None for unsupported
+    types and failed extractions (the caller then falls back to the Tier-1
+    lightweight_extract).
     """
     mime = (mime_type or "").lower()
     ext = _extension(filename)
 
     if "pdf" in mime or ext in PDF_EXTENSIONS:
-        return _extract_pdf(data)
+        return _extract_pdf(data, max_chars)
     if "wordprocessingml" in mime or ext in DOCX_EXTENSIONS:
         return _extract_docx(data)
     if "msword" in mime or ext == ".doc":
@@ -285,6 +331,31 @@ def _download_attachment_data(service: Any, email_id: str, filename: str) -> Opt
                 return _b64url_decode(blob["data"])
     logger.warning("attachment_processor: attachment part not found on message %s", email_id)
     return None
+
+
+# ── Ingestion-time extraction (A4) ────────────────────────────────────────────
+
+def extract_full_text(service: Any, email_id: str, attachment: dict[str, Any]) -> Optional[str]:
+    """Download one attachment and return its text, cut at MAX_EXTRACTED_TEXT_CHARS.
+
+    Called by the ENP worker for every Gmail attachment it has not extracted yet.
+    Returns None for a type with no extractor or a file over MAX_INGEST_ATTACHMENT_BYTES
+    (nothing is downloaded), a file with no text (scanned PDF, password-protected) or a
+    part that cannot be found. Gmail API errors are NOT caught here: the caller decides
+    how to continue.
+    """
+    filename = attachment.get("filename") or ""
+    mime_type = attachment.get("mime_type") or ""
+    if not can_extract_text(mime_type, filename):
+        return None
+    if int(attachment.get("file_size") or 0) > MAX_INGEST_ATTACHMENT_BYTES:
+        logger.info("attachment_processor: %s bytes is over the ingestion limit - skipped", attachment.get("file_size"))
+        return None
+    data = _download_attachment_data(service, email_id, filename)
+    if not data:
+        return None
+    text = extract_text(data, mime_type, filename, max_chars=MAX_EXTRACTED_TEXT_CHARS)
+    return text[:MAX_EXTRACTED_TEXT_CHARS] if text else None
 
 
 # ── Qualification + orchestration ─────────────────────────────────────────────

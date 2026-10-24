@@ -62,7 +62,7 @@ Echo finds the interview email, resolves its timestamp as a hard time anchor, re
 | `ingestion/chrome/` | **CHC** | Two-phase intent gate, revisit tracking, page ingestion endpoint |
 | `ingestion/youtube/` | **YTC** | Video detection, watch-time heartbeats, Data API metadata, Shorts classification |
 | `extension/` | — | MV3 extension: per-site trackers, service worker |
-| `ste/` | **STE** | PostgreSQL / FAISS / Redis managers, encryption, capture-settings store |
+| `ste/` | **STE** | PostgreSQL / FAISS / Redis managers, token-file helpers, capture-settings store |
 | `enp/` | **ENP** | Background enrichment: cleaning, 4-stage classifier, embeddings, Tier-2 attachment extraction |
 | `rse/` | **RSE** | LangGraph hybrid retrieval graph, conversation memory, LLM synthesis |
 | `backend/` | **UIL** | FastAPI gateway (`main.py`) — all routers, data export/deletion/settings |
@@ -77,7 +77,7 @@ Echo finds the interview email, resolves its timestamp as a hard time anchor, re
 ```bash
 # 1. Backend (starts Gmail poller + enrichment worker with it)
 pip install -r requirements.txt
-python scripts/setup_db.py          # one-time: creates the 16-table schema
+python scripts/setup_db.py          # one-time: creates the 17-table schema
 uvicorn backend.main:app --port 8000
 
 # 2. Frontend — http://localhost:3000

@@ -5,7 +5,7 @@ Echo Personal Memory System
 Capture settings (architecture §12.4 POST /api/settings, §13.3 user control
 points): per-source enable/disable, excluded domains, excluded senders.
 
-The locked 16-table schema has no settings table, so settings live in Redis
+The schema deliberately has no settings table, so settings live in Redis
 under a single JSON key — the same tradeoff already made for the regret
 reminder disable flag. Redis is rebuildable/disposable; losing settings means
 falling back to defaults (everything enabled, no exclusions), which is safe.

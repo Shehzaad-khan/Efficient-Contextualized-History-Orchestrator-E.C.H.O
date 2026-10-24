@@ -14,8 +14,7 @@ Caller: ingestion/youtube/youtube_connector._fill_metadata, after the
 (raw_text = description + transcript + tags; the rest -> youtube_metadata).
 
 Token storage — same scheme as ingestion/gmail/gmail_api.authenticate_gmail:
-encrypted local file token_youtube.enc (a plaintext token_youtube.json is migrated
-into it once), an expired token is refreshed and saved back.
+local file token_youtube.json; an expired token is refreshed and saved back.
 
 Sign-in: like Gmail, the browser sign-in happens once, at backend startup.
 backend/main.py runs sign_in_youtube() on its own daemon thread; it opens the
@@ -55,13 +54,12 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
-from ste.security import migrate_plaintext_file, write_encrypted_text
+from ste.security import read_token_text, write_token_text
 
 logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-TOKEN_PATH = PROJECT_ROOT / "token_youtube.enc"
-LEGACY_TOKEN_PATH = PROJECT_ROOT / "token_youtube.json"
+TOKEN_PATH = PROJECT_ROOT / "token_youtube.json"
 CREDENTIALS_PATH = PROJECT_ROOT / "credentials.json"
 
 SCOPES = ["https://www.googleapis.com/auth/youtube.readonly"]
@@ -107,13 +105,12 @@ def _load_credentials() -> Credentials:
 
         creds = _creds
         if creds is None:
-            token_json = migrate_plaintext_file(LEGACY_TOKEN_PATH, TOKEN_PATH)
+            token_json = read_token_text(TOKEN_PATH)
             if token_json:
                 try:
                     creds = Credentials.from_authorized_user_info(json.loads(token_json), SCOPES)
                 except Exception as exc:
-                    # Not deleted (Gmail deletes it because it signs in right after);
-                    # the auth script overwrites it.
+                    # Not deleted: the next sign-in overwrites the file.
                     logger.warning("Stored YouTube token is unreadable: %s", exc)
                     creds = None
             if creds is not None and creds.valid:
@@ -139,7 +136,7 @@ def _load_credentials() -> Credentials:
                 "startup, or restart the backend to open it again."
             )
 
-        write_encrypted_text(TOKEN_PATH, creds.to_json())
+        write_token_text(TOKEN_PATH, creds.to_json())
         _creds = creds
         return creds
 
@@ -170,7 +167,7 @@ def sign_in_youtube() -> None:
         # port=0: the OS picks a free port, so it can't clash with Gmail's sign-in.
         creds = flow.run_local_server(port=0)
         with _creds_lock:
-            write_encrypted_text(TOKEN_PATH, creds.to_json())
+            write_token_text(TOKEN_PATH, creds.to_json())
             _creds = creds
     except Exception:
         logger.exception("YouTube sign-in failed; video metadata stays off until the next backend start")

@@ -23,7 +23,7 @@ Reminders (optional, rate-limited): fire only when a similar regret pattern
 exists AND the current session is >= 15 minutes AND rate limits allow AND the
 user hasn't disabled them. Content is always the user's OWN prior note.
 Rate-limit state lives in Redis (ephemeral by design; the disable flag is a
-persistent Redis key because the locked 16-table schema has no settings table).
+persistent Redis key because the schema deliberately has no settings table).
 A down Redis turns reminders off; it never raises to the caller.
 
 Threading: all functions are blocking (pooled Postgres + the shared sync Redis
@@ -40,7 +40,7 @@ import redis
 from ste import postgresql_manager
 from ste.redis_manager import get_sync_client
 from wba.pattern_detector import has_habitual_regret_pattern
-from wba.time_aggregator import local_day_range_utc, total_time
+from wba.time_aggregator import TIME_UNION_SQL, local_day_range_utc, total_time
 
 logger = logging.getLogger(__name__)
 
@@ -166,22 +166,20 @@ def latest_note_for_type(source_type: str) -> Optional[str]:
 
 def regret_rate(day: date) -> dict[str, Any]:
     """
-    regret_rate = time on currently-regretted items last accessed that (local)
-                  day / total wellbeing time that day × 100.
+    regret_rate = time on currently-regretted items that (local) day /
+                  total wellbeing time that day × 100.
 
-    Same attribution day as time_aggregator (last_accessed_at), so the
-    regretted seconds are part of total_seconds and the rate stays <= 100.
+    The regretted seconds come from the same rows as total_time
+    (time_aggregator.TIME_UNION_SQL: Chrome/YouTube visits by the visit's day,
+    Gmail by its last open), so they are part of total_seconds and the rate
+    stays <= 100.
     """
     total_seconds = total_time(day, day)
     regretted_seconds = postgresql_manager.scalar(
         "WITH " + CURRENTLY_REGRETTED_CTE + """
-        SELECT COALESCE(SUM(
-            CASE WHEN m.source_type = 'youtube' THEN me.watch_time_seconds
-                 ELSE me.dwell_time_seconds END), 0)
+        SELECT COALESCE(SUM(t.time_seconds), 0)
         FROM regretted r
-        JOIN memory_items m ON m.memory_id = r.memory_id
-        JOIN memory_engagement me ON me.memory_id = r.memory_id
-        WHERE me.last_accessed_at >= :start_utc AND me.last_accessed_at < :end_utc
+        JOIN (""" + TIME_UNION_SQL + """) AS t ON t.memory_id = r.memory_id
         """,
         local_day_range_utc(day, day),
     )

@@ -7,14 +7,17 @@ worker turns those rows into searchable memories:
 
   1. fetch_unprocessed_items   next batch, oldest first (skips 'failed' rows and
                                YouTube rows still waiting for their metadata)
-  2. load_item_context         per-source metadata (gmail / chrome / youtube tables)
+  2. load_item_context         per-source metadata (gmail / chrome / youtube tables);
+                               Gmail: also extracts attachment text into
+                               gmail_attachments.extracted_text (A4)
   3. clean_item_text           text_cleaner: HTML, quotes -> clean text
   4. build_embeddable_text     topic_extractor: the text to embed + auto_keywords
   5. generate_embeddings       embedding_generator: MiniLM, whole batch at once
   6. classify_system_group     system_group_classifier: 4-stage system group
   7. FAISSManager.add          vector + embedding_index row
   8. save_index                FAISS file written BEFORE any row is marked done
-  9. mark_item_processed       system group, keywords, preprocessed = TRUE
+  9. mark_item_processed       system group, keywords, search_vector (stored
+                               full-text vector, A24.3), preprocessed = TRUE
 
 A row that fails at any step is marked classified_by = 'failed' and is skipped
 by later batches (restart the backend with ENP_RETRY_FAILED=true to try them
@@ -47,6 +50,7 @@ if __package__ in (None, ""):
     # Run as a script (python enp/enrichment_pipeline.py): make the repo root importable.
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from enp.attachment_processor import extract_full_text
 from enp.embedding_generator import generate_embedding, generate_embeddings
 from enp.system_group_classifier import (
     centroids_need_recompute,
@@ -88,6 +92,31 @@ _SQL_WHITESPACE = " \t\r\n"
 
 # libpq startup option that puts every new connection in UTC.
 _SESSION_TIMEZONE_OPTION = "-c timezone=UTC"
+
+# search_vector text caps (characters). A tsvector above 1 MB is rejected by
+# PostgreSQL, and a rejected UPDATE would leave the item unprocessed for good. Real
+# text (a Chrome page is at most 12,000 characters, a long transcript or mail well
+# under 300,000) is never cut; these only stop absurd inputs.
+_VECTOR_RAW_TEXT_CAP = 300_000
+_VECTOR_ATTACHMENT_TEXT_CAP = 300_000
+
+# The stored full-text vector (A24.3): title, FULL raw_text, keywords, subject, sender,
+# domain, channel and attachment text. It sits inside the UPDATE of mark_item_processed,
+# so column names without a prefix are the row being updated; the keywords are the new
+# ones (a SET expression would still see the old row), passed as the one %s.
+_SEARCH_VECTOR_EXPRESSION = f"""to_tsvector(
+        'english',
+        COALESCE(title, '') || ' ' ||
+        LEFT(COALESCE(raw_text, ''), {_VECTOR_RAW_TEXT_CAP}) || ' ' ||
+        COALESCE(array_to_string(%s::text[], ' '), '') || ' ' ||
+        COALESCE((SELECT gm.subject      FROM gmail_metadata   gm WHERE gm.memory_id = memory_items.memory_id), '') || ' ' ||
+        COALESCE((SELECT gm.sender       FROM gmail_metadata   gm WHERE gm.memory_id = memory_items.memory_id), '') || ' ' ||
+        COALESCE((SELECT cm.domain       FROM chrome_metadata  cm WHERE cm.memory_id = memory_items.memory_id), '') || ' ' ||
+        COALESCE((SELECT ym.channel_name FROM youtube_metadata ym WHERE ym.memory_id = memory_items.memory_id), '') || ' ' ||
+        LEFT(COALESCE((SELECT string_agg(ga.extracted_text, ' ')
+                       FROM gmail_attachments ga WHERE ga.memory_id = memory_items.memory_id), ''),
+             {_VECTOR_ATTACHMENT_TEXT_CAP})
+    )"""
 
 
 def get_database_url() -> str:
@@ -204,7 +233,110 @@ def _fetch_thread_history(conn, item: dict[str, Any]) -> list[str]:
     return history
 
 
-def _fetch_gmail_context(conn, item: dict[str, Any]) -> dict[str, Any]:
+class LazyGmailService:
+    """The Gmail service for one ENP batch, built on first use.
+
+    Only a mail with an attachment still to be read needs it. The ENP worker is one
+    thread, and a googleapiclient service is not thread-safe, so one instance per
+    batch is enough. If signing in fails, the failure is remembered: the batch skips
+    attachment text instead of retrying for every attachment, and the next batch
+    tries again.
+    """
+
+    def __init__(self) -> None:
+        self._service: Any = None
+        self._failed = False
+
+    def get(self) -> Any:
+        """The service, or None when Gmail could not be reached."""
+        if self._failed:
+            return None
+        if self._service is None:
+            try:
+                from ingestion.gmail.gmail_api import authenticate_gmail
+
+                self._service = authenticate_gmail()
+            except Exception as exc:
+                self._failed = True
+                logger.warning(
+                    "ENP: Gmail unavailable (%s) - attachment text is skipped for this batch",
+                    type(exc).__name__,
+                )
+                return None
+        return self._service
+
+
+def _store_attachment_text(conn, attachment_id: Any, text: str) -> None:
+    with conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE gmail_attachments
+                SET extracted_text = %s,
+                    last_extracted_at = NOW()
+                WHERE attachment_id = %s
+                """,
+                (text, attachment_id),
+            )
+
+
+def _load_attachment_texts(conn, item: dict[str, Any], gmail_service: LazyGmailService | None) -> list[dict[str, str]]:
+    """Attachment text for one mail (A4): the stored extracted_text, and for an
+    attachment not read yet, the text downloaded from Gmail and stored now.
+
+    A failure on one attachment (no Gmail, Gmail error, unreadable file) is logged
+    and skipped: the mail is still enriched from its body. Returns
+    [{"filename", "text"}, ...] for the attachments that have text.
+
+    An attachment that gives no text (scanned PDF, too large, unsupported) keeps
+    extracted_text NULL and is tried again whenever the mail is processed again (B5,
+    A3, a retry); there is no column to record "tried" and the schema is closed for
+    this change. A mail is processed once otherwise, so this is not a loop.
+    """
+    with conn.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT attachment_id, filename, mime_type, file_size, extracted_text
+            FROM gmail_attachments
+            WHERE memory_id = %s
+            ORDER BY filename
+            """,
+            (item["memory_id"],),
+        )
+        rows = cursor.fetchall()
+
+    texts: list[dict[str, str]] = []
+    for attachment_id, filename, mime_type, file_size, stored_text in rows:
+        text = stored_text
+        if text is None and gmail_service is not None and item.get("email_id"):
+            service = gmail_service.get()
+            if service is not None:
+                try:
+                    text = extract_full_text(
+                        service,
+                        item["email_id"],
+                        {"filename": filename, "mime_type": mime_type, "file_size": file_size},
+                    )
+                    if text:
+                        _store_attachment_text(conn, attachment_id, text)
+                except Exception as exc:
+                    # Not the filename: it can be as personal as the content.
+                    logger.warning(
+                        "ENP: attachment %s of memory_id=%s not extracted (%s)",
+                        attachment_id, item["memory_id"], type(exc).__name__,
+                    )
+                    conn.rollback()
+                    text = None
+        if text:
+            texts.append({"filename": filename or "", "text": text})
+    return texts
+
+
+def _fetch_gmail_context(
+    conn,
+    item: dict[str, Any],
+    gmail_service: LazyGmailService | None = None,
+) -> dict[str, Any]:
     with conn.cursor() as cursor:
         cursor.execute(
             """
@@ -249,6 +381,10 @@ def _fetch_gmail_context(conn, item: dict[str, Any]) -> dict[str, Any]:
     # The full body is memory_items.raw_text (the connector stores it there).
     item["content_primary_text"] = item.get("raw_text", "")
     item["message_history"] = _fetch_thread_history(conn, item) or None
+    # Needs email_id (set above). Stored in gmail_attachments.extracted_text; the text
+    # also reaches search_vector in step 9. attachment_texts itself is not read yet:
+    # merging it into the embedded text is A16's job (the token budget).
+    item["attachment_texts"] = _load_attachment_texts(conn, item, gmail_service) if attachment_filenames else []
     return item
 
 
@@ -309,12 +445,16 @@ def _fetch_youtube_context(conn, item: dict[str, Any]) -> dict[str, Any]:
     return item
 
 
-def load_item_context(conn, base_item: dict[str, Any]) -> dict[str, Any]:
+def load_item_context(
+    conn,
+    base_item: dict[str, Any],
+    gmail_service: LazyGmailService | None = None,
+) -> dict[str, Any]:
     item = dict(base_item)
     item["source"] = item["source_type"].lower()
 
     if item["source"] == "gmail":
-        return _fetch_gmail_context(conn, item)
+        return _fetch_gmail_context(conn, item, gmail_service)
     if item["source"] == "chrome":
         return _fetch_chrome_context(conn, item)
     if item["source"] == "youtube":
@@ -328,10 +468,14 @@ def _word_count(text: str) -> int:
     return len(text.split()) if text else 0
 
 
-def prepare_item_for_embedding(conn, base_item: dict[str, Any]) -> dict[str, Any]:
+def prepare_item_for_embedding(
+    conn,
+    base_item: dict[str, Any],
+    gmail_service: LazyGmailService | None = None,
+) -> dict[str, Any]:
     """Steps 2-4: context, cleaning, embeddable text. Raises ValueError when
     nothing at all can be embedded."""
-    item = load_item_context(conn, base_item)
+    item = load_item_context(conn, base_item, gmail_service)
     cleaned = clean_item_text(item)
     embeddable_text, auto_keywords = build_embeddable_text(
         item,
@@ -379,30 +523,30 @@ def mark_item_processed(
     memory_id: str,
     category: str,
     method: str,
-    confidence: float,
     auto_keywords: list[str],
     *,
     source: str | None = None,
     word_count: int | None = None,
 ) -> None:
-    """Step 9: store the classification and set preprocessed = TRUE (one commit)."""
+    """Step 9: store the classification and the full-text vector, and set
+    preprocessed = TRUE (one commit)."""
     with conn:  # commit on success, rollback on error; does not close conn
         with conn.cursor() as cursor:
             cursor.execute(
-                """
+                f"""
                 UPDATE memory_items
                 SET system_group_id = %s,
                     classified_by = %s,
-                    classification_confidence = %s,
                     auto_keywords = %s,
                     preprocessed = TRUE,
+                    search_vector = {_SEARCH_VECTOR_EXPRESSION},
                     last_updated_at = NOW()
                 WHERE memory_id = %s
                 """,
                 (
                     SYSTEM_GROUP_IDS.get(category, SYSTEM_GROUP_IDS["misc"]),
                     method,
-                    confidence,
+                    auto_keywords,
                     auto_keywords,
                     memory_id,
                 ),
@@ -441,7 +585,6 @@ def mark_item_failed(conn, memory_id: str, reason: str) -> None:
                 """
                 UPDATE memory_items
                 SET classified_by = %s,
-                    classification_confidence = NULL,
                     preprocessed = FALSE,
                     auto_keywords = ARRAY[%s],
                     last_updated_at = NOW()
@@ -479,9 +622,10 @@ def process_batch(manager: FAISSManager, batch_size: int) -> tuple[int, int]:
 
         prepared_items: list[dict[str, Any]] = []
         failures = 0
+        gmail_service = LazyGmailService()
         for base_item in base_items:
             try:
-                prepared_items.append(prepare_item_for_embedding(conn, base_item))
+                prepared_items.append(prepare_item_for_embedding(conn, base_item, gmail_service))
             except Exception as exc:
                 _fail_item(conn, base_item["memory_id"], f"prepare: {exc}")
                 failures += 1
@@ -534,7 +678,6 @@ def process_batch(manager: FAISSManager, batch_size: int) -> tuple[int, int]:
                     item["memory_id"],
                     category,
                     method,
-                    confidence,
                     item["auto_keywords"],
                     source=item.get("source"),
                     word_count=item.get("word_count"),

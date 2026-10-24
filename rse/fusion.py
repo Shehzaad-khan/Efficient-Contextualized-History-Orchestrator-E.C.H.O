@@ -26,7 +26,7 @@ from datetime import datetime
 from typing import Any, Optional
 
 from rse.config import RRF_K, RRF_POOL_SIZE
-from rse.search_coordinator import hydrate_memory_items, local_to_utc_naive
+from rse.search_coordinator import filter_time_of, hydrate_memory_items, local_to_utc_naive
 from rse.state import EchoState, ParsedIntent
 
 logger = logging.getLogger(__name__)
@@ -46,7 +46,7 @@ def _parse_timestamp(value: Optional[str]) -> Optional[datetime]:
 
 
 def _time_filter_utc(intent: ParsedIntent) -> Optional[datetime]:
-    """The intent's local-date time_filter as naive UTC (created_at is naive UTC)."""
+    """The intent's local-date time_filter as naive UTC (created_at and visited_at are naive UTC)."""
     time_filter = intent.get("time_filter")
     if not time_filter:
         return None
@@ -72,11 +72,13 @@ def _passes_intent_constraints(
         if item.get("source_type") not in sources:
             return False
 
+    # A1.1: Gmail by arrival, Chrome/YouTube by their latest visit (same rule as the SQL).
+    filter_time = filter_time_of(item)
+    if time_filter_utc and filter_time is not None and filter_time < time_filter_utc:
+        return False
+
     created_at = item.get("created_at")
     if isinstance(created_at, datetime):
-        if time_filter_utc and created_at < time_filter_utc:
-            return False
-
         relation = intent.get("time_relation")
         if anchor_dt and relation == "after" and created_at <= anchor_dt:
             return False

@@ -8,7 +8,7 @@ Holds the Gmail connector's constants.
     CHECK_INTERVAL  seconds between polls (router.poll_forever)
 
 Redis: the Gmail connector no longer uses Redis directly. The token lives in
-the encrypted file token_gmail.enc, and capture settings are read through
+the local file token_gmail.json, and capture settings are read through
 ste.settings_store.
 """
 

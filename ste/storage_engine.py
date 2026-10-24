@@ -9,6 +9,7 @@ The single write path from the three connectors into PostgreSQL (architecture
     <source>_metadata   gmail_metadata / chrome_metadata / youtube_metadata
     memory_engagement   exactly one row per memory item
     gmail_attachments   Gmail only, one row per attachment (Tier-1 metadata)
+    visits              Chrome/YouTube only, one row per gated visit (Table 17)
 
 New rows start with preprocessed = FALSE and a provisional system group
 (Gmail -> personal, Chrome -> misc, YouTube -> entertainment); the ENP worker
@@ -421,6 +422,20 @@ def _store_memory_engagement(connection: Connection, memory_id: str, engagement:
     )
 
 
+def _store_visit(connection: Connection, memory_id: str, visited_at: datetime, dwell_seconds: int) -> None:
+    """Insert one visit row (Table 17): one per gated Chrome/YouTube visit, in the
+    capture transaction. Gmail never gets one — mail is filtered by arrival."""
+    connection.execute(
+        text(
+            """
+            INSERT INTO visits (memory_id, visited_at, dwell_seconds)
+            VALUES (:memory_id, :visited_at, :dwell_seconds)
+            """
+        ),
+        {"memory_id": memory_id, "visited_at": visited_at, "dwell_seconds": dwell_seconds},
+    )
+
+
 def _attachment_lightweight_extract(attachment: dict[str, Any]) -> str:
     """Tier-1 extract = "filename | mime | size" (approved deviation: metadata,
     not content, keeps ingestion fast). Tier-2 full text is extracted on demand
@@ -535,6 +550,7 @@ def store_chrome_page(payload) -> dict[str, Any]:
                 "play_sessions_count": 1,
             },
         )
+        _store_visit(connection, memory_id, utc_now_naive(), int(payload.dwell_seconds or 0))
 
     logger.info(
         "Chrome %s: memory_id=%s url=%s dwell=%ss",
@@ -566,6 +582,8 @@ def store_youtube_detection(video_id: str, is_short: bool, detected_at: datetime
             source_metadata={"is_short": is_short},
             engagement={"play_sessions_count": 1},
         )
+        # Dwell starts at 0; update_youtube_watch_time raises it as heartbeats arrive.
+        _store_visit(connection, memory_id, _safe_datetime(detected_at), 0)
 
     logger.info(
         "YouTube %s: memory_id=%s video_id=%s short=%s",
@@ -605,7 +623,32 @@ def update_youtube_watch_time(video_id: str, watch_time_seconds: int) -> None:
             {"watch_time_seconds": watch_time_seconds, "video_id": video_id},
         )
         updated = result.rowcount
+        # A heartbeat carries THIS session's running watch time, so it belongs to
+        # the video's latest visit row (A1.1b).
+        visit_result = connection.execute(
+            text(
+                """
+                UPDATE visits
+                SET dwell_seconds = GREATEST(dwell_seconds, :watch_time_seconds)
+                WHERE visit_id = (
+                    SELECT v.visit_id
+                    FROM visits v
+                    JOIN memory_items mi ON mi.memory_id = v.memory_id
+                    WHERE mi.source_type = 'youtube'
+                      AND mi.source_id = :video_id
+                    ORDER BY v.visited_at DESC, v.visit_id DESC
+                    LIMIT 1
+                )
+                """
+            ),
+            {"watch_time_seconds": watch_time_seconds, "video_id": video_id},
+        )
+        visit_updated = visit_result.rowcount
 
+    if updated and not visit_updated:
+        # The video was stored, but has no visit row (detected before visits existed):
+        # its watch time reaches memory_engagement but not the per-day totals.
+        logger.warning("YouTube watch time for video_id=%s has no visit row to update", video_id)
     if updated:
         logger.debug("YouTube watch time video_id=%s -> %ss", video_id, watch_time_seconds)
     else:
@@ -646,7 +689,13 @@ def update_youtube_metadata(memory_id: str, metadata: dict[str, Any]) -> None:
             text(
                 """
                 UPDATE memory_items
-                SET title = :title,
+                SET preprocessed = CASE
+                        WHEN title IS DISTINCT FROM :title
+                             OR (:raw_text <> '' AND raw_text IS DISTINCT FROM :raw_text)
+                        THEN FALSE
+                        ELSE preprocessed
+                    END,
+                    title = :title,
                     raw_text = CASE
                         WHEN :raw_text = '' THEN raw_text
                         ELSE :raw_text
@@ -661,6 +710,10 @@ def update_youtube_metadata(memory_id: str, metadata: dict[str, Any]) -> None:
                 "memory_id": memory_id,
             },
         )
+        # A video ENP already processed (the Data API was slow, so it was indexed from
+        # its video_id alone) is processed again when the title or text changes: the
+        # embedding and the stored search_vector are built from them. Same idea as A3
+        # for Chrome. A repeat call with the same metadata changes nothing.
 
     logger.info(
         "YouTube metadata stored: memory_id=%s title=%r channel=%r text=%d chars transcript=%s",

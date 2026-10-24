@@ -41,6 +41,9 @@ whenever a decision or change makes it wrong: edit it directly, no need to ask.
    decision A31.3, 2026-10-21; the old 16-table lock is lifted). Each change is written
    twice: in `scripts/setup_db.py` (fresh installs) AND as an ALTER/migration SQL for the
    restored local database; all schema changes happen before the full re-embed (B5).
+   The schema is now 17 tables: the 2026-10-24 batch (`scripts/migrations/2026-10-24_schema_batch.sql`) added
+   `visits` (Table 17), `memory_items.search_vector` (+ GIN) and `gmail_attachments.extracted_text`, and dropped
+   `memory_items.classification_confidence`. The code that fills and reads them was wired the same day.
    Unless a decision says otherwise: `system_group_id` must never be NULL (fallback 'misc'),
    and `UNIQUE(source_type, source_id)` dedup is sacred. There is deliberately no settings
    table — runtime settings live in Redis (`ste/settings_store.py`).
@@ -78,14 +81,15 @@ whenever a decision or change makes it wrong: edit it directly, no need to ask.
   `embeddable_text` is exactly what was embedded. Embedding model = snowflake-arctic-embed-xs
   (512 tokens, 384-d), replacing all-MiniLM-L6-v2 from Thursday's re-embed.
 - **Tier-1 attachment `lightweight_extract`** stores filename/mime/size, not the first
-  500 chars of content (keeps the ingestion hot path fast). Tier-2
-  (`enp/attachment_processor.py`) extracts full text on demand.
+  500 chars of content (keeps the ingestion hot path fast). The full text is extracted
+  later by the ENP worker (`enp/attachment_processor.extract_full_text`, A4) into
+  `gmail_attachments.extracted_text`; the on-demand Tier-2 path still exists for the query.
 - **Regret POST toggles** (1:N event rows, odd count = regretted) instead of separate
   POST/DELETE routes.
 - **Session gap is 20 minutes**, not §11.5's 5 (owner's decision, 2026-10-18;
-  `wba/wellbeing_analytics.py` `SESSION_GAP_MINUTES`). Each item is one point in time
-  (its last access), so a 15-minute read before the next page split one sitting into
-  two sessions under the 5-minute rule.
+  `wba/wellbeing_analytics.py` `SESSION_GAP_MINUTES`). Each activity is one point in time
+  (a Chrome/YouTube visit, or a Gmail item's last open), so a 15-minute read before the
+  next page split one sitting into two sessions under the 5-minute rule.
 - **No email signature removal** (owner's decision A12, 2026-10-21), not §5.2/§9.1's
   "remove signatures". The heuristic cut real body text in 6 of 8 test mails; a leftover
   signature is small noise, a lost body is a lost memory.

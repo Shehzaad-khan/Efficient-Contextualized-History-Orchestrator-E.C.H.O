@@ -5,16 +5,17 @@ Session model (architecture §11.5, DB Tables 12–13):
   A session is a contiguous block of activity where consecutive items are
   within SESSION_GAP_MINUTES (20) of each other; a longer gap closes the
   session. DEVIATION: §11.5 says 5 minutes — raised to 20 on the owner's
-  decision (2026-10-18). Each item is ONE point in time (its last access, see
-  below), so a 15-minute read followed by the next page looked like a 15-minute
-  gap and split one sitting into two sessions under the 5-minute rule.
+  decision (2026-10-18). Each activity is ONE point in time (a visit's time, or a
+  Gmail item's last open, see below), so a 15-minute read followed by the next page
+  looked like a 15-minute gap and split one sitting into two sessions under the
+  5-minute rule.
   Stored in sessions + session_memory_map with:
     total_duration_seconds — pre-computed sum (accepted denormalization),
     dominant_group_id      — system group with the most time in the session,
     source_switch_count    — descriptive count of source-type changes.
 
-Item time = COALESCE(last_accessed_at, first_ingested_at): the same single
-point the time totals use (time_aggregator, attribution = last access). Days
+Activity points come from time_aggregator.TIME_UNION_SQL, the same rows the time
+totals use (Chrome/YouTube: one point per visit, A1.1b; Gmail: its last open). Days
 are the user's LOCAL days; timestamps are naive UTC, so each day becomes a UTC
 range (time_aggregator.local_day_range_utc). Sessions are built per local day,
 so a sitting across midnight becomes two sessions. session_start/session_end
@@ -64,27 +65,18 @@ _past_days_built: set[date] = set()
 
 def _fetch_day_activity(connection: Connection, day: date) -> list[dict[str, Any]]:
     """
-    Engaged items for one local day, ordered by activity timestamp. Follows the
-    same inclusion rules as time aggregation (§11.2).
+    Activity points for one local day, ordered by time: the very rows the day's
+    totals are summed from (time_aggregator.TIME_UNION_SQL), so session durations
+    add up to total_seconds. A Chrome/YouTube visit is one point; a Gmail item is
+    one point at its last open. An item with several visits in a day appears once
+    per visit.
     """
     rows = connection.execute(
         text(
-            """
-            SELECT m.memory_id, m.source_type, m.system_group_id,
-                   COALESCE(me.last_accessed_at, m.first_ingested_at) AS activity_at,
-                   CASE WHEN m.source_type = 'youtube' THEN me.watch_time_seconds
-                        ELSE me.dwell_time_seconds END AS time_seconds
-            FROM memory_items m
-            JOIN memory_engagement me ON m.memory_id = me.memory_id
-            WHERE m.is_deleted = FALSE
-              AND COALESCE(me.last_accessed_at, m.first_ingested_at) >= :start_utc
-              AND COALESCE(me.last_accessed_at, m.first_ingested_at) <  :end_utc
-              AND (
-                    (m.source_type = 'gmail'   AND me.first_opened_at IS NOT NULL)
-                 OR (m.source_type = 'chrome')
-                 OR (m.source_type = 'youtube' AND me.watch_time_seconds > 0)
-              )
-            ORDER BY activity_at ASC, m.memory_id
+            f"""
+            SELECT t.memory_id, t.source_type, t.system_group_id, t.activity_at, t.time_seconds
+            FROM ({time_aggregator.TIME_UNION_SQL}) AS t
+            ORDER BY t.activity_at ASC, t.memory_id
             """
         ),
         time_aggregator.local_day_range_utc(day, day),

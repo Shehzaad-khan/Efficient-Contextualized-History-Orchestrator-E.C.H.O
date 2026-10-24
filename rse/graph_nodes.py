@@ -30,7 +30,12 @@ from typing import Any
 from rse.config import MIN_RESULT_COUNT, MIN_TOP_SIMILARITY
 from rse.state import EchoState
 from rse.query_parser import parse_intent
-from rse.search_coordinator import faiss_semantic_search, local_to_utc_naive, postgres_keyword_search
+from rse.search_coordinator import (
+    faiss_semantic_search,
+    filter_time_of,
+    local_to_utc_naive,
+    postgres_keyword_search,
+)
 from rse.fusion import merge_and_rrf
 from rse.time_anchor import resolve_time_anchor
 from rse.reranker import rerank_cross_encoder
@@ -129,7 +134,8 @@ def node_evaluate_quality(state: EchoState) -> dict[str, Any]:
             return {"result_quality": "empty"}
 
     # Check 3 — time window match when a time filter is set. The filter is the
-    # user's local date; created_at is naive UTC, so convert before comparing.
+    # user's local date; created_at and visited_at are naive UTC, so convert before
+    # comparing. Gmail is compared on arrival, Chrome/YouTube on their latest visit (A1.1).
     time_filter = intent.get("time_filter")
     if time_filter:
         try:
@@ -139,7 +145,7 @@ def node_evaluate_quality(state: EchoState) -> dict[str, Any]:
         else:
             in_window = [
                 c for c in candidates
-                if isinstance(c.get("created_at"), datetime) and c["created_at"] >= filter_utc
+                if (filter_time := filter_time_of(c)) is not None and filter_time >= filter_utc
             ]
             if not in_window:
                 logger.info("evaluate_quality: nothing within time window (since %s local)", time_filter)

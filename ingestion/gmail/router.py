@@ -30,7 +30,7 @@ from ste import settings_store
 from ste.storage_engine import update_gmail_engagement
 from .config import CHECK_INTERVAL
 from .database import initialize_database
-from .gmail_api import authenticate_gmail, fetch_and_store_new_emails
+from .gmail_api import GmailAuthError, authenticate_gmail, fetch_and_store_new_emails
 
 router = APIRouter(prefix="/gmail", tags=["Gmail Connector"])
 logger = logging.getLogger(__name__)
@@ -38,14 +38,15 @@ logger = logging.getLogger(__name__)
 # One Gmail API service for the whole process, built on first use.
 _service = None
 _service_lock = threading.Lock()
+_gmail_auth_warning_logged = False
 
 
 def _get_service():
     """Return the shared Gmail service, authenticating on first use.
 
-    The lock stops the poll loop and POST /poll from both authenticating at
-    startup — with no saved token that would open two browser sign-ins.
-    If authentication raises, _service stays None and the next poll retries.
+    The lock stops the poll loop and POST /poll from building the service at
+    the same time. If authentication raises, _service stays None and the next
+    poll retries.
     """
     global _service
     with _service_lock:
@@ -56,13 +57,28 @@ def _get_service():
 
 def poll_once() -> dict:
     """One Gmail poll. Blocking — always call it through asyncio.to_thread."""
+    global _gmail_auth_warning_logged
     if not settings_store.is_source_enabled("gmail"):
         return {"status": "skipped", "reason": "gmail_capture_disabled", "processed": 0}
     if not initialize_database():
         # database.py logs the reason once; without this check every email
         # in the poll would fail to store, one by one.
         return {"status": "skipped", "reason": "database_unavailable", "processed": 0}
-    processed = fetch_and_store_new_emails(_get_service())
+    try:
+        service = _get_service()
+    except GmailAuthError as exc:
+        with _service_lock:
+            if _gmail_auth_warning_logged:
+                logger.debug("Gmail polling skipped until sign-in completes: %s", exc)
+            else:
+                logger.warning("Gmail polling skipped until sign-in completes: %s", exc)
+                _gmail_auth_warning_logged = True
+        return {"status": "skipped", "reason": "gmail_not_signed_in", "processed": 0}
+
+    with _service_lock:
+        # Signed in again: the next sign-in failure must be logged at WARNING again.
+        _gmail_auth_warning_logged = False
+    processed = fetch_and_store_new_emails(service)
     return {"status": "ok", "processed": processed}
 
 

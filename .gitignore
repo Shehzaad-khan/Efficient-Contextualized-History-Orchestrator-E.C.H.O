@@ -42,6 +42,7 @@ logs/
 
 # Temp file from ste/security.py atomic token writes (left behind only by a crash)
 *.enc.tmp
+token_*.json.tmp
 
 # LaTeX build output for the paper drafts (the .tex and the final main.pdf are kept)
 *.aux

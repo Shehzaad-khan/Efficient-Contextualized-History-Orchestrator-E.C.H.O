@@ -19,17 +19,17 @@ Instructions for any AI agent (Antigravity, Cursor, Claude Code, etc.) working o
 
 ## 2. Hard Constraints — Never Violate
 
-1. **Database execution disabled by default (explicit user request required):**
-   - By default, do not connect to PostgreSQL or Redis, insert test data, run live migrations, or execute database queries.
-   - Live database inspection, SQL queries, and Neon MCP operations are permitted ONLY when the user explicitly asks or instructs you to do so.
+1. **Database access is allowed (owner's standing permission, 2026-10-22, final-build run before the 28 Oct review):**
+   - The live database is LOCAL PostgreSQL 16 (`echo_db`, role `echo`) and LOCAL Redis (WSL Ubuntu), since 2026-10-24. Neon and Upstash are frozen fallbacks: do not point work at them.
+   - Live queries, test data and migrations need no per-task ask. Before any destructive step (DROP, bulk DELETE/UPDATE): take a `pg_dump -Fc` of `echo_db` into `C:\Users\mdshe\echo_backups\`, count the affected rows first, and report what ran.
    - Never search for or expose secret credentials, tokens, or raw `.env` values.
-   - By default, verify changes by compilation only:
+   - At the end of a session also verify by compilation:
      ```bash
      python -m compileall -q backend enp ingestion rse ste wba scripts
      cd frontend && npm run build
      ```
-2. **The 16-table schema is locked** (`scripts/setup_db.py`):
-   - No new tables, no dropped columns.
+2. **The schema is open, but every change must belong to a decided item** (owner's decision A31.3). It has 17 tables since 2026-10-24 (`scripts/setup_db.py`):
+   - Each change is written twice: in `scripts/setup_db.py` AND as migration SQL (`scripts/migrations/`) for the restored database; all schema changes happen before the full re-embed (B5).
    - `system_group_id` must never be `NULL` (fallback `'misc'`).
    - `UNIQUE(source_type, source_id)` deduplication is sacred.
    - There is deliberately no settings table — runtime settings live in Redis (`ste/settings_store.py`).

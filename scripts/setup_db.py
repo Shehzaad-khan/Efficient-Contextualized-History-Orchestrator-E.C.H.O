@@ -60,11 +60,16 @@ CREATE TABLE IF NOT EXISTS memory_items (
     auto_keywords            TEXT[]       DEFAULT '{}',
     preprocessed             BOOLEAN      DEFAULT FALSE,
     classified_by            VARCHAR(20)  DEFAULT 'pending',
-    classification_confidence FLOAT       DEFAULT NULL,
     created_at               TIMESTAMP    NOT NULL,
     first_ingested_at        TIMESTAMP    DEFAULT NOW(),
     last_updated_at          TIMESTAMP    DEFAULT NOW(),
     is_deleted               BOOLEAN      DEFAULT FALSE,
+
+    -- Stored full-text vector for keyword search (A24.3): title, FULL raw_text,
+    -- keywords, subject, sender, domain, channel and attachment extracted_text.
+    -- Written by the enrichment pipeline (enp/enrichment_pipeline.mark_item_processed);
+    -- a generated column cannot read the metadata tables, so it cannot do this.
+    search_vector            TSVECTOR,
 
     -- Restart-safety guarantee: re-ingesting the same item is silently ignored
     CONSTRAINT unique_source_entry UNIQUE (source_type, source_id)
@@ -99,7 +104,9 @@ CREATE TABLE IF NOT EXISTS gmail_metadata (
 -- =============================================================================
 -- TABLE 4: gmail_attachments
 -- Weak multi-valued. One row per attachment per email. Own UUID PK.
--- Two-tier extraction: lightweight always, full on-demand via Redis (1hr TTL).
+-- Two-tier extraction: lightweight metadata at capture; the enrichment pipeline
+-- then extracts the full text into extracted_text (A4, enp/attachment_processor.py
+-- extract_full_text). The on-demand Tier-2 path still exists for the query.
 -- =============================================================================
 CREATE TABLE IF NOT EXISTS gmail_attachments (
     attachment_id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -115,11 +122,13 @@ CREATE TABLE IF NOT EXISTS gmail_attachments (
     -- the parent email's embeddable text for FAISS indexing.
     is_processed             BOOLEAN     DEFAULT FALSE,
 
-    -- Full text is NOT stored in PostgreSQL (storage cost).
-    -- Redis caches it for 1 hour on demand.
-    -- These flags provide operational visibility without storage bloat.
+    -- Query-time (Tier 2) extraction flags; Redis still caches that path for 1 hour.
     full_extract_cached      BOOLEAN     DEFAULT FALSE,
-    full_extract_generated_at TIMESTAMP  DEFAULT NULL
+    full_extract_generated_at TIMESTAMP  DEFAULT NULL,
+
+    -- A4: full extracted text. Kept out of memory_items.raw_text, which stays the
+    -- real mail body. Included in memory_items.search_vector.
+    extracted_text           TEXT
 );
 
 
@@ -359,12 +368,31 @@ CREATE TABLE IF NOT EXISTS message_store (
 
 
 -- =============================================================================
+-- TABLE 17: visits
+-- Weak multi-valued. One row per gated Chrome / YouTube visit (A1.1, A1.1b).
+-- The time filter matches an item when ANY of its visits falls in the range;
+-- wellbeing sums dwell_seconds by the visit's day. Not used for Gmail.
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS visits (
+    visit_id      UUID      PRIMARY KEY DEFAULT gen_random_uuid(),
+    memory_id     UUID      NOT NULL
+                            REFERENCES memory_items(memory_id) ON DELETE CASCADE,
+    visited_at    TIMESTAMP NOT NULL DEFAULT NOW(),
+    dwell_seconds INTEGER   NOT NULL DEFAULT 0
+);
+
+
+-- =============================================================================
 -- INDEXES
 -- =============================================================================
 
 -- memory_items
 CREATE INDEX IF NOT EXISTS idx_memory_items_group
     ON memory_items (system_group_id);
+
+-- Full-text search over the stored vector (A24.3)
+CREATE INDEX IF NOT EXISTS idx_memory_items_search
+    ON memory_items USING GIN (search_vector);
 
 CREATE INDEX IF NOT EXISTS idx_memory_items_created
     ON memory_items (created_at DESC);
@@ -429,6 +457,13 @@ CREATE INDEX IF NOT EXISTS idx_suggestions_group
 CREATE INDEX IF NOT EXISTS idx_message_store_session
     ON message_store (session_id);
 
+-- visits: one item's visits (and its latest), and range scans on the visit time
+CREATE INDEX IF NOT EXISTS idx_visits_memory
+    ON visits (memory_id, visited_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_visits_visited_at
+    ON visits (visited_at);
+
 """
 
 
@@ -466,7 +501,7 @@ WHERE table_schema = 'public'
       'memory_items', 'gmail_metadata', 'youtube_metadata',
       'chrome_metadata', 'memory_engagement', 'group_suggestions',
       'regret_events', 'embedding_index', 'sessions',
-      'user_groups', 'group_rules', 'gmail_attachments'
+      'user_groups', 'group_rules', 'gmail_attachments', 'visits'
   )
 ORDER BY table_name, ordinal_position;
 """
@@ -484,7 +519,7 @@ def run_setup():
         cur = conn.cursor()
         print("      Connected successfully.")
 
-        print("\n[2/4] Creating schema (16 tables + indexes)...")
+        print("\n[2/4] Creating schema (17 tables + indexes)...")
         cur.execute(SCHEMA_SQL)
         cur.execute(SET_DATABASE_TIMEZONE_SQL)
         conn.commit()
@@ -503,14 +538,14 @@ def run_setup():
             "memory_engagement", "regret_events", "user_groups",
             "memory_user_groups", "embedding_index", "sessions",
             "session_memory_map", "group_rules", "group_suggestions",
-            "message_store"
+            "message_store", "visits"
         }
         found = set(tables)
         missing = expected - found
         if missing:
             print(f"\n  WARNING — Missing tables: {missing}")
         else:
-            print(f"\n      All 16 expected tables present.")
+            print(f"\n      All 17 expected tables present.")
 
         print("\n[4/4] Verifying system_groups seed rows...")
         cur.execute(VERIFY_GROUPS_SQL)

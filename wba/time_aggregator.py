@@ -8,22 +8,24 @@ Inclusion rules (non-negotiable):
   Gmail   — only OPENED emails count (first_opened_at IS NOT NULL).
             Unread emails never contribute to wellbeing time.
   Chrome  — all admitted pages count (they passed the intent gate).
-  YouTube — videos with watch_time_seconds > 0 count.
+  YouTube — visits with dwell_seconds > 0 count.
 
 Where the seconds come from (written by ste/storage_engine.py):
-  Gmail   dwell_time_seconds — ADDED on every open (update_gmail_engagement).
-  Chrome  dwell_time_seconds — ADDED on every visit; the extension sends a page
-          once, when it passes the intent gate, so later dwell is never sent.
-  YouTube watch_time_seconds — the LARGEST single session (GREATEST), not a sum.
-memory_engagement holds one running total per item, not one row per visit.
+  Gmail   memory_engagement.dwell_time_seconds — ADDED on every open
+          (update_gmail_engagement). One running total per item.
+  Chrome  visits.dwell_seconds — one row per gated visit (the extension sends a
+          page once, when it passes the intent gate).
+  YouTube visits.dwell_seconds — one row per gated watch; heartbeats raise the
+          latest row to that session's running watch time.
 
-Attribution day = the day of last_accessed_at (§11.2). The item's WHOLE total
-counts on the day it was last opened: reopening an old email moves all of its
-earlier reading time to today. This is the doc's rule; a per-visit split would
-need a visit table (16-table schema is locked).
+Attribution day (A30, settled by A1.1b): Chrome and YouTube time lands on the
+day of EACH visit (visits.visited_at), so reopening an old page no longer moves
+its earlier time to today. Gmail keeps the §11.2 rule: the item's whole total
+counts on the day of last_accessed_at.
 
-Days are the user's LOCAL days. Timestamps in the DB are naive UTC (NOW() on
-Neon), so each local day range becomes a UTC range [start, end) before querying.
+Days are the user's LOCAL days. Timestamps in the DB are naive UTC (the session
+runs in UTC, A31.4), so each local day range becomes a UTC range [start, end)
+before querying.
 regret_events.marked_at is the exception: regret_system writes LOCAL time, so
 regret queries compare it with local days directly.
 
@@ -41,12 +43,16 @@ from ste import postgresql_manager
 
 logger = logging.getLogger(__name__)
 
-# One UNION ALL block per source, each enforcing its own inclusion rule.
-# Attribution day = local day of last_accessed_at, given as a UTC range.
-_TIME_UNION = """
+# One UNION ALL block per source, each enforcing its own inclusion rule. Every row
+# is one (item, moment) with the seconds spent: Gmail = the item's total on the day of
+# its last open; Chrome/YouTube = one visit. The day is the local day of activity_at,
+# given as a UTC range. Several visits of one item are several rows, so item counts
+# use COUNT(DISTINCT memory_id). Public: regret_system and pattern_detector reuse it
+# so their numbers stay inside the same total.
+TIME_UNION_SQL = """
     SELECT m.memory_id, m.source_type, m.system_group_id,
            me.dwell_time_seconds AS time_seconds,
-           me.last_accessed_at
+           me.last_accessed_at AS activity_at
     FROM memory_items m
     JOIN memory_engagement me ON m.memory_id = me.memory_id
     WHERE m.source_type = 'gmail'
@@ -55,23 +61,23 @@ _TIME_UNION = """
       AND me.last_accessed_at >= :start_utc AND me.last_accessed_at < :end_utc
     UNION ALL
     SELECT m.memory_id, m.source_type, m.system_group_id,
-           me.dwell_time_seconds AS time_seconds,
-           me.last_accessed_at
-    FROM memory_items m
-    JOIN memory_engagement me ON m.memory_id = me.memory_id
+           v.dwell_seconds AS time_seconds,
+           v.visited_at AS activity_at
+    FROM visits v
+    JOIN memory_items m ON m.memory_id = v.memory_id
     WHERE m.source_type = 'chrome'
       AND m.is_deleted = FALSE
-      AND me.last_accessed_at >= :start_utc AND me.last_accessed_at < :end_utc
+      AND v.visited_at >= :start_utc AND v.visited_at < :end_utc
     UNION ALL
     SELECT m.memory_id, m.source_type, m.system_group_id,
-           me.watch_time_seconds AS time_seconds,
-           me.last_accessed_at
-    FROM memory_items m
-    JOIN memory_engagement me ON m.memory_id = me.memory_id
+           v.dwell_seconds AS time_seconds,
+           v.visited_at AS activity_at
+    FROM visits v
+    JOIN memory_items m ON m.memory_id = v.memory_id
     WHERE m.source_type = 'youtube'
       AND m.is_deleted = FALSE
-      AND me.watch_time_seconds > 0
-      AND me.last_accessed_at >= :start_utc AND me.last_accessed_at < :end_utc
+      AND v.dwell_seconds > 0
+      AND v.visited_at >= :start_utc AND v.visited_at < :end_utc
 """
 
 
@@ -103,7 +109,7 @@ def utc_offset_seconds() -> int:
 def total_time(start_day: date, end_day: date) -> int:
     """Total wellbeing seconds across all sources for the local day range (inclusive)."""
     value = postgresql_manager.scalar(
-        f"SELECT COALESCE(SUM(time_seconds), 0) FROM ({_TIME_UNION}) AS all_time",
+        f"SELECT COALESCE(SUM(time_seconds), 0) FROM ({TIME_UNION_SQL}) AS all_time",
         local_day_range_utc(start_day, end_day),
     )
     total = int(value or 0)
@@ -126,9 +132,9 @@ def time_by_system_group(start_day: date, end_day: date) -> list[dict[str, Any]]
         f"""
         SELECT sg.group_name,
                COALESCE(SUM(t.time_seconds), 0) AS total_seconds,
-               COUNT(t.memory_id) AS item_count
+               COUNT(DISTINCT t.memory_id) AS item_count
         FROM system_groups sg
-        LEFT JOIN ({_TIME_UNION}) AS t ON t.system_group_id = sg.system_group_id
+        LEFT JOIN ({TIME_UNION_SQL}) AS t ON t.system_group_id = sg.system_group_id
         GROUP BY sg.system_group_id, sg.group_name
         ORDER BY sg.system_group_id
         """,
@@ -148,9 +154,9 @@ def time_by_source(start_day: date, end_day: date) -> list[dict[str, Any]]:
         f"""
         SELECT s.source_type,
                COALESCE(SUM(t.time_seconds), 0) AS total_seconds,
-               COUNT(t.memory_id) AS item_count
+               COUNT(DISTINCT t.memory_id) AS item_count
         FROM (VALUES ('chrome'), ('gmail'), ('youtube')) AS s(source_type)
-        LEFT JOIN ({_TIME_UNION}) AS t ON t.source_type = s.source_type
+        LEFT JOIN ({TIME_UNION_SQL}) AS t ON t.source_type = s.source_type
         GROUP BY s.source_type
         ORDER BY s.source_type
         """,
@@ -168,15 +174,15 @@ def shorts_summary(start_day: date, end_day: date) -> dict[str, Any]:
     """
     row = postgresql_manager.fetchone(
         """
-        SELECT COUNT(*) AS shorts_count,
-               COALESCE(SUM(me.watch_time_seconds), 0) AS shorts_seconds
-        FROM memory_items m
-        JOIN memory_engagement me ON m.memory_id = me.memory_id
+        SELECT COUNT(DISTINCT m.memory_id) AS shorts_count,
+               COALESCE(SUM(v.dwell_seconds), 0) AS shorts_seconds
+        FROM visits v
+        JOIN memory_items m ON m.memory_id = v.memory_id
         JOIN youtube_metadata ym ON m.memory_id = ym.memory_id
         WHERE ym.is_short = TRUE
           AND m.is_deleted = FALSE
-          AND me.watch_time_seconds > 0
-          AND me.last_accessed_at >= :start_utc AND me.last_accessed_at < :end_utc
+          AND v.dwell_seconds > 0
+          AND v.visited_at >= :start_utc AND v.visited_at < :end_utc
         """,
         local_day_range_utc(start_day, end_day),
     )
@@ -190,10 +196,11 @@ def activity_heatmap(start_day: date, end_day: date) -> list[dict[str, Any]]:
     Activity level by hour × day-of-week for the Time Heatmap view (§12.2).
 
     Each cell: item count and engagement seconds attributed to the LOCAL hour of
-    last_accessed_at (approximation — cumulative engagement is attributed to
-    the most recent access hour), plus a regret marker when any regret event
-    was recorded in that hour/day cell. day_of_week is Postgres DOW
-    (0 = Sunday .. 6 = Saturday) for both activity and regret cells.
+    the activity (a Chrome/YouTube visit's time; for Gmail the last open, where
+    the cumulative total is attributed to the most recent access hour), plus a
+    regret marker when any regret event was recorded in that hour/day cell.
+    day_of_week is Postgres DOW (0 = Sunday .. 6 = Saturday) for both activity
+    and regret cells.
     """
     params: dict[str, Any] = {
         **local_day_range_utc(start_day, end_day),
@@ -203,12 +210,12 @@ def activity_heatmap(start_day: date, end_day: date) -> list[dict[str, Any]]:
         f"""
         SELECT EXTRACT(DOW  FROM local_at)::int AS day_of_week,
                EXTRACT(HOUR FROM local_at)::int AS hour,
-               COUNT(memory_id) AS item_count,
+               COUNT(DISTINCT memory_id) AS item_count,
                COALESCE(SUM(time_seconds), 0) AS total_seconds
         FROM (
             SELECT t.memory_id, t.time_seconds,
-                   t.last_accessed_at + make_interval(secs => :utc_offset_seconds) AS local_at
-            FROM ({_TIME_UNION}) AS t
+                   t.activity_at + make_interval(secs => :utc_offset_seconds) AS local_at
+            FROM ({TIME_UNION_SQL}) AS t
         ) AS shifted
         GROUP BY day_of_week, hour
         ORDER BY day_of_week, hour
