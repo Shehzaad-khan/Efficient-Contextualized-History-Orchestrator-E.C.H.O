@@ -6,7 +6,7 @@
  * It only MEASURES; background.js owns the intent gate (§6.2), the dwell clock
  * and every network call. Every 5 s it sends CHROME_PAGE_SIGNAL with:
  *   - scroll depth (deepest point reached, 0..1)
- *   - interaction count (clicks on the page + text selections)
+ *   - interaction count (clicks that are not on a link + text selections)
  *   - readable text (up to 12,000 chars), only for ordinary pages
  *   - live URL, title, referrer, and whether this is an app page
  * When the page goes away it sends CHROME_PAGE_UNLOAD so background.js can
@@ -274,7 +274,10 @@
 
   document.addEventListener(
     "click",
-    () => {
+    (event) => {
+      // A click on a link only navigates away (A39.2); copy / expand / "show more"
+      // clicks still count.
+      if (event.target instanceof Element && event.target.closest("a[href]")) return;
       interactionCount += 1;
     },
     { passive: true }

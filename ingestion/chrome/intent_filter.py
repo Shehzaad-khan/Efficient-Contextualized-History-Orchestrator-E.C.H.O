@@ -5,8 +5,8 @@ Echo Personal Memory System
     Phase 1 (exposure):  foreground >= 5 s, else discard.
     Phase 2 (intent):    at least ONE of
                            foreground >= 10 s
-                           scroll depth >= 25 %
-                           >= 1 interaction (click on content, text selection)
+                           scroll depth >= 15 %
+                           >= 1 interaction (click not on a link, text selection)
                            a visit to the same URL in the last 24 h (Redis flag)
 
 Pure functions, no state and no I/O: safe to call from any thread.
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 # retry ever happening.
 PHASE1_MIN_SECONDS = 5
 PHASE2_MIN_FOREGROUND = 10
-PHASE2_MIN_SCROLL = 0.25
+PHASE2_MIN_SCROLL = 0.15
 PHASE2_MIN_INTERACTIONS = 1
 
 # Web apps whose content is private (§6.5): only time spent is kept, never text.

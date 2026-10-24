@@ -10,7 +10,7 @@
  *
  * 2. The Chrome page intent gate (architecture §6.2), run here per tab:
  *    Phase 1: tab in the foreground >= 5 s -> ask /chrome/revisit-check
- *    Phase 2: one of >= 10 s, scroll >= 25 %, >= 1 interaction, or a revisit
+ *    Phase 2: one of >= 10 s, scroll >= 15 %, >= 1 interaction, or a revisit
  *    Pass -> one POST /chrome/ingest per page. The thresholds and the
  *    app-domain / sensitive-term lists MUST match ingestion/chrome/
  *    intent_filter.py and chrome_connector.py, which re-check every page.
@@ -41,7 +41,7 @@ const PAUSE_KEY = "echo_tracking_paused";
 // §6.2 thresholds — keep equal to ingestion/chrome/intent_filter.py.
 const PHASE1_MIN_SECONDS = 5;
 const PHASE2_MIN_SECONDS = 10;
-const PHASE2_MIN_SCROLL = 0.25;
+const PHASE2_MIN_SCROLL = 0.15;
 const PHASE2_MIN_INTERACTIONS = 1;
 const APP_PAGE_MIN_SECONDS = 5;
 

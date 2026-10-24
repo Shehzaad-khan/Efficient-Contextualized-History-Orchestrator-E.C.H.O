@@ -6,7 +6,7 @@ Two-layer grouping: system groups are automatic (ENP's 4-stage classifier);
 USER groups answer "what personal goal does this serve?" and live here.
 
 4-phase lifecycle:
-  Phase 1 — Manual seeding: user tags items by hand. Minimum 6 confirmed
+  Phase 1 — Manual seeding: user tags items by hand. Minimum 5 confirmed
             items before auto-assignment activates for a group.
   Phase 2 — Auto-assignment: hybrid score = 0.5·rule_score + 0.5·knn_score;
             suggestions are created for any rule match or when KNN alone
@@ -57,7 +57,7 @@ from ste.faiss_manager import cosine, get_manager
 
 logger = logging.getLogger(__name__)
 
-MIN_CONFIRMED_FOR_KNN = 6
+MIN_CONFIRMED_FOR_KNN = 5
 AUTO_SUGGEST_THRESHOLD = 0.70
 KNN_ONLY_THRESHOLD = 0.60  # Re-tune after the A40 embedding model is active.
 KNN_TOP_K = 3

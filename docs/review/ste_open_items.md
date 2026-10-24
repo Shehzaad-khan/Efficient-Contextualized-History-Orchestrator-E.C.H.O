@@ -1110,6 +1110,16 @@ Still open — decide each:
   - Build (~15 min, extension only; the server just compares the count): in `chrome_tracker.js` the click
     listener skips events whose target is inside an `a[href]` (`event.target.closest("a[href]")`). Known cost:
     an in-page link (table-of-contents jump) no longer counts; such pages still pass by scroll (15 %) or 10 s.
+- **A39 built 2026-10-24 (cloud session; read from the diff and checked offline, extension NOT run in Chrome):**
+  - Chrome scroll 0.25 -> 0.15 in `extension/background.js` and `ingestion/chrome/intent_filter.py` (+ comments).
+  - YouTube: `INTENT_WATCH_SHORT` 15 -> 10, `INTENT_COMPLETION_THRESHOLD` 0.5 -> 0.1, new `INTENT_COMPLETION_MIN_SECONDS = 5`
+    in `youtube_tracker.js`; `SHORT_MIN_WATCH_SECONDS` 10, `COMPLETION_RATE_THRESHOLD` 0.1, new `COMPLETION_MIN_WATCH_SECONDS = 5`
+    in `youtube_connector.py`. Gate checked on 8 cases (short 10 s passes; 9 s of 100 s fails; 4 s of 20 s fails the floor;
+    5 s of 20 s passes; regular 19 s of 600 s fails; 60 s of 600 s passes; 20 s passes; revisit passes).
+  - `wba/group_manager.py` `MIN_CONFIRMED_FOR_KNN` 6 -> 5 (docstring too).
+  - `chrome_tracker.js` click listener skips targets inside `a[href]` (stand-in DOM check: link click not counted, others counted).
+  - `node --check` clean on the three JS files; `compileall` silent. Doc §6.2 / §7.3 numbers and the paper/deck numbers are still to be changed.
+  - Not changed: the dead-doc line in A39's first list (values above) and the other "kept as is" numbers.
 
 ### A40. Embedding model and cross-encoder model — keep or upgrade? — [x] decided 2026-10-21 (his ask, 2026-10-21)
 - Today: embeddings = `all-MiniLM-L6-v2` (`enp/embedding_generator.py:56`; 384-d, reads ~256 tokens; used by ENP,
