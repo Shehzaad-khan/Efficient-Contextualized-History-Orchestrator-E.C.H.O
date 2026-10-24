@@ -7,7 +7,9 @@
  * and every network call. Every 5 s it sends CHROME_PAGE_SIGNAL with:
  *   - scroll depth (deepest point reached, 0..1)
  *   - interaction count (clicks that are not on a link + text selections)
- *   - readable text (up to 12,000 chars), only for ordinary pages
+ *   - readable text (up to 12,000 chars), only for ordinary pages. Starts with
+ *     the page's h1-h3 headings, one per line, each prefixed "## " (A13); the
+ *     body after them stays one line. ENP lifts the "## " lines into `headings`.
  *   - live URL, title, referrer, and whether this is an app page
  * When the page goes away it sends CHROME_PAGE_UNLOAD so background.js can
  * send a page that passed the gate.
@@ -37,6 +39,13 @@
   const SIGNAL_INTERVAL_MS = 5000;
   const MIN_CONTENT_CHARS = 200;
   const MAX_CONTENT_CHARS = 12000;
+  // A13: headings sent as leading "## " lines. MAX_HEADING_CHARS must match
+  // enp/text_cleaner.py (a longer "## " line is body text, not a heading).
+  const MAX_HEADINGS = 10;
+  const MAX_HEADING_CHARS = 200;
+  const HEADING_PREFIX = "## ";
+  const NON_CONTENT_HEADING_PARENTS =
+    "nav, aside, footer, form, [role='navigation'], [role='complementary'], [aria-hidden='true']";
   const PRIVATE_FORM_FIELD_COUNT = 5;
 
   const APP_DOMAINS = [
@@ -195,6 +204,24 @@
     return (clone.innerText || clone.textContent || "").replace(/\s+/g, " ").trim();
   }
 
+  // Visible h1-h3 texts of the chosen content node, in page order, as "## " lines.
+  // Menus, sidebars, footers and forms are skipped; so are hidden headings.
+  function headingLinesFrom(node) {
+    const seen = new Set();
+    const lines = [];
+    for (const heading of node.querySelectorAll("h1, h2, h3")) {
+      if (lines.length >= MAX_HEADINGS) break;
+      if (heading.closest(NON_CONTENT_HEADING_PARENTS)) continue;
+      if (heading.getClientRects().length === 0) continue;
+      if (window.getComputedStyle(heading).visibility === "hidden") continue;
+      const text = (heading.innerText || heading.textContent || "").replace(/\s+/g, " ").trim();
+      if (!text || seen.has(text)) continue;
+      seen.add(text);
+      lines.push(HEADING_PREFIX + text.slice(0, MAX_HEADING_CHARS).trim());
+    }
+    return lines;
+  }
+
   function extractReadableContent() {
     if (detectApplicationPage() || detectSensitivePage() || hasPrivateFormSurface()) {
       return "";
@@ -210,7 +237,12 @@
     for (const node of candidates) {
       const text = visibleTextFrom(node);
       if (text.length >= MIN_CONTENT_CHARS) {
-        return text.slice(0, MAX_CONTENT_CHARS);
+        const headingBlock = headingLinesFrom(node).join("\n");
+        if (!headingBlock) {
+          return text.slice(0, MAX_CONTENT_CHARS);
+        }
+        // The cap covers headings + body together.
+        return headingBlock + "\n" + text.slice(0, Math.max(MAX_CONTENT_CHARS - headingBlock.length - 1, 0));
       }
     }
 

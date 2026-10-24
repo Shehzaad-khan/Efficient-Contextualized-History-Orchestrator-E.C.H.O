@@ -348,6 +348,19 @@ Still open — decide each:
     `build_embeddable_text` already joins title + headings + domain + snippet (snippet 800 per A24) — check the
     total still fits MiniLM's ~256 tokens.
   - Old pages: no headings (their text is already flattened); B5 re-embed cannot recover them.
+  - **Built 2026-10-24 (cloud session):** `chrome_tracker.js` `headingLinesFrom` collects visible h1-h3 of the chosen content
+    node (skips nav / aside / footer / form / hidden / duplicates; max 10, 200 chars each, whitespace collapsed) and puts them
+    first as `## <text>` lines; the 12,000-char cap covers headings + body together; the body stays one line.
+    `enp/text_cleaner.py` `lift_heading_lines` lifts the leading `## ` lines (consecutive, <= 10, <= 200 chars, so an old flat
+    row that starts with `## ` is not mistaken) into `CleanedContent.headings`; `topic_extractor` already joins them.
+    No schema change. Checked: 8 Python inputs (headings + body, old flat row, flat row starting `## `, 11 headings, CRLF,
+    empty heading, empty) and the extension script in headless Chromium on 4 pages (menu / footer / hidden / duplicate
+    headings skipped, 300-char heading cut to 200, 14 sections -> 10 headings, 5,000-word page -> exactly 12,000 chars total).
+    Not run: the full extension in Chrome, ENP against the live DB.
+  - **Side effects to know:** (1) a Chrome page revisited after this change sends different `raw_text`, so A3 re-embeds it
+    (intended; this is how old pages gain headings). (2) The stored `raw_text` now begins with `## ` lines, so keyword search
+    and the 1000-char answer snippet (`raw_snippet`) see them. (3) Worst case 10 x 200 chars of headings sit before the
+    snippet in the embedded text; the token-window fit is A16's job (`fit_to_window`), not built yet.
   - Fallback if the build runs short: option 3.
 
 ### A14. Quoted replies: Outlook headers are not cut, inline replies are lost — [x] decided 2026-10-21 (found 2026-10-17) — DISCUSS AT THE END
