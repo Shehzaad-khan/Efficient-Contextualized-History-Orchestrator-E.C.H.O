@@ -208,7 +208,7 @@ Still open — decide each:
   item. Also keep the existing query-KEY check in `is_sensitive_page` (`?password=`) in the whole-token rewrite.
   Build order: run `is_sensitive_page` on the URL BEFORE stripping the keys (`chrome_connector.py:157` today),
   or the query-key check never sees them.
-- **A7.3 built 2026-10-22:** `SECRET_QUERY_PARAMS` (the 13 keys above) + `strip_secret_query_params` in `chrome_connector.py`; `is_sensitive_page` runs on `payload.url` AND `payload.canonical_url` first, then both are stripped. Checked on 10 inputs (token / TOKEN / only-secret keys / no change / fragment kept / empty / None / `keyword` kept while `key` goes / `password=` still caught by the sensitive check). Gap found and fixed 2026-10-22: `/chrome/revisit-check` got the extension's raw `canonical_url`, so for a URL with a secret key its Redis key (a sha256 hash, so no raw URL was ever stored) differed from the stripped one `record_visit` writes and the revisit was missed. `revisit_check` now strips first (checked: same key). A7.4 is NOT built yet.
+- **A7.3 built 2026-10-22:** `SECRET_QUERY_PARAMS` (the 13 keys above) + `strip_secret_query_params` in `chrome_connector.py`; `is_sensitive_page` runs on `payload.url` AND `payload.canonical_url` first, then both are stripped. Checked on 10 inputs (token / TOKEN / only-secret keys / no change / fragment kept / empty / None / `keyword` kept while `key` goes / `password=` still caught by the sensitive check). Gap found and fixed 2026-10-22: `/chrome/revisit-check` got the extension's raw `canonical_url`, so for a URL with a secret key its Redis key (a sha256 hash, so no raw URL was ever stored) differed from the stripped one `record_visit` writes and the revisit was missed. `revisit_check` now strips first (checked: same key). A7.4 was built 2026-10-24 (below).
 - **A7.1 + A7.2 built 2026-10-23:** `chrome_connector.py` `is_sensitive_page` rewritten to whole-token matching: splits
   host+path on `[/_\-.]`, also collapses per-segment separators (`sign-in` → `signin`), and checks query parameter keys.
   Same logic applied in `background.js` `isSensitiveChromeUrl` and `chrome_tracker.js` `detectSensitivePage`.
@@ -220,7 +220,15 @@ Still open — decide each:
   `<form>` → private; (3) `type=number` ignored; (4) the 5-field rule counts visible fields only. Hidden sign-in
   pop-ups no longer count. Checkout forms (usually 2 email/tel) are caught by rule 4 (name, address, pincode…)
   and the URL words (A7.2), not by rule 2.
-- **Decision:** A7 fully decided 2026-10-21 (A7.1–A7.4).
+- **A7.4 built 2026-10-24:** `chrome_tracker.js` `hasPrivateFormSurface` + new `isVisible` helper and
+  `PRIVATE_EMAIL_TEL_PER_FORM = 3`. Visible = `getClientRects().length > 0` and not `visibility:hidden`. Rules as decided:
+  visible password → private; 3+ visible email/tel in the same `<form>` (grouped by `input.form`, so form-less inputs are
+  not grouped) → private; `type=number` no longer triggers the early exit (it still counts as a data-entry field in the
+  5-field rule, as before); the 5-field rule counts visible fields only. Tested in headless Chromium with the real script
+  and a stubbed `chrome` API, 13 pages (newsletter box, number/tel, hidden and `visibility:hidden` password, 2 vs 3
+  email/tel in one form, 3 across 3 forms, 3 with 2 in a hidden form, 5 vs 4 visible fields, 5 with 2 hidden): all pass;
+  the old code fails 8 of them.
+- **Decision:** A7 fully decided 2026-10-21 (A7.1–A7.4); all four parts built.
 
 ### A8. App pages (Slack, Notion, Jira) are stored as memory items — [x] decided 2026-10-21 (found 2026-10-17) — DISCUSS AT THE END
 - **Doc §6.5:** session duration only, "not in canonical memory_items, not semantically indexed".

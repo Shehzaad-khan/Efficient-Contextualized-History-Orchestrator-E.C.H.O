@@ -17,8 +17,8 @@
  * Text is never read from:
  *   - app pages (Slack, Notion, Jira ... — §6.7): engagement only
  *   - sensitive URLs (login, payment, account ...)
- *   - pages with private form fields (password / email / phone inputs, or 5+
- *     data-entry fields)
+ *   - pages with private form fields (A7.4), visible fields only: a password
+ *     box, 3+ email/phone boxes in one <form>, or 5+ data-entry fields
  * The app-domain and sensitive-term lists are NOT kept here: background.js
  * fetches them from GET /chrome/rules into chrome.storage.local (A9.5) and this
  * script reads them from there. Until they have loaded it extracts no text.
@@ -48,6 +48,7 @@
   const NON_CONTENT_HEADING_PARENTS =
     "nav, aside, footer, form, [role='navigation'], [role='complementary'], [aria-hidden='true']";
   const PRIVATE_FORM_FIELD_COUNT = 5;
+  const PRIVATE_EMAIL_TEL_PER_FORM = 3;
 
   // Server rules (A9.5), parsed from chrome.storage.local. null = not loaded yet:
   // fail closed, no text is read and no page is called public.
@@ -188,13 +189,33 @@
     return !NON_ENTRY_INPUT_TYPES.has((element.getAttribute("type") || "text").toLowerCase());
   }
 
+  // A hidden sign-in pop-up (display:none or visibility:hidden) must not make
+  // the page look private.
+  function isVisible(element) {
+    return element.getClientRects().length > 0 && window.getComputedStyle(element).visibility !== "hidden";
+  }
+
+  /** A7.4: only fields the reader can see count.
+   *   1. a visible password box -> private
+   *   2. PRIVATE_EMAIL_TEL_PER_FORM or more visible email/tel boxes in one <form> -> private
+   *      (one newsletter box is not; a number box never counts here)
+   *   3. PRIVATE_FORM_FIELD_COUNT or more visible data-entry fields -> private */
   function hasPrivateFormSurface() {
-    if (document.querySelector("input[type='password'], input[type='email'], input[type='tel'], input[type='number']")) {
+    if ([...document.querySelectorAll("input[type='password']")].some(isVisible)) {
       return true;
     }
+
+    const contactBoxesPerForm = new Map();
+    for (const input of document.querySelectorAll("input[type='email'], input[type='tel']")) {
+      if (!input.form || !isVisible(input)) continue;
+      const count = (contactBoxesPerForm.get(input.form) || 0) + 1;
+      if (count >= PRIVATE_EMAIL_TEL_PER_FORM) return true;
+      contactBoxesPerForm.set(input.form, count);
+    }
+
     const editableCount = [
       ...document.querySelectorAll("input, textarea, select, [contenteditable=''], [contenteditable='true']")
-    ].filter(isDataEntryField).length;
+    ].filter((element) => isDataEntryField(element) && isVisible(element)).length;
     return editableCount >= PRIVATE_FORM_FIELD_COUNT;
   }
 
