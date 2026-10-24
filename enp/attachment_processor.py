@@ -31,14 +31,13 @@ Supported (doc §5.4: "PDF, DOC, DOCX, TXT, and image files (via Tesseract OCR)"
     HTML               tags stripped (enp.text_cleaner.html_to_text)
     PPTX               slide text + speaker notes, in slide order (zip + regex, no library)
     XLSX               one line per row, cells joined with ' | ', sheet name above its rows
-    ODT / ODS / ODP    content.xml text, table cells joined with ' | '
-    RTF                control words dropped, \\'hh and \\uN decoded, non-text groups skipped
     EML                Subject/From/To/Date + the plain (else HTML) body
     images             Tesseract OCR — OPTIONAL and OFF today: pytesseract and the
                        Tesseract binary are not installed (requirements.txt)
-Not supported yet (decision A22): legacy .doc/.xls/.ppt, scanned PDFs (no text layer),
-ZIP, HEIC. Audio/video are out of scope (doc §5.4). The Office, OpenDocument, RTF and
-EML readers (D2) use only the standard library, so they add no dependency.
+Not supported (decision A22): legacy .doc/.xls/.ppt, RTF, ODT/ODS/ODP, ZIP, HEIC, and
+scanned PDFs (no text layer; OCR for them is still to build). Audio/video are out of
+scope (doc §5.4). The PPTX, XLSX and EML readers (D2) use only the standard library,
+so they add no dependency.
 Unsupported or failed -> the Tier-1 lightweight_extract (filename|mime|size).
 
 Selection rules (architecture §5.4 Tier 2): an attachment qualifies when its
@@ -106,8 +105,7 @@ TEXT_EXTENSIONS = (".txt", ".md", ".csv", ".tsv", ".log", ".json", ".xml", ".ics
 HTML_EXTENSIONS = (".html", ".htm")
 PPTX_EXTENSIONS = (".pptx", ".pptm")
 XLSX_EXTENSIONS = (".xlsx", ".xlsm")
-ODF_EXTENSIONS = (".odt", ".ods", ".odp")
-RTF_EXTENSIONS = (".rtf",)
+RTF_EXTENSIONS = (".rtf",)  # skipped on purpose (A22), but text/rtf must not reach the plain-text reader
 EML_EXTENSIONS = (".eml",)
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tif", ".tiff", ".webp")
 
@@ -228,9 +226,9 @@ def _extract_html(data: bytes) -> Optional[str]:
     return html_to_text(_decode_text(data)) or None
 
 
-# ── Office / OpenDocument / RTF / EML (D2; standard library only) ─────────────
+# ── PPTX / XLSX / EML (D2; standard library only) ─────────────────────────────
 #
-# PPTX, XLSX and ODT/ODS/ODP are zip files of XML. Their text is read with regular
+# PPTX and XLSX are zip files of XML. Their text is read with regular
 # expressions instead of an XML parser, so a hostile file cannot use entity expansion,
 # and only the members that hold text are opened. Mail attachments come from anyone,
 # so every read is capped: one member, and all members of one file together.
@@ -251,13 +249,6 @@ _XLSX_CELL_RE = re.compile(r"<c\b([^>]*?)(?:/>|>(.*?)</c>)", _XML_FLAGS)
 _XLSX_V_RE = re.compile(r"<v(?:\s[^>]*)?>(.*?)</v>", _XML_FLAGS)
 _XLSX_SHEET_TAG_RE = re.compile(r"<sheet\b[^>]*>", _XML_FLAGS)
 _XLSX_REL_TAG_RE = re.compile(r"<Relationship\b[^>]*>", _XML_FLAGS)
-_ODF_BREAK_RE = re.compile(r"</text:p>|</text:h>|<text:line-break\s*/>|</table:table-row>", _XML_FLAGS)
-# The paragraph end just before a cell end belongs to the cell, so it must not become a line break.
-_ODF_CELL_END_RE = re.compile(r"(?:</text:p>\s*)?</table:(?:covered-)?table-cell>", _XML_FLAGS)
-_ODF_TAB_RE = re.compile(r"<text:tab\s*/>", _XML_FLAGS)
-_ODF_SPACE_RE = re.compile(r"<text:s\b[^>]*/>", _XML_FLAGS)
-_ODF_DROP_RE = re.compile(r"<(?:office:annotation|text:tracked-changes)\b[^>]*>.*?</(?:office:annotation|text:tracked-changes)>", _XML_FLAGS)
-_XML_TAG_RE = re.compile(r"<[^>]+>")
 
 
 def _xml_attr(tag: str, name: str) -> str:
@@ -412,136 +403,6 @@ def _extract_xlsx(data: bytes, max_chars: int) -> Optional[str]:
         return None
 
 
-def _extract_odf(data: bytes) -> Optional[str]:
-    """OpenDocument text, spreadsheet or presentation (content.xml)."""
-    try:
-        _, read = _open_office_zip(data)
-        xml = read("content.xml")
-        if not xml:
-            return None
-        xml = _ODF_DROP_RE.sub(" ", xml)
-        xml = _ODF_CELL_END_RE.sub(" | ", xml)
-        xml = _ODF_BREAK_RE.sub("\n", xml)
-        xml = _ODF_TAB_RE.sub("\t", xml)
-        xml = _ODF_SPACE_RE.sub(" ", xml)
-        text = unescape(_XML_TAG_RE.sub("", xml))
-        lines = []
-        for line in text.splitlines():
-            cells = [cell.strip() for cell in line.split(" | ")]
-            joined = " | ".join(cell for cell in cells if cell)
-            if joined:
-                lines.append(joined)
-        return "\n".join(lines).strip() or None
-    except Exception as exc:
-        logger.warning("attachment_processor: opendocument extraction failed (%s)", type(exc).__name__)
-        return None
-
-
-# RTF groups whose content is not text (fonts, colours, styles, embedded pictures, ...).
-_RTF_SKIPPED_DESTINATIONS = frozenset({
-    "fonttbl", "colortbl", "stylesheet", "info", "pict", "object", "themedata",
-    "colorschememapping", "latentstyles", "datastore", "listtable", "listoverridetable",
-    "rsidtbl", "generator", "xmlnstbl", "fldinst", "header", "headerl", "headerr", "headerf",
-    "footer", "footerl", "footerr", "footerf",
-})
-_RTF_WORD_TEXT = {
-    "par": "\n", "line": "\n", "sect": "\n", "page": "\n", "row": "\n", "tab": "\t", "cell": " | ",
-    "emdash": "\u2014", "endash": "\u2013", "bullet": "\u2022",
-    "lquote": "\u2018", "rquote": "\u2019", "ldblquote": "\u201c", "rdblquote": "\u201d",
-}
-_RTF_SYMBOL_TEXT = {"\\": "\\", "{": "{", "}": "}", "~": " ", "_": "-", "-": "", "\n": "\n", "\r": "\n"}
-_RTF_SPECIAL_RE = re.compile(r"[{}\\]")
-_RTF_CONTROL_RE = re.compile(r"\\(?:([a-zA-Z]{1,32})(-?\d{1,10})? ?|'([0-9a-fA-F]{2})|([^a-zA-Z]))", re.DOTALL)
-
-
-def _rtf_to_text(rtf: str, max_chars: int) -> str:
-    """Plain text of an RTF document: control words dropped, \\'hh and \\uN decoded,
-    non-text groups (fonts, pictures, {\\*...} destinations) skipped."""
-    out: list[str] = []
-    length = 0
-    stack: list[tuple[bool, int]] = []
-    skip = False
-    unicode_skip = 1       # \ucN: characters that follow a \uN as its ANSI fallback
-    pending_skip = 0
-    just_opened = False
-    index, size = 0, len(rtf)
-    while index < size and length < max_chars:
-        char = rtf[index]
-        if char == "{":
-            stack.append((skip, unicode_skip))
-            just_opened = True
-            index += 1
-            continue
-        if char == "}":
-            if stack:
-                skip, unicode_skip = stack.pop()
-            just_opened = False
-            index += 1
-            continue
-        if char != "\\":
-            special = _RTF_SPECIAL_RE.search(rtf, index)
-            end = special.start() if special else size
-            run = rtf[index:end]
-            index = end
-            just_opened = False
-            if skip:
-                continue
-            if pending_skip:
-                cut = min(pending_skip, len(run))
-                run, pending_skip = run[cut:], pending_skip - cut
-            run = run.replace("\r", "").replace("\n", "")
-            out.append(run)
-            length += len(run)
-            continue
-
-        match = _RTF_CONTROL_RE.match(rtf, index)
-        if match is None:  # a lone backslash at the end
-            break
-        index = match.end()
-        word, number, hex_value, symbol = match.groups()
-        text = ""
-        if word:
-            if just_opened and word in _RTF_SKIPPED_DESTINATIONS:
-                skip = True
-            elif word == "uc":
-                unicode_skip = int(number) if number else 1
-            elif word == "u" and number and not skip:
-                code = int(number)
-                text = chr(code + 65536 if code < 0 else code)
-                pending_skip = unicode_skip
-            elif not skip:
-                text = _RTF_WORD_TEXT.get(word, "")
-        elif hex_value is not None:
-            if pending_skip:
-                pending_skip -= 1
-            elif not skip:
-                text = bytes([int(hex_value, 16)]).decode("cp1252", errors="replace")
-        elif symbol == "*":
-            if just_opened:
-                skip = True
-        elif not skip:
-            text = _RTF_SYMBOL_TEXT.get(symbol, "")
-        if symbol != "*":
-            just_opened = False
-        if text:
-            out.append(text)
-            length += len(text)
-    return "".join(out)
-
-
-def _extract_rtf(data: bytes, max_chars: int) -> Optional[str]:
-    try:
-        text = _rtf_to_text(_decode_text(data), max_chars)
-        # \uN writes characters above U+FFFF as two surrogate halves: join the pairs, and
-        # replace a lone half (it cannot be stored in UTF-8, so PostgreSQL would reject it).
-        text = text.encode("utf-16", "surrogatepass").decode("utf-16", errors="replace")
-    except Exception as exc:
-        logger.warning("attachment_processor: rtf extraction failed (%s)", type(exc).__name__)
-        return None
-    lines = [" ".join(line.split()) for line in text.replace("\u00a0", " ").splitlines()]
-    return "\n".join(line for line in lines if line).strip() or None
-
-
 def _extract_eml(data: bytes) -> Optional[str]:
     """A forwarded or saved e-mail: Subject/From/To/Date headers + the readable body."""
     try:
@@ -572,13 +433,10 @@ def _extract_image_ocr(data: bytes) -> Optional[str]:
 
 
 def _is_office_or_mail_type(mime: str, ext: str) -> bool:
-    """PPTX, XLSX, OpenDocument, RTF and EML. Checked before the text/* rule:
-    text/rtf starts with "text/" but is not plain text."""
+    """PPTX, XLSX and EML."""
     return (
         "presentationml" in mime or ext in PPTX_EXTENSIONS
         or "spreadsheetml" in mime or ext in XLSX_EXTENSIONS
-        or "opendocument" in mime or ext in ODF_EXTENSIONS
-        or "rtf" in mime or ext in RTF_EXTENSIONS
         or mime == "message/rfc822" or ext in EML_EXTENSIONS
     )
 
@@ -595,6 +453,8 @@ def can_extract_text(mime_type: str, filename: str) -> bool:
         return True
     if "msword" in mime or ext == ".doc":
         return False
+    if "rtf" in mime or ext in RTF_EXTENSIONS:
+        return False  # skipped (A22); text/rtf must not fall into the text/* rule
     if _is_office_or_mail_type(mime, ext):
         return True
     if mime == "text/html" or ext in HTML_EXTENSIONS:
@@ -634,10 +494,10 @@ def extract_text(
         return _extract_pptx(data, max_chars)
     if "spreadsheetml" in mime or ext in XLSX_EXTENSIONS:
         return _extract_xlsx(data, max_chars)
-    if "opendocument" in mime or ext in ODF_EXTENSIONS:
-        return _extract_odf(data)
     if "rtf" in mime or ext in RTF_EXTENSIONS:
-        return _extract_rtf(data, max_chars)
+        # Skipped (A22). Before the text/* rule: text/rtf would be read as plain text, i.e. raw markup.
+        logger.info("attachment_processor: RTF not supported (decision A22)")
+        return None
     if mime == "message/rfc822" or ext in EML_EXTENSIONS:
         return _extract_eml(data)
     if mime == "text/html" or ext in HTML_EXTENSIONS:

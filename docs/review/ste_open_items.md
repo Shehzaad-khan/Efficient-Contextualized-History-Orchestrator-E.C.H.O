@@ -631,8 +631,8 @@ Still open — decide each:
   - Part 2 (skip signature logos) BUILT by him, light re-check done: `gmail_api.extract_attachments` drops parts with
     Content-Disposition inline, parts with a Content-ID unless the disposition is `attachment`, and images with a known
     size under 10 KB (`_MIN_ATTACHMENT_IMAGE_BYTES`); an unknown size (0) is kept. A PDF or DOCX under 10 KB stays.
-  - Part 1 (types): XLSX, PPTX and EML built in the cloud session (D2, standard library instead of openpyxl/python-pptx,
-    plus RTF/ODF, which this decision had skipped). OCR for images and scanned PDFs is still open (Tesseract).
+  - Part 1 (types): XLSX, PPTX and EML built in the cloud session (D2, standard library instead of openpyxl/python-pptx).
+    RTF/ODF were built by mistake and removed. OCR for images and scanned PDFs is still open (Tesseract + pytesseract).
   - Part 3 (same filename: filename + size) NOT built: `_download_attachment_data` still takes the first part with a
     matching filename.
 
@@ -1735,10 +1735,12 @@ Still open — decide each:
   - [ ] OCR for images (PNG/JPG/…): install the Tesseract binary, enable `pytesseract` in `requirements.txt`.
   - [ ] Scanned PDFs (no text layer): OCR each page.
   - [ ] Old `.doc` files (python-docx cannot read them).
-  - [x] PPTX, XLSX, ODT/ODS/ODP, RTF, EML built 2026-10-24 (cloud session) in `enp/attachment_processor.py`; HTML was already there.
+  - [x] PPTX, XLSX, EML built 2026-10-24 (cloud session) in `enp/attachment_processor.py`; HTML was already there.
+        (ODT/RTF were built first, then REMOVED the same day on his word: A22 says skip them. `.rtf` / `text/rtf` is now
+        refused explicitly so it is not read as plain text.)
         Standard library only (zip + regex, per-member 16 MB and per-file 64 MB read caps, no XML parser), so
         `requirements.txt` does not change. Checked on generated files (slide order, notes, shared strings, inline
-        strings, sheet names, merged ODS cells, RTF `\'hh`/`\uN`/surrogate pairs/skipped groups, EML plain vs HTML),
+        strings, sheet names, EML plain vs HTML),
         on corrupt input (returns None) and on an oversized member (skipped). NOT checked on real Office files from
         a real mailbox; do that locally. Still open: old `.doc`/`.xls`/`.ppt`, OCR, scanned PDFs.
   - [ ] A4 decided 2026-10-21: extract at ingestion into `extracted_text`, merge into embedded text (shared
