@@ -45,7 +45,7 @@ and none knows that the articles came *after* the email.
 - **Captures** emails (Gmail API), web pages (Chrome extension) and YouTube videos (extension + YouTube Data API) on the user's laptop.
 - **Filters by intent.** Pages and videos are kept only when the user paid attention to them (§6.2, §7.3). Every email is kept.
 - **Unifies** everything into one table (`memory_items`), one vector index (FAISS) and one keyword index (PostgreSQL full-text search).
-- **Recalls** through a chat. The LLM (GPT-5.6 Luna) calls one read-only search tool; the search itself is deterministic Python (§10).
+- **Recalls** through a chat. The LLM (GPT-6 Luna) calls one read-only search tool; the search itself is deterministic Python (§10).
 - **Reflects** on time use without judging: time per category, sessions, user-declared regret, weekly descriptive insights (§11).
 
 ### 1.3 What Makes Echo Different
@@ -144,7 +144,7 @@ flowchart TB
         FA[("FAISS index file")]
         RD[("Redis (WSL)")]
     end
-    LLM["OpenAI GPT-5.6 Luna<br/>(query + short snippets only)"]
+    LLM["OpenAI GPT-6 Luna<br/>(query + short snippets only)"]
     GAPI["Gmail API / YouTube Data API"]
     UI["React dashboard :3000"]
 
@@ -876,10 +876,10 @@ ENP Stage 4 still builds its own — C21).
 | Key | Value |
 |---|---|
 | `provider` | `openai` |
-| `parser_model`, `synthesizer_model` | `gpt-5.6-luna` (A25, 2026-10-18; was `gpt-4.1-mini` from 2026-07-09, Gemini before that) |
+| `parser_model`, `synthesizer_model`, `decisions_model` | `gpt-6-luna` (A25, 2026-10-18 chose `gpt-5.6-luna`; changed to `gpt-6-luna` 2026-10-24; was `gpt-4.1-mini` from 2026-07-09, Gemini before that) |
 | `reasoning_effort` | `medium` for both calls |
 | `use_responses_api` | `True` |
-| `parser_temperature` / `synthesizer_temperature` | 0.0 / 0.3 — used only by non-reasoning models; LangChain drops them for gpt-5.x |
+| `parser_temperature` / `synthesizer_temperature` | 0.0 / 0.3 — used only by non-reasoning models; not sent while `reasoning_effort` is set |
 | `max_retries` | 2 (fail fast: a daily-quota 429 is not transient) |
 
 Rule (A25): "plug-in for all, specialised for OpenAI." Any provider key works by changing `LLM_CONFIG`; when the provider is
@@ -1233,7 +1233,7 @@ Likely blocked (inference, not verified); going local removes this — only port
 | Backend | Python, FastAPI, uvicorn | `fastapi==0.115.0`, `uvicorn[standard]==0.30.6` |
 | Backend | SQLAlchemy / psycopg2 | `SQLAlchemy==2.0.49`, `psycopg2-binary==2.9.9` |
 | Recall | LangGraph, LangChain | `langgraph>=0.2.0`, `langchain>=0.3.0`, `langchain-core>=1.6.10`, `langchain-openai>=1.7.2` |
-| LLM | OpenAI GPT-5.6 Luna, Responses API | via `langchain-openai` |
+| LLM | OpenAI GPT-6 Luna, Responses API | via `langchain-openai` |
 | Embeddings | sentence-transformers | `sentence-transformers==5.4.1`, `torch==2.2.2`; model `Snowflake/snowflake-arctic-embed-xs` (A40.1, from Thursday's re-embed; earlier model `all-MiniLM-L6-v2`) |
 | Re-ranking | cross-encoder | `cross-encoder/ms-marco-MiniLM-L-6-v2` (kept, A40.2) |
 | MCP server (built Thu–Sun, E1) | official MCP Python SDK | `mcp`, added to requirements.txt at build (not installed today) |
@@ -2038,7 +2038,7 @@ the project history; "—" where no date was recorded.
 | A22 | 2026-10-21 | Add XLSX, PPTX, EML, OCR; skip inline logos; same filename matched by size | Those types gave no text; logos counted as attachments |
 | A23 | 2026-10-21 | Only the top 3 query-matched passages (~1,500 chars) of attachments reach the LLM; contextual-compression prohibition lifted | First 6,000 chars were sent; answers missed deep content |
 | A24 | 2026-10-21 | Embedding top-only, Chrome snippet 500 → 800 (now A16's token budget); LLM snippets = best-matching 500-char window of cleaned text; keyword search over full text via stored tsvector + GIN | Words past 5,000 chars were unsearchable; raw snippets carried quotes |
-| A25 | 2026-10-18 | GPT-5.6 Luna on the Responses API via LangChain, reasoning effort medium; OpenAI extras only when provider is OpenAI | Cheaper per token and stronger; keeps plug-and-play |
+| A25 | 2026-10-18 | GPT-5.6 Luna (changed to GPT-6 Luna 2026-10-24) on the Responses API via LangChain, reasoning effort medium; OpenAI extras only when provider is OpenAI | Cheaper per token and stronger; keeps plug-and-play |
 | A26 | 2026-10-18 | `search_memories` tool loop, ≤ 5 rounds; LLM calls usually 2, max 6 (was exactly 2) | Lets the model search again when the first search misses |
 | A27 | 2026-10-18 | Chat-style answers with memory pills, moment strip, chat sessions | Who/where/when cues fit a personal memory |
 | A28 | 2026-10-18 | Live progress over SSE | Multi-round answers take seconds |

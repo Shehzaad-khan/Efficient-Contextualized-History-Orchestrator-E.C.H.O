@@ -95,7 +95,7 @@ Local models (also listed in root `requirements.txt`): `sentence-transformers`
 (bi-encoder `all-MiniLM-L6-v2` via `enp.embedding_generator`, plus
 `cross-encoder/ms-marco-MiniLM-L-6-v2` loaded once in `reranker.py`),
 `faiss-cpu` via `ste.faiss_manager`, `numpy`. LLM: `langchain` +
-`langchain-openai` (≥1.7.2; GPT-5.6 Luna on the Responses API).
+`langchain-openai` (≥1.7.2; GPT-6 Luna on the Responses API).
 
 ## Smoke test
 

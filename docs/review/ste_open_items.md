@@ -627,8 +627,8 @@ Still open — decide each:
   SDK path. What it does:
   - One `choice` question named `category`, choices = the 5 names with a one-line description each; `input` is
     `Source / Title (200) / Snippet (300)`, the same data as the one-word path.
-  - Model comes from `LLM_CONFIG["decisions_model"]` = `gpt-6-luna` (the only model the endpoint accepts; it is NOT the
-    `gpt-5.6-luna` chat model). Empty string, or a provider other than openai, skips the Decisions path.
+  - Model comes from `LLM_CONFIG["decisions_model"]` = `gpt-6-luna` (the only model the endpoint accepts; since 2026-10-24
+    the two chat models use `gpt-6-luna` too). Empty string, or a provider other than openai, skips the Decisions path.
   - Falls back to the one-word call for that item on: an exception, a `refusal` answer, or a value outside the 5 names.
     After 3 failed calls in a row the Decisions API is skipped for 10 minutes (so a persistent 401/404 does not cost
     every item a failed call plus retries). The API's `confidence` is returned for the debug log only; nothing is stored.
@@ -745,6 +745,7 @@ Still open — decide each:
   reasoning effort, Decisions API). Other providers get the generic path; their own extras can be added later
   the same way.
 - Model `gpt-5.6-luna` everywhere `LLM_CONFIG` is used (RSE both calls, ENP Stage 4 fallback, WBA insights).
+  **Changed 2026-10-24 (owner): `gpt-6-luna` everywhere** (`parser_model`, `synthesizer_model`, `decisions_model` in `rse/config.py`; no `.env` change).
   $0.20 / $1.20 per 1M in/out (gpt-4.1-mini was $0.40 / $1.60). Cutoff Feb 2026, 1.05M context.
 - **Reasoning effort: `medium` for both calls** (his call: better answers beat faster answers for the demo).
 - Drop `parser_temperature` / `synthesizer_temperature` for Luna (installed `langchain-openai` already silently
