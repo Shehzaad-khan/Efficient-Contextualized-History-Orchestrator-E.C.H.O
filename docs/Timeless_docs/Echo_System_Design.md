@@ -491,8 +491,9 @@ Decided (built Thu–Sun):
   as the first lines of the text, each prefixed `## `; ENP `clean_chrome_text` lifts them into `headings`, which feed the embedding.
   Old pages keep no headings (their text is already flattened).
 - **Private form check (A7.4):** a visible password box → private; 3 or more visible email/tel boxes in one `<form>` → private;
-  `type=number` ignored; the 5-field rule (`PRIVATE_FORM_FIELD_COUNT = 5`) counts visible fields only. Today any
-  email/tel/number input counts, so newsletter boxes block the text of most blogs.
+  `type=number` ignored by the password/email/tel rules; the 5-field rule (`PRIVATE_FORM_FIELD_COUNT = 5`) counts visible
+  fields only. Built 2026-10-24. A newsletter box no longer blocks the text of a blog. "Visible" = has layout boxes and is
+  not `visibility:hidden`. Email/tel boxes outside any `<form>` are not grouped (the 5-field rule still counts them).
 
 ### 6.7 Privacy Rules
 
@@ -1416,7 +1417,7 @@ query latency and tokens per round (A25), embed speed of arctic-xs on the real d
 | Chrome | Idle cutoff | 30 s | `background.js` : `chrome.idle.setDetectionInterval(30)` | §6.3 |
 | Chrome | Signal interval | 5 s | `chrome_tracker.js` : `SIGNAL_INTERVAL_MS = 5000` | — |
 | Chrome | Page text length | 200–12,000 chars | `chrome_tracker.js` : `MIN_CONTENT_CHARS`, `MAX_CONTENT_CHARS` | §6.6 |
-| Chrome | Private form | password box; ≥ 3 visible email/tel in one form; 5 visible fields | `chrome_tracker.js` : `PRIVATE_FORM_FIELD_COUNT = 5` (any field counts) | A7.4 |
+| Chrome | Private form | password box; ≥ 3 visible email/tel in one form; 5 visible fields | `chrome_tracker.js` : `PRIVATE_EMAIL_TEL_PER_FORM = 3`, `PRIVATE_FORM_FIELD_COUNT = 5` (visible fields only) | A7.4 |
 | Chrome | Headings sent | ~10 headings / ~200 chars | none | A13 |
 | Chrome | Failed send retry | 30 s | `background.js` : `SEND_RETRY_DELAY_MS = 30000` | — |
 | Revisit | Flag lifetime | 24 h sliding | `ste/redis_manager.py` : `REVISIT_TTL_SECONDS = 86400` | §6.2, §7.3 |
