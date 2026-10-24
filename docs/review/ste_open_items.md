@@ -1680,13 +1680,16 @@ Still open — decide each:
 - **Also done 2026-10-22:** `README.md:70` no longer lists the deleted "rebuild FAISS, recompute centroids" scripts (now `setup_db.py`, `enp_status.py`, the two files left in `scripts/`).
 - **Also done 2026-10-22:** `docs/Phase III/build/lld/build_lld.py:589` (the LLD generator) now names `recompute_centroids()` run at ENP startup instead of the deleted script. The already-built `.docx` is unchanged until the generator is re-run.
 
-### C28. Gmail sign-in can hang backend shutdown — `ingestion/gmail/router.py` + `backend/main.py` — [ ] (found 2026-10-19, YouTube sign-in change)
+### C28. Gmail sign-in can hang backend shutdown — `ingestion/gmail/router.py` + `backend/main.py` — [x] built with A35, found already done 2026-10-24 (found 2026-10-19, YouTube sign-in change)
 - `authenticate_gmail()` opens the browser sign-in inside an `asyncio.to_thread` worker of the gmail-poller.
   Cancelling the poller task does not stop that thread. Likely (Python's executor joins its workers at
   interpreter exit): stopping the backend while the Gmail sign-in tab is still open hangs until the sign-in
   finishes or the process is killed. Not tested live.
 - **Fix (same as YouTube):** do the Gmail sign-in once at startup on a daemon thread; the poller then only uses
   the token, never opens the browser. Touches `gmail_api.py`, `router.py`, `main.py`.
+- **Done (checked 2026-10-24):** `gmail_api.sign_in_gmail()` runs once on a daemon thread started in the `backend/main.py`
+  lifespan (`gmail-sign-in`); `authenticate_gmail()` never opens a browser and raises `GmailAuthError`, which
+  `router.poll_once` turns into a skipped poll. The tracker entry was simply never ticked.
 
 ### C29. Delete `docs/review/pending_answers_A16_A40_A42_A43.md` — [x] 2026-10-22 (his ask; not in git, so not recoverable)
 - Done: the four decision lines (A16, A40, A42, A43) were reworded without the path, and the brief's build notes,

@@ -1288,12 +1288,12 @@ One backend process (`uvicorn backend.main:app --port 8000`, started from the pr
 3. Start `gmail-poller` (asyncio task; each poll runs in a worker thread).
 4. Start `enp-worker` (thread; centroid recompute at start, built Thu–Sun A36).
 5. One-off `message-cleanup` (chat history > 30 days).
-6. One-off `youtube-sign-in` daemon thread (opens the browser only when no usable token exists).
+6. One-off `youtube-sign-in` and `gmail-sign-in` daemon threads (each opens the browser only when no usable token exists; C28 built).
 7. Retention job (built Thu–Sun, A37).
 
-Shutdown: cancel the poller and cleanup, set the ENP stop event and wait up to 60 s, close the async Redis client.
-Known gaps: the DB pool is not disposed on shutdown (D1); the Gmail sign-in runs inside a poller worker thread and can hang
-shutdown while the sign-in tab is open (C28; fix: sign in once at startup on a daemon thread, like YouTube).
+Shutdown: cancel the poller and cleanup, set the ENP stop event and wait up to 60 s, dispose the SQLAlchemy engine
+(`postgresql_manager.dispose_engine()`, D1), close the async Redis client. The sign-in threads are daemon threads, so an open
+sign-in tab does not hold shutdown (C28). The RSE psycopg2 pool is not closed.
 
 Local services: PostgreSQL 16 (Windows service), Redis (`wsl -d Ubuntu -u root service redis-server start`, then keep WSL awake
 with `wsl -d Ubuntu -u root -- sleep infinity` or Redis stops when WSL idles), Tesseract (to install for OCR, A22).
@@ -1500,7 +1500,7 @@ query latency and tokens per round (A25), embed speed of arctic-xs on the real d
 Known gaps (recorded, not yet fixed): C4 — recall does not see new vectors until a restart; C5 — Chrome dwell after the first
 send is lost; C10 — YouTube auto-seek may save videos at 0 s (unverified); C13 — no LLM timeout; C25 — SQLAlchemy errors can
 print bound values into logs (fix: `hide_parameters=True`); C26 — capture settings logged in full (excluded senders);
-C28 — Gmail sign-in can hang shutdown; D1 — DB pool not disposed; D3 — reminders never shown.
+D3 — reminders never shown. (C28 and D1 are built.)
 
 ## 24. Pending Decisions and Decided-but-Unbuilt Items
 
@@ -2067,7 +2067,7 @@ the project history; "—" where no date was recorded.
 | B3 | Thursday | Clear open times of Gmail rows never opened (`play_sessions_count = 0`) |
 | B4 | info only | Shorts stored as `is_short = FALSE` fix themselves on a re-watch |
 | B5 | Thursday, after schema changes and the A40.1 / A16 code switch | Full re-embed with arctic-xs into a fresh FAISS index |
-| D1 | open | Dispose the DB pool on shutdown |
+| D1 | built 2026-10-22 | Dispose the DB pool on shutdown |
 | D2 | decided via A4/A22 | Full attachment support |
 | D3 | open (build or drop) | Show regret reminders; snooze route |
 | D4 | built 2026-10-23 | Sessions are built on demand (`ensure_sessions_for_day`) |
