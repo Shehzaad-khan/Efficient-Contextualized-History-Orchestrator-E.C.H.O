@@ -1708,7 +1708,12 @@ Still open — decide each:
   - [ ] OCR for images (PNG/JPG/…): install the Tesseract binary, enable `pytesseract` in `requirements.txt`.
   - [ ] Scanned PDFs (no text layer): OCR each page.
   - [ ] Old `.doc` files (python-docx cannot read them).
-  - [ ] PPTX, XLSX, ODT, RTF, HTML.
+  - [x] PPTX, XLSX, ODT/ODS/ODP, RTF, EML built 2026-10-24 (cloud session) in `enp/attachment_processor.py`; HTML was already there.
+        Standard library only (zip + regex, per-member 16 MB and per-file 64 MB read caps, no XML parser), so
+        `requirements.txt` does not change. Checked on generated files (slide order, notes, shared strings, inline
+        strings, sheet names, merged ODS cells, RTF `\'hh`/`\uN`/surrogate pairs/skipped groups, EML plain vs HTML),
+        on corrupt input (returns None) and on an oversized member (skipped). NOT checked on real Office files from
+        a real mailbox; do that locally. Still open: old `.doc`/`.xls`/`.ppt`, OCR, scanned PDFs.
   - [ ] A4 decided 2026-10-21: extract at ingestion into `extracted_text`, merge into embedded text (shared
         800-char budget) + full text into the tsvector, set `is_processed = TRUE`.
 

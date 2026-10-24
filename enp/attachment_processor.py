@@ -29,10 +29,16 @@ Supported (doc §5.4: "PDF, DOC, DOCX, TXT, and image files (via Tesseract OCR)"
     TXT / CSV / MD /   decoded by BOM (UTF-8 / UTF-16), else UTF-8, else Latin-1
     ICS / other text/*
     HTML               tags stripped (enp.text_cleaner.html_to_text)
+    PPTX               slide text + speaker notes, in slide order (zip + regex, no library)
+    XLSX               one line per row, cells joined with ' | ', sheet name above its rows
+    ODT / ODS / ODP    content.xml text, table cells joined with ' | '
+    RTF                control words dropped, \\'hh and \\uN decoded, non-text groups skipped
+    EML                Subject/From/To/Date + the plain (else HTML) body
     images             Tesseract OCR — OPTIONAL and OFF today: pytesseract and the
                        Tesseract binary are not installed (requirements.txt)
-Not supported yet (decision A22): legacy .doc, scanned PDFs (no text layer),
-XLSX, PPTX, ODT, RTF, .eml, ZIP, HEIC. Audio/video are out of scope (doc §5.4).
+Not supported yet (decision A22): legacy .doc/.xls/.ppt, scanned PDFs (no text layer),
+ZIP, HEIC. Audio/video are out of scope (doc §5.4). The Office, OpenDocument, RTF and
+EML readers (D2) use only the standard library, so they add no dependency.
 Unsupported or failed -> the Tier-1 lightweight_extract (filename|mime|size).
 
 Selection rules (architecture §5.4 Tier 2): an attachment qualifies when its
@@ -51,12 +57,17 @@ from __future__ import annotations
 
 import base64
 import codecs
+from email import policy as email_policy
+from email.parser import BytesParser
+from html import unescape
 import importlib.util
 import io
 import logging
 from pathlib import PurePath
+import re
 import time
 from typing import Any, Optional
+import zipfile
 
 from enp.text_cleaner import html_to_text
 from enp.topic_extractor import STOPWORDS
@@ -93,6 +104,11 @@ PDF_EXTENSIONS = (".pdf",)
 DOCX_EXTENSIONS = (".docx",)
 TEXT_EXTENSIONS = (".txt", ".md", ".csv", ".tsv", ".log", ".json", ".xml", ".ics")
 HTML_EXTENSIONS = (".html", ".htm")
+PPTX_EXTENSIONS = (".pptx", ".pptm")
+XLSX_EXTENSIONS = (".xlsx", ".xlsm")
+ODF_EXTENSIONS = (".odt", ".ods", ".odp")
+RTF_EXTENSIONS = (".rtf",)
+EML_EXTENSIONS = (".eml",)
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tif", ".tiff", ".webp")
 
 
@@ -212,6 +228,335 @@ def _extract_html(data: bytes) -> Optional[str]:
     return html_to_text(_decode_text(data)) or None
 
 
+# ── Office / OpenDocument / RTF / EML (D2; standard library only) ─────────────
+#
+# PPTX, XLSX and ODT/ODS/ODP are zip files of XML. Their text is read with regular
+# expressions instead of an XML parser, so a hostile file cannot use entity expansion,
+# and only the members that hold text are opened. Mail attachments come from anyone,
+# so every read is capped: one member, and all members of one file together.
+OFFICE_MEMBER_MAX_BYTES = 16 * 1024 * 1024
+OFFICE_TOTAL_MAX_BYTES = 64 * 1024 * 1024
+
+_XML_FLAGS = re.IGNORECASE | re.DOTALL
+_SLIDE_NAME_RE = re.compile(r"^ppt/slides/slide(\d+)\.xml$")
+_NOTES_NAME_RE = re.compile(r"^ppt/notesSlides/notesSlide(\d+)\.xml$")
+_SHEET_NAME_RE = re.compile(r"^xl/worksheets/sheet(\d+)\.xml$")
+_DML_PARAGRAPH_RE = re.compile(r"<a:p\b[^>]*>(.*?)</a:p>", _XML_FLAGS)
+_DML_TOKEN_RE = re.compile(r"<a:t(?:\s[^>]*)?>(.*?)</a:t>|(<a:br\b[^>]*>)", _XML_FLAGS)
+_XLSX_SI_RE = re.compile(r"<si\b[^>]*>(.*?)</si>", _XML_FLAGS)
+_XLSX_PHONETIC_RE = re.compile(r"<rPh\b[^>]*>.*?</rPh>", _XML_FLAGS)
+_XLSX_T_RE = re.compile(r"<t(?:\s[^>]*)?>(.*?)</t>", _XML_FLAGS)
+_XLSX_ROW_RE = re.compile(r"<row\b[^>]*>(.*?)</row>", _XML_FLAGS)
+_XLSX_CELL_RE = re.compile(r"<c\b([^>]*?)(?:/>|>(.*?)</c>)", _XML_FLAGS)
+_XLSX_V_RE = re.compile(r"<v(?:\s[^>]*)?>(.*?)</v>", _XML_FLAGS)
+_XLSX_SHEET_TAG_RE = re.compile(r"<sheet\b[^>]*>", _XML_FLAGS)
+_XLSX_REL_TAG_RE = re.compile(r"<Relationship\b[^>]*>", _XML_FLAGS)
+_ODF_BREAK_RE = re.compile(r"</text:p>|</text:h>|<text:line-break\s*/>|</table:table-row>", _XML_FLAGS)
+# The paragraph end just before a cell end belongs to the cell, so it must not become a line break.
+_ODF_CELL_END_RE = re.compile(r"(?:</text:p>\s*)?</table:(?:covered-)?table-cell>", _XML_FLAGS)
+_ODF_TAB_RE = re.compile(r"<text:tab\s*/>", _XML_FLAGS)
+_ODF_SPACE_RE = re.compile(r"<text:s\b[^>]*/>", _XML_FLAGS)
+_ODF_DROP_RE = re.compile(r"<(?:office:annotation|text:tracked-changes)\b[^>]*>.*?</(?:office:annotation|text:tracked-changes)>", _XML_FLAGS)
+_XML_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _xml_attr(tag: str, name: str) -> str:
+    match = re.search(rf'(?<![\w:]){re.escape(name)}\s*=\s*"([^"]*)"', tag)
+    return match.group(1) if match else ""
+
+
+def _open_office_zip(data: bytes):
+    """-> (member names, read(name) -> str | None). read returns None for a missing
+    member or one over the size caps, and never reads more than the caps allow."""
+    archive = zipfile.ZipFile(io.BytesIO(data))
+    remaining = [OFFICE_TOTAL_MAX_BYTES]
+
+    def read(name: str) -> Optional[str]:
+        try:
+            info = archive.getinfo(name)
+        except KeyError:
+            return None
+        limit = min(OFFICE_MEMBER_MAX_BYTES, remaining[0])
+        if info.file_size > limit:
+            logger.info("attachment_processor: zip member over the size cap - skipped")
+            return None
+        with archive.open(info) as member:
+            raw = member.read(limit + 1)  # the size in the header can lie
+        if len(raw) > limit:
+            logger.info("attachment_processor: zip member over the size cap - skipped")
+            return None
+        remaining[0] -= len(raw)
+        return raw.decode("utf-8", errors="replace")
+
+    return archive.namelist(), read
+
+
+def _numbered(names: list[str], pattern: re.Pattern) -> list[str]:
+    """Member names matching `pattern`, in the order of their number (slide2 before slide10)."""
+    found = [(int(m.group(1)), name) for name in names if (m := pattern.match(name))]
+    return [name for _, name in sorted(found)]
+
+
+def _dml_lines(xml: str) -> list[str]:
+    """Paragraph texts of a PowerPoint slide or notes part (DrawingML)."""
+    lines: list[str] = []
+    for paragraph in _DML_PARAGRAPH_RE.finditer(xml):
+        parts = [
+            "\n" if match.group(2) else unescape(match.group(1))
+            for match in _DML_TOKEN_RE.finditer(paragraph.group(1))
+        ]
+        text = "".join(parts).strip()
+        if text:
+            lines.append(text)
+    return lines
+
+
+def _extract_pptx(data: bytes, max_chars: int) -> Optional[str]:
+    try:
+        names, read = _open_office_zip(data)
+        blocks: list[str] = []
+        total = 0
+        for name in _numbered(names, _SLIDE_NAME_RE) + _numbered(names, _NOTES_NAME_RE):
+            xml = read(name)
+            if xml is None:
+                continue
+            lines = _dml_lines(xml)
+            if lines:
+                blocks.append("\n".join(lines))
+                total += len(blocks[-1])
+            if total >= max_chars:
+                break
+        return "\n\n".join(blocks).strip() or None
+    except Exception as exc:
+        logger.warning("attachment_processor: pptx extraction failed (%s)", type(exc).__name__)
+        return None
+
+
+def _xlsx_shared_strings(xml: str) -> list[str]:
+    strings: list[str] = []
+    for item in _XLSX_SI_RE.finditer(xml):
+        body = _XLSX_PHONETIC_RE.sub("", item.group(1))
+        strings.append(unescape("".join(_XLSX_T_RE.findall(body))))
+    return strings
+
+
+def _xlsx_sheet_names(names: list[str], read) -> dict[str, str]:
+    """Member name -> sheet name, from workbook.xml and its relationships ({} when unreadable)."""
+    workbook = read("xl/workbook.xml")
+    rels = read("xl/_rels/workbook.xml.rels")
+    if not workbook or not rels:
+        return {}
+    targets: dict[str, str] = {}
+    for tag in _XLSX_REL_TAG_RE.findall(rels):
+        target = _xml_attr(tag, "Target")
+        if target:
+            targets[_xml_attr(tag, "Id")] = target.lstrip("/") if target.startswith("/") else f"xl/{target}"
+    result: dict[str, str] = {}
+    for tag in _XLSX_SHEET_TAG_RE.findall(workbook):
+        member = targets.get(_xml_attr(tag, "r:id"))
+        if member:
+            result[member] = unescape(_xml_attr(tag, "name"))
+    return result
+
+
+def _xlsx_sheet_lines(xml: str, shared: list[str]) -> list[str]:
+    """One line per row, non-empty cells joined with ' | '."""
+    lines: list[str] = []
+    for row in _XLSX_ROW_RE.finditer(xml):
+        cells: list[str] = []
+        for cell in _XLSX_CELL_RE.finditer(row.group(1)):
+            body = cell.group(2) or ""
+            cell_type = _xml_attr(cell.group(1), "t")
+            if cell_type == "inlineStr":
+                value = unescape("".join(_XLSX_T_RE.findall(body)))
+            else:
+                match = _XLSX_V_RE.search(body)
+                value = unescape(match.group(1)) if match else ""
+                if cell_type == "s":
+                    try:
+                        value = shared[int(value)]
+                    except (ValueError, IndexError):
+                        value = ""
+            value = value.strip()
+            if value:
+                cells.append(value)
+        if cells:
+            lines.append(" | ".join(cells))
+    return lines
+
+
+def _extract_xlsx(data: bytes, max_chars: int) -> Optional[str]:
+    try:
+        names, read = _open_office_zip(data)
+        shared_xml = read("xl/sharedStrings.xml")
+        shared = _xlsx_shared_strings(shared_xml) if shared_xml else []
+        sheet_names = _xlsx_sheet_names(names, read)
+        blocks: list[str] = []
+        total = 0
+        for name in _numbered(names, _SHEET_NAME_RE):
+            xml = read(name)
+            if xml is None:
+                continue
+            lines = _xlsx_sheet_lines(xml, shared)
+            if not lines:
+                continue
+            title = sheet_names.get(name)
+            block = "\n".join(([f"[{title}]"] if title else []) + lines)
+            blocks.append(block)
+            total += len(block)
+            if total >= max_chars:
+                break
+        return "\n\n".join(blocks).strip() or None
+    except Exception as exc:
+        logger.warning("attachment_processor: xlsx extraction failed (%s)", type(exc).__name__)
+        return None
+
+
+def _extract_odf(data: bytes) -> Optional[str]:
+    """OpenDocument text, spreadsheet or presentation (content.xml)."""
+    try:
+        _, read = _open_office_zip(data)
+        xml = read("content.xml")
+        if not xml:
+            return None
+        xml = _ODF_DROP_RE.sub(" ", xml)
+        xml = _ODF_CELL_END_RE.sub(" | ", xml)
+        xml = _ODF_BREAK_RE.sub("\n", xml)
+        xml = _ODF_TAB_RE.sub("\t", xml)
+        xml = _ODF_SPACE_RE.sub(" ", xml)
+        text = unescape(_XML_TAG_RE.sub("", xml))
+        lines = []
+        for line in text.splitlines():
+            cells = [cell.strip() for cell in line.split(" | ")]
+            joined = " | ".join(cell for cell in cells if cell)
+            if joined:
+                lines.append(joined)
+        return "\n".join(lines).strip() or None
+    except Exception as exc:
+        logger.warning("attachment_processor: opendocument extraction failed (%s)", type(exc).__name__)
+        return None
+
+
+# RTF groups whose content is not text (fonts, colours, styles, embedded pictures, ...).
+_RTF_SKIPPED_DESTINATIONS = frozenset({
+    "fonttbl", "colortbl", "stylesheet", "info", "pict", "object", "themedata",
+    "colorschememapping", "latentstyles", "datastore", "listtable", "listoverridetable",
+    "rsidtbl", "generator", "xmlnstbl", "fldinst", "header", "headerl", "headerr", "headerf",
+    "footer", "footerl", "footerr", "footerf",
+})
+_RTF_WORD_TEXT = {
+    "par": "\n", "line": "\n", "sect": "\n", "page": "\n", "row": "\n", "tab": "\t", "cell": " | ",
+    "emdash": "\u2014", "endash": "\u2013", "bullet": "\u2022",
+    "lquote": "\u2018", "rquote": "\u2019", "ldblquote": "\u201c", "rdblquote": "\u201d",
+}
+_RTF_SYMBOL_TEXT = {"\\": "\\", "{": "{", "}": "}", "~": " ", "_": "-", "-": "", "\n": "\n", "\r": "\n"}
+_RTF_SPECIAL_RE = re.compile(r"[{}\\]")
+_RTF_CONTROL_RE = re.compile(r"\\(?:([a-zA-Z]{1,32})(-?\d{1,10})? ?|'([0-9a-fA-F]{2})|([^a-zA-Z]))", re.DOTALL)
+
+
+def _rtf_to_text(rtf: str, max_chars: int) -> str:
+    """Plain text of an RTF document: control words dropped, \\'hh and \\uN decoded,
+    non-text groups (fonts, pictures, {\\*...} destinations) skipped."""
+    out: list[str] = []
+    length = 0
+    stack: list[tuple[bool, int]] = []
+    skip = False
+    unicode_skip = 1       # \ucN: characters that follow a \uN as its ANSI fallback
+    pending_skip = 0
+    just_opened = False
+    index, size = 0, len(rtf)
+    while index < size and length < max_chars:
+        char = rtf[index]
+        if char == "{":
+            stack.append((skip, unicode_skip))
+            just_opened = True
+            index += 1
+            continue
+        if char == "}":
+            if stack:
+                skip, unicode_skip = stack.pop()
+            just_opened = False
+            index += 1
+            continue
+        if char != "\\":
+            special = _RTF_SPECIAL_RE.search(rtf, index)
+            end = special.start() if special else size
+            run = rtf[index:end]
+            index = end
+            just_opened = False
+            if skip:
+                continue
+            if pending_skip:
+                cut = min(pending_skip, len(run))
+                run, pending_skip = run[cut:], pending_skip - cut
+            run = run.replace("\r", "").replace("\n", "")
+            out.append(run)
+            length += len(run)
+            continue
+
+        match = _RTF_CONTROL_RE.match(rtf, index)
+        if match is None:  # a lone backslash at the end
+            break
+        index = match.end()
+        word, number, hex_value, symbol = match.groups()
+        text = ""
+        if word:
+            if just_opened and word in _RTF_SKIPPED_DESTINATIONS:
+                skip = True
+            elif word == "uc":
+                unicode_skip = int(number) if number else 1
+            elif word == "u" and number and not skip:
+                code = int(number)
+                text = chr(code + 65536 if code < 0 else code)
+                pending_skip = unicode_skip
+            elif not skip:
+                text = _RTF_WORD_TEXT.get(word, "")
+        elif hex_value is not None:
+            if pending_skip:
+                pending_skip -= 1
+            elif not skip:
+                text = bytes([int(hex_value, 16)]).decode("cp1252", errors="replace")
+        elif symbol == "*":
+            if just_opened:
+                skip = True
+        elif not skip:
+            text = _RTF_SYMBOL_TEXT.get(symbol, "")
+        if symbol != "*":
+            just_opened = False
+        if text:
+            out.append(text)
+            length += len(text)
+    return "".join(out)
+
+
+def _extract_rtf(data: bytes, max_chars: int) -> Optional[str]:
+    try:
+        text = _rtf_to_text(_decode_text(data), max_chars)
+        # \uN writes characters above U+FFFF as two surrogate halves: join the pairs, and
+        # replace a lone half (it cannot be stored in UTF-8, so PostgreSQL would reject it).
+        text = text.encode("utf-16", "surrogatepass").decode("utf-16", errors="replace")
+    except Exception as exc:
+        logger.warning("attachment_processor: rtf extraction failed (%s)", type(exc).__name__)
+        return None
+    lines = [" ".join(line.split()) for line in text.replace("\u00a0", " ").splitlines()]
+    return "\n".join(line for line in lines if line).strip() or None
+
+
+def _extract_eml(data: bytes) -> Optional[str]:
+    """A forwarded or saved e-mail: Subject/From/To/Date headers + the readable body."""
+    try:
+        message = BytesParser(policy=email_policy.default).parsebytes(data)
+        headers = [f"{name}: {message[name]}" for name in ("Subject", "From", "To", "Date") if message[name]]
+        body = message.get_body(preferencelist=("plain", "html"))
+        content = body.get_content() if body is not None else ""
+        if body is not None and body.get_content_type() == "text/html":
+            content = html_to_text(content)
+        return "\n".join(headers + ([""] if headers and content else []) + [content.strip()]).strip() or None
+    except Exception as exc:
+        logger.warning("attachment_processor: eml extraction failed (%s)", type(exc).__name__)
+        return None
+
+
 def _extract_image_ocr(data: bytes) -> Optional[str]:
     try:
         import pytesseract
@@ -226,6 +571,18 @@ def _extract_image_ocr(data: bytes) -> Optional[str]:
         return None
 
 
+def _is_office_or_mail_type(mime: str, ext: str) -> bool:
+    """PPTX, XLSX, OpenDocument, RTF and EML. Checked before the text/* rule:
+    text/rtf starts with "text/" but is not plain text."""
+    return (
+        "presentationml" in mime or ext in PPTX_EXTENSIONS
+        or "spreadsheetml" in mime or ext in XLSX_EXTENSIONS
+        or "opendocument" in mime or ext in ODF_EXTENSIONS
+        or "rtf" in mime or ext in RTF_EXTENSIONS
+        or mime == "message/rfc822" or ext in EML_EXTENSIONS
+    )
+
+
 def can_extract_text(mime_type: str, filename: str) -> bool:
     """True when extract_text has an extractor for this type, so ingestion does not
     download files it cannot read. Mirrors the routing in extract_text; images count
@@ -238,6 +595,8 @@ def can_extract_text(mime_type: str, filename: str) -> bool:
         return True
     if "msword" in mime or ext == ".doc":
         return False
+    if _is_office_or_mail_type(mime, ext):
+        return True
     if mime == "text/html" or ext in HTML_EXTENSIONS:
         return True
     if mime.startswith("text/") or ext in TEXT_EXTENSIONS:
@@ -271,6 +630,16 @@ def extract_text(
         # Legacy binary Word: python-docx cannot read it (decision A22).
         logger.info("attachment_processor: legacy .doc not supported yet")
         return None
+    if "presentationml" in mime or ext in PPTX_EXTENSIONS:
+        return _extract_pptx(data, max_chars)
+    if "spreadsheetml" in mime or ext in XLSX_EXTENSIONS:
+        return _extract_xlsx(data, max_chars)
+    if "opendocument" in mime or ext in ODF_EXTENSIONS:
+        return _extract_odf(data)
+    if "rtf" in mime or ext in RTF_EXTENSIONS:
+        return _extract_rtf(data, max_chars)
+    if mime == "message/rfc822" or ext in EML_EXTENSIONS:
+        return _extract_eml(data)
     if mime == "text/html" or ext in HTML_EXTENSIONS:
         return _extract_html(data)
     if mime.startswith("text/") or ext in TEXT_EXTENSIONS:
