@@ -4,6 +4,7 @@ Echo Personal Memory System
 
     POST /chrome/ingest          the extension sends one page after ITS intent gate passes
     POST /chrome/revisit-check   the extension asks "was this URL seen in the last 24 h?"
+    GET  /chrome/rules           the one copy of the lists the extension needs (A9.5)
 
 The extension (extension/background.js) already canonicalizes the URL, skips
 incognito / sensitive / GitHub issue pages and runs the same two-phase intent
@@ -33,9 +34,10 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/chrome", tags=["Chrome Connector"])
 
-# The four lists below MUST match extension/background.js (and the sensitive
-# terms also extension/content/chrome_tracker.js). If they drift, the extension
-# and the server disagree about which pages exist.
+# The sensitive-term and secret-key lists below, and the app-domain lists in
+# intent_filter.py, are served to the extension by GET /chrome/rules (A9.5): the
+# extension keeps no copy of its own. IGNORED_QUERY_PARAMS and
+# APPLICATION_PATH_PREFIXES are still duplicated in extension/background.js.
 
 # Tracking parameters stripped from the URL, so the same article reached from a
 # newsletter, Facebook or Google Ads is one row (UNIQUE(source_type, source_id)).
@@ -223,7 +225,9 @@ def _discard(reason: str, domain: str) -> dict:
 def ingest_chrome_page(payload: ChromeIngestRequest):
     payload.canonical_url = payload.canonical_url or canonicalize_url(payload.url)
     payload.domain = extract_domain(payload.canonical_url) or extract_domain(payload.url) or payload.domain.strip().lower()
-    payload.is_app_page = payload.is_app_page or intent_filter.is_application_page(payload.domain)
+    payload.is_app_page = payload.is_app_page or intent_filter.is_application_page(
+        payload.domain, urlparse(payload.canonical_url).path
+    )
 
     # Cheapest and strictest checks first; the order also decides which
     # reason is reported when several apply.
@@ -289,6 +293,21 @@ def ingest_chrome_page(payload: ChromeIngestRequest):
         "status": "saved",
         "memory_id": str(saved["memory_id"]),
         "mode": "engagement_only" if payload.is_app_page else "content_and_engagement",
+    }
+
+
+@router.get("/rules")
+def chrome_rules():
+    """The lists the extension needs to decide what to read: app domains with
+    their public sections (A9.3), the sensitive words, the secret query keys.
+    Static data, no database or Redis access. Sorted, so the answer is stable."""
+    return {
+        "app_domains": sorted(intent_filter.APPLICATION_DOMAINS),
+        "public_paths": sorted(intent_filter.PUBLIC_PATHS),
+        "public_subdomains": sorted(intent_filter.PUBLIC_SUBDOMAINS),
+        "public_subdomain_exceptions": sorted(intent_filter.PUBLIC_SUBDOMAIN_EXCEPTIONS),
+        "sensitive_terms": sorted(SENSITIVE_PATH_SET),
+        "secret_query_params": sorted(SECRET_QUERY_PARAMS),
     }
 
 

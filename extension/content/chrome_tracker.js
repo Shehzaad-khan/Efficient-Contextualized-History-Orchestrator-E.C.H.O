@@ -19,8 +19,9 @@
  *   - sensitive URLs (login, payment, account ...)
  *   - pages with private form fields (password / email / phone inputs, or 5+
  *     data-entry fields)
- * The app-domain and sensitive-term lists are the third copy of the same lists;
- * they MUST match background.js and ingestion/chrome/ (decisions A7, A9).
+ * The app-domain and sensitive-term lists are NOT kept here: background.js
+ * fetches them from GET /chrome/rules into chrome.storage.local (A9.5) and this
+ * script reads them from there. Until they have loaded it extracts no text.
  *
  * Incognito: skipped here as a first line of defence; background.js re-checks
  * sender.tab.incognito, which is the authoritative gate.
@@ -48,55 +49,41 @@
     "nav, aside, footer, form, [role='navigation'], [role='complementary'], [aria-hidden='true']";
   const PRIVATE_FORM_FIELD_COUNT = 5;
 
-  const APP_DOMAINS = [
-    "slack.com",
-    "atlassian.net",
-    "notion.so",
-    "figma.com",
-    "linear.app",
-    "trello.com",
-    "asana.com"
-  ];
-  const SENSITIVE_PATH_TERMS = new Set([
-    "2fa",
-    "account",
-    "accounts",
-    "admin",
-    "auth",
-    "bank",
-    "banking",
-    "billing",
-    "callback",
-    "cart",
-    "checkout",
-    "dashboard",
-    "inbox",
-    "invoice",
-    "invoices",
-    "login",
-    "logout",
-    "messages",
-    "mfa",
-    "netbanking",
-    "oauth",
-    "orders",
-    "otp",
-    "password",
-    "payment",
-    "payments",
-    "profile",
-    "recover",
-    "recovery",
-    "reset",
-    "settings",
-    "signin",
-    "signup",
-    "sso",
-    "upi",
-    "verification",
-    "verify",
-    "wallet"
-  ]);
+  // Server rules (A9.5), parsed from chrome.storage.local. null = not loaded yet:
+  // fail closed, no text is read and no page is called public.
+  const RULES_KEY = "echo_chrome_rules";
+  let rules = null;
+
+  function parseRules(raw) {
+    if (!raw || typeof raw !== "object") return null;
+    const list = (value) =>
+      Array.isArray(value) && value.every((item) => typeof item === "string")
+        ? value.map((item) => item.toLowerCase())
+        : null;
+    const appDomains = list(raw.app_domains);
+    const publicPaths = list(raw.public_paths);
+    const publicSubdomains = list(raw.public_subdomains);
+    const exceptions = list(raw.public_subdomain_exceptions);
+    const sensitiveTerms = list(raw.sensitive_terms);
+    // An empty sensitive list would switch the check off, so it is invalid.
+    if (!appDomains || !publicPaths || !publicSubdomains || !exceptions || !sensitiveTerms || sensitiveTerms.length === 0) {
+      return null;
+    }
+    return {
+      appDomains,
+      publicPaths: new Set(publicPaths),
+      publicSubdomains: new Set(publicSubdomains),
+      publicSubdomainExceptions: new Set(exceptions),
+      sensitiveTerms: new Set(sensitiveTerms)
+    };
+  }
+
+  function applyRules(raw) {
+    rules = parseRules(raw);
+    // A cached empty/old extract must be recomputed under the new rules.
+    extractedForUrl = null;
+    cachedExtract = "";
+  }
 
   // Non-data-entry controls. Counting these towards the "looks like a form"
   // heuristic below made ordinary article pages register as private form
@@ -139,13 +126,28 @@
     return (text || "").trim().split(/\s+/).filter(Boolean).length;
   }
 
+  /** Same rule as background.js isAppPageUrl and intent_filter.is_application_page
+   *  (A9.3): an app domain, minus its public sections. */
   function detectApplicationPage() {
+    if (!rules) return false;
     const host = window.location.hostname.toLowerCase();
-    return APP_DOMAINS.some((domain) => host === domain || host.endsWith(`.${domain}`));
+    const matched = rules.appDomains.find((domain) => host === domain || host.endsWith(`.${domain}`));
+    if (!matched) return false;
+    if (
+      host !== matched &&
+      !rules.publicSubdomainExceptions.has(matched) &&
+      rules.publicSubdomains.has(host.split(".")[0])
+    ) {
+      return false;
+    }
+    const firstPiece = window.location.pathname.replace(/^\/+/, "").split("/")[0].toLowerCase();
+    return !rules.publicPaths.has(firstPiece);
   }
 
   /** Same rule as background.js isSensitiveChromeUrl (A7.1 + A7.2). */
   function detectSensitivePage() {
+    if (!rules) return true;
+    const SENSITIVE_PATH_TERMS = rules.sensitiveTerms;
     try {
       const target = `${window.location.hostname}${window.location.pathname}`.toLowerCase();
       const tokens = target.split(/[/_\-.]+/).filter(Boolean);
@@ -223,7 +225,7 @@
   }
 
   function extractReadableContent() {
-    if (detectApplicationPage() || detectSensitivePage() || hasPrivateFormSurface()) {
+    if (!rules || detectApplicationPage() || detectSensitivePage() || hasPrivateFormSurface()) {
       return "";
     }
 
@@ -324,6 +326,17 @@
     }
     hadSelection = hasSelection;
   });
+
+  try {
+    chrome.storage.local.get({ [RULES_KEY]: null }, (stored) => {
+      if (!chrome.runtime.lastError) applyRules(stored[RULES_KEY]);
+    });
+    chrome.storage.onChanged.addListener((changes, area) => {
+      if (area === "local" && changes[RULES_KEY]) applyRules(changes[RULES_KEY].newValue);
+    });
+  } catch (error) {
+    // No storage access: rules stay null and no text is read.
+  }
 
   computeScrollDepth();
   intervalId = setInterval(() => sendSignal("CHROME_PAGE_SIGNAL"), SIGNAL_INTERVAL_MS);

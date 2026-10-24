@@ -11,9 +11,10 @@
  * 2. The Chrome page intent gate (architecture §6.2), run here per tab:
  *    Phase 1: tab in the foreground >= 5 s -> ask /chrome/revisit-check
  *    Phase 2: one of >= 10 s, scroll >= 15 %, >= 1 interaction, or a revisit
- *    Pass -> one POST /chrome/ingest per page. The thresholds and the
- *    app-domain / sensitive-term lists MUST match ingestion/chrome/
- *    intent_filter.py and chrome_connector.py, which re-check every page.
+ *    Pass -> one POST /chrome/ingest per page. The thresholds MUST match
+ *    ingestion/chrome/intent_filter.py, which re-checks every page. The
+ *    app-domain and sensitive-term lists are not kept here: they come from
+ *    GET /chrome/rules (A9.5, see "Capture rules" below).
  *    Dwell time is counted here (1 s ticks, active tab of the focused window,
  *    user not idle). chrome_tracker.js adds scroll depth, interactions and the
  *    readable text through CHROME_PAGE_SIGNAL every 5 s, and
@@ -55,57 +56,7 @@ let windowFocused = true;
 let userIdle = false;
 let currentActiveChromeTabId = null;
 
-const CHROME_APPLICATION_DOMAINS = [
-  "slack.com",
-  "atlassian.net",
-  "notion.so",
-  "figma.com",
-  "linear.app",
-  "trello.com",
-  "asana.com"
-];
-
 const CHROME_APPLICATION_PATH_SNIPPETS = ["github.com/issues", "github.com/pulls"];
-const CHROME_SENSITIVE_PATH_TERMS = new Set([
-  "2fa",
-  "account",
-  "accounts",
-  "admin",
-  "auth",
-  "bank",
-  "banking",
-  "billing",
-  "callback",
-  "cart",
-  "checkout",
-  "dashboard",
-  "inbox",
-  "invoice",
-  "invoices",
-  "login",
-  "logout",
-  "messages",
-  "mfa",
-  "netbanking",
-  "oauth",
-  "orders",
-  "otp",
-  "password",
-  "payment",
-  "payments",
-  "profile",
-  "recover",
-  "recovery",
-  "reset",
-  "settings",
-  "signin",
-  "signup",
-  "sso",
-  "upi",
-  "verification",
-  "verify",
-  "wallet"
-]);
 const CHROME_IGNORED_QUERY_PARAMS = new Set([
   "utm_source",
   "utm_medium",
@@ -140,17 +91,18 @@ async function isTrackingPaused() {
   return Boolean(stored[PAUSE_KEY]);
 }
 
-/** The single exit point for captured data. Keep every new network path behind it. */
-async function postToBackend(endpoint, payload) {
+/** The single exit point for data to the backend. Keep every new network path behind it.
+ *  `method` "GET" (the capture rules, no body) is the only other kind so far. */
+async function postToBackend(endpoint, payload, method = "POST") {
   if (await isTrackingPaused()) {
     return { paused: true };
   }
 
-  const response = await fetch(`${BACKEND_URL}${endpoint}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload)
-  });
+  const options =
+    method === "GET"
+      ? { method }
+      : { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) };
+  const response = await fetch(`${BACKEND_URL}${endpoint}`, options);
 
   if (!response.ok) {
     throw new Error(`Backend returned ${response.status} for ${endpoint}`);
@@ -159,10 +111,104 @@ async function postToBackend(endpoint, payload) {
   return response.json();
 }
 
+// ── Capture rules (A9.5) ─────────────────────────────────────────────────────
+// The app-domain and sensitive-word lists live only on the server. They are
+// fetched from GET /chrome/rules into chrome.storage.local (chrome_tracker.js
+// reads them from there). There is no built-in copy: until the rules are known
+// every Chrome page is skipped, so nothing is captured with a missing list.
+
+const RULES_KEY = "echo_chrome_rules";
+const RULES_RETRY_DELAY_MS = 30000;
+let chromeRules = null; // parsed rules; null = not loaded
+let rulesLoading = null;
+let rulesNextFetchAt = 0;
+
+function parseChromeRules(raw) {
+  if (!raw || typeof raw !== "object") {
+    return null;
+  }
+  const list = (value) =>
+    Array.isArray(value) && value.every((item) => typeof item === "string")
+      ? value.map((item) => item.toLowerCase())
+      : null;
+  const appDomains = list(raw.app_domains);
+  const publicPaths = list(raw.public_paths);
+  const publicSubdomains = list(raw.public_subdomains);
+  const exceptions = list(raw.public_subdomain_exceptions);
+  const sensitiveTerms = list(raw.sensitive_terms);
+  // An empty sensitive list would switch the check off, so it is invalid.
+  if (!appDomains || !publicPaths || !publicSubdomains || !exceptions || !sensitiveTerms || sensitiveTerms.length === 0) {
+    return null;
+  }
+  return {
+    appDomains,
+    publicPaths: new Set(publicPaths),
+    publicSubdomains: new Set(publicSubdomains),
+    publicSubdomainExceptions: new Set(exceptions),
+    sensitiveTerms: new Set(sensitiveTerms)
+  };
+}
+
+/** Ask the server for the rules and keep them. A failed or invalid answer keeps
+ *  what is already known. Goes through postToBackend, so a paused extension
+ *  fetches nothing. */
+async function fetchChromeRules() {
+  rulesNextFetchAt = Date.now() + RULES_RETRY_DELAY_MS;
+  try {
+    const raw = await postToBackend("/chrome/rules", null, "GET");
+    if (raw.paused) {
+      return;
+    }
+    const parsed = parseChromeRules(raw);
+    if (!parsed) {
+      throw new Error("invalid rules answer");
+    }
+    chromeRules = parsed;
+    await chrome.storage.local.set({ [RULES_KEY]: raw });
+  } catch (error) {
+    console.warn("[Echo background] Chrome rules not fetched:", error.message);
+  }
+}
+
+/** Resolve once the rules are in memory (or known to be unavailable). Reads
+ *  storage first; fetches only when storage is empty, at most once per 30 s. */
+function ensureChromeRules() {
+  if (chromeRules) {
+    return Promise.resolve(chromeRules);
+  }
+  if (!rulesLoading) {
+    rulesLoading = (async () => {
+      try {
+        const stored = await chrome.storage.local.get({ [RULES_KEY]: null });
+        chromeRules = parseChromeRules(stored[RULES_KEY]);
+      } catch (error) {
+        chromeRules = null; // storage unreadable: stay closed
+      }
+      if (!chromeRules && Date.now() >= rulesNextFetchAt) {
+        await fetchChromeRules();
+      }
+      return chromeRules;
+    })().finally(() => {
+      rulesLoading = null;
+    });
+  }
+  return rulesLoading;
+}
+
+// A fresh copy once per browser start / install / update. Between those, the
+// stored copy is used.
+chrome.runtime.onStartup.addListener(fetchChromeRules);
+chrome.runtime.onInstalled.addListener(fetchChromeRules);
+
 // ── URL checks ───────────────────────────────────────────────────────────────
 
 function shouldSkipChromeUrl(url, incognito = false) {
   if (!url || incognito) {
+    return true;
+  }
+
+  // No rules yet: skip everything rather than capture with a missing list (A9.5).
+  if (!chromeRules) {
     return true;
   }
 
@@ -204,8 +250,32 @@ function canonicalizeChromeUrl(rawUrl) {
   }
 }
 
-function isAppDomain(host) {
-  return CHROME_APPLICATION_DOMAINS.some((domain) => host === domain || host.endsWith(`.${domain}`));
+/** A private app page (A9.3): an app domain, minus its public sections (help,
+ *  blog, docs ... as first path piece; help., docs. ... as first host label).
+ *  Same rule as intent_filter.is_application_page and chrome_tracker.js. */
+function isAppPageUrl(url) {
+  if (!chromeRules) {
+    return false;
+  }
+  try {
+    const { hostname, pathname } = new URL(url);
+    const host = hostname.toLowerCase();
+    const matched = chromeRules.appDomains.find((domain) => host === domain || host.endsWith(`.${domain}`));
+    if (!matched) {
+      return false;
+    }
+    if (
+      host !== matched &&
+      !chromeRules.publicSubdomainExceptions.has(matched) &&
+      chromeRules.publicSubdomains.has(host.split(".")[0])
+    ) {
+      return false;
+    }
+    const firstPiece = pathname.replace(/^\/+/, "").split("/")[0].toLowerCase();
+    return !chromeRules.publicPaths.has(firstPiece);
+  } catch (error) {
+    return false;
+  }
 }
 
 /** Whole-token sensitive-page check with the 38-word list (A7.1 + A7.2).
@@ -213,6 +283,10 @@ function isAppDomain(host) {
  *  Also checks path segments with separators removed (e.g. 'sign-in' -> 'signin')
  *  and query keys. */
 function isSensitiveChromeUrl(url) {
+  if (!chromeRules) {
+    return true;
+  }
+  const CHROME_SENSITIVE_PATH_TERMS = chromeRules.sensitiveTerms;
   try {
     const parsed = new URL(url);
     const target = `${parsed.hostname}${parsed.pathname}`.toLowerCase();
@@ -275,7 +349,7 @@ function newChromePageState(url, canonicalUrl, title) {
     contentExtract: "",
     wordCount: 0,
     referrer: "",
-    isAppPage: isAppDomain(domain)
+    isAppPage: isAppPageUrl(canonicalUrl)
   };
 }
 
@@ -488,6 +562,7 @@ async function trackActiveTabOfWindow(query) {
     // overwrite a tab that a newer event has already set.
     if (tab) {
       currentActiveChromeTabId = tab.id;
+      await ensureChromeRules();
       ensureChromeTabState(tab);
     }
   } catch (error) {
@@ -501,7 +576,9 @@ trackActiveTabOfWindow({ lastFocusedWindow: true });
 chrome.tabs.onActivated.addListener(async ({ tabId }) => {
   currentActiveChromeTabId = tabId;
   try {
-    ensureChromeTabState(await chrome.tabs.get(tabId));
+    const tab = await chrome.tabs.get(tabId);
+    await ensureChromeRules();
+    ensureChromeTabState(tab);
   } catch (error) {
     // The tab closed before we could read it.
     console.warn("[Echo background] Activated tab not readable:", error.message);
@@ -527,10 +604,11 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   retireChromeTab(tabId);
 });
 
-chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   // changeInfo.url covers single-page-app navigation, which may never
   // reach status "complete" again.
   if (changeInfo.status === "complete" || changeInfo.url) {
+    await ensureChromeRules();
     ensureChromeTabState(tab);
     if (tab.active) {
       currentActiveChromeTabId = tabId;
@@ -603,7 +681,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false;
   }
 
-  if (message.type === "CHROME_PAGE_SIGNAL" || message.type === "CHROME_PAGE_UNLOAD") {
+  if (message.type === "CHROME_PAGE_SIGNAL") {
+    // A page signal may be what woke the worker: make sure the rules are in
+    // memory before the page is judged.
+    ensureChromeRules().then(() => handleChromePageMessage(message, sender, sendResponse));
+    return true;
+  }
+  if (message.type === "CHROME_PAGE_UNLOAD") {
     return handleChromePageMessage(message, sender, sendResponse);
   }
   return relayToBackend(message, sendResponse);

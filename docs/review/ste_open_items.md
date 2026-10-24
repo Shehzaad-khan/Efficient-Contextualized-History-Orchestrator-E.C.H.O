@@ -269,6 +269,28 @@ Still open — decide each:
   (app domains, public paths + subdomains, sensitive words, secret query keys); `background.js` fetches at startup
   into `chrome.storage`; `chrome_tracker.js` reads it from there. Build detail: until the rules have loaded, the
   content script extracts no text (fail closed); no built-in fallback list (backend down = nothing stored anyway).
+- **A9.3 + A9.5 built 2026-10-24 (cloud session):**
+  - Server (`ingestion/chrome/intent_filter.py`): `PUBLIC_PATHS` (the 38), `PUBLIC_SUBDOMAINS` (the 10), `PUBLIC_SUBDOMAIN_EXCEPTIONS`
+    (`atlassian.net`) and `is_application_page(domain, path="")`; `chrome_connector.py` passes the URL path and serves
+    `GET /chrome/rules` = `app_domains`, `public_paths`, `public_subdomains`, `public_subdomain_exceptions`, `sensitive_terms`,
+    `secret_query_params` (static, sorted, no DB / Redis).
+  - Extension: the literal app-domain and sensitive-word lists are DELETED from `background.js` and `chrome_tracker.js`
+    (the A9.4 "three lists" note above is superseded). `background.js` fetches the rules through `postToBackend(..., "GET")`
+    (so the pause flag still gates it) on browser start / install, and also when storage holds none (at most every 30 s), keeps
+    them in `chrome.storage.local.echo_chrome_rules`; `chrome_tracker.js` reads them from there and watches `storage.onChanged`.
+    Fail closed: with no rules `shouldSkipChromeUrl` skips every page and the content script extracts no text.
+    `secret_query_params` is served but the extension does not use it (the server strips them).
+  - Still duplicated by hand (not in the A9.5 list): `CHROME_APPLICATION_PATH_SNIPPETS` (GitHub skip) and
+    `CHROME_IGNORED_QUERY_PARAMS` in `background.js` vs `chrome_connector.py`.
+  - Checked: `is_application_page` on 21 cases (private app page, `/help` `/blog` `/pricing` public, `help.` `blog.` `status.`
+    public subdomain, `docs.atlassian.net` stays private, `notslack.com`, empty); `GET /chrome/rules` and `POST /chrome/ingest`
+    through FastAPI's test client with DB / Redis stubbed. End to end in headless Chromium with the REAL unpacked extension
+    against the real router (stubbed storage): rules arrive in `chrome.storage.local`; a normal article is saved with text and
+    `## ` headings (A13); `slack.com/help/articles/1` is saved as a normal page with text; `app.slack.com/...` and
+    `acme.atlassian.net/wiki/...` are saved engagement-only; `/login` is never sent. With `/chrome/rules` answering 503 nothing
+    is saved (fail closed). Not run: the live Postgres / Redis, a long-lived worker restart, Settings > pause while fetching.
+  - Behaviour to know: a SPA like Notion/Slack keeps one URL per canonical page, so the app-page flag is decided per page;
+    a Chrome restart with the backend down means no capture until the backend is up (the next signal or tab event retries).
 - **Decision:** A9 fully decided 2026-10-21 (A9.1–A9.5).
 
 ### A10. A brief (< 5 s) visit never counts as a revisit — doc conflict — [x] decided 2026-10-21 (found 2026-10-17) — DISCUSS AT THE END
