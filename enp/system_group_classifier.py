@@ -83,7 +83,7 @@ ENTERTAINMENT_DOMAINS = [
 # Stage 2: domain -> category for Chrome pages. Matched on the host and every
 # parent domain (docs.python.org -> python.org). Keys are host names only: the
 # URL path is not looked at, so a "site.com/section" key could never match.
-# Coverage is small (decision A17).
+# Coverage is small and grown by hand (decision A17; extended 2026-10-24).
 DOMAIN_CATEGORY_MAP = {
     # STUDY DOMAINS
     "geeksforgeeks.org": "study",
@@ -226,6 +226,42 @@ DOMAIN_CATEGORY_MAP = {
     "deviantart.com": "entertainment",
     "artstation.com": "entertainment",
     "behance.net": "entertainment",
+    # A17 hand-extension (2026-10-24), from the misses of the 2026-10-17 simulation of
+    # typical domains. Ambiguous hosts (chatgpt.com, claude.ai, docs.google.com, news
+    # sites) are left out on purpose, like medium.com: they go to Stage 3 / Stage 4.
+    # study
+    "kaggle.com": "study",
+    "huggingface.co": "study",
+    "javatpoint.com": "study",
+    "tutorialspoint.com": "study",
+    "programiz.com": "study",
+    "realpython.com": "study",
+    "baeldung.com": "study",
+    # work (career and job search)
+    "linkedin.com": "work",
+    "naukri.com": "work",
+    "internshala.com": "work",
+    "indeed.com": "work",
+    # entertainment
+    "hotstar.com": "entertainment",
+    "jiocinema.com": "entertainment",
+    "sonyliv.com": "entertainment",
+    "zee5.com": "entertainment",
+    "bookmyshow.com": "entertainment",
+    "cricbuzz.com": "entertainment",
+    "espncricinfo.com": "entertainment",
+    # personal (shopping, food, travel, money)
+    "amazon.in": "personal",
+    "amazon.com": "personal",
+    "flipkart.com": "personal",
+    "myntra.com": "personal",
+    "swiggy.com": "personal",
+    "zomato.com": "personal",
+    "irctc.co.in": "personal",
+    "makemytrip.com": "personal",
+    "redbus.in": "personal",
+    "zerodha.com": "personal",
+    "paytm.com": "personal",
 }
 
 SEED_TEXTS = {

@@ -86,7 +86,7 @@ Summary: 45 decisions · 5 live-DB repairs · 29 cross-file fixes · 5 build ite
   - Limit: semantic sees only each attachment's start; deep content is found by keyword only.
   - Build: B5 (Thursday re-embed) must also extract + backfill attachments for the test mailbox.
 
-### A5. Replace Gmail polling with something incremental — [x] decided 2026-10-21 (found 2026-10-15, `gmail_api.py`) — DISCUSS AT THE END
+### A5. Replace Gmail polling with something incremental — [x] decided 2026-10-21, built 2026-10-24 (found 2026-10-15, `gmail_api.py`) — DISCUSS AT THE END
 - **Today:** every 30 s, `fetch_and_store_new_emails` pages through ALL message ids in the mailbox (100 per
   Gmail call). The DB check is now batched, but a 10,000-email mailbox is still 100 Gmail list calls per poll,
   forever, even when nothing arrived.
@@ -110,16 +110,32 @@ Summary: 45 decisions · 5 live-DB repairs · 29 cross-file fixes · 5 build ite
   changes since the saved `historyId` (Redis key `echo:gmail:history_id`). Fallback: on 404 (id too old) or a
   missing key, one full listing, then save the new id. Dedup (`UNIQUE(source_type, source_id)`) makes the fallback
   safe. Why not the webhook: needs GCP Pub/Sub + a tunnel, and puts a cloud piece in the local privacy story.
+- **Built 2026-10-24 (cloud session):** `ingestion/gmail/gmail_api.py` (`_list_new_ids_from_history`, `_current_history_id`,
+  `fetch_and_store_new_emails`) + `ste/redis_manager.py` (`get_gmail_history_id` / `set_gmail_history_id`, key
+  `echo:gmail:history_id`, no TTL; Redis down = full listing, one WARNING per outage).
+  - History call: `historyTypes=["messageAdded"]`, 500 per page, no retry on 404 (`_call_with_backoff(..., no_retry_statuses)`).
+  - Full listing (no key, Redis down, or 404) reads `getProfile().historyId` BEFORE listing.
+  - The id moves forward only when every new email of the poll is in the DB (re-queried; `store_in_postgresql` cannot tell a
+    duplicate from an error). A failed store keeps the old id, so the next poll sees the same window again.
+  - Excluded-sender mail: ids kept in `_excluded_ids` are re-checked each poll, so un-excluding still captures them. After a
+    backend restart that memory is gone, and mail from before the saved id is no longer re-listed (the old full listing
+    re-fetched it): un-excluding a sender does not bring back its OLD mail. Accepted.
+  - Not covered: mail moved OUT of Spam later (no `messageAdded` for it); a label-only change. Accepted.
+  - Checked on a mock Gmail service (9 scenarios: first full sync, idle poll = one call, new mail with spam/trash/sent, store
+    failure then retry, 404 fallback without a sleep, Redis down, excluded then un-excluded sender, mail trashed before the
+    fetch, draft) and on the Redis helpers with a fake client. NOT checked against the real Gmail API: the field names
+    (`history[].messagesAdded[].message.labelIds`, response `historyId`) are from the API docs/memory, so run one live poll
+    and look for "Gmail poll (history)" in `logs/echo.log`.
 
-### A6. Gmail HTML/body cleaning gaps — [x] decided 2026-10-21 (found 2026-10-15, `gmail_api.py`) — DISCUSS AT THE END
+### A6. Gmail HTML/body cleaning gaps — [x] decided 2026-10-21, A6.1 + A6.2 built (found 2026-10-15, `gmail_api.py`) — DISCUSS AT THE END
 Fixed already: HTML keeps line breaks (ENP can now strip quotes/signatures), script/style/head/comments/
 tracking pixels removed, entities and zero-width characters cleaned, charset honoured, drafts skipped.
 Still open — decide each:
-- [ ] **Hidden preview text.** Marketing mail hides a preview line in a `display:none` span; it survives into
+- [x] **Hidden preview text.** Marketing mail hides a preview line in a `display:none` span; it survives into
       `raw_text` and the embedding. Fix: drop hidden elements with BeautifulSoup (as ENP's pixel remover does).
-- [ ] **Body split into several text parts.** Some mail apps split one body around an inline image; only the
+- [x] **Body split into several text parts.** Some mail apps split one body around an inline image; only the
       first text part is kept. Fix: join all non-attachment text parts inside `multipart/mixed`.
-- [ ] **Signature logos counted as attachments.** Inline images (`logo.png`, `Content-ID`) are stored in
+- [x] **Signature logos counted as attachments.** Inline images (`logo.png`, `Content-ID`) are stored in
       `gmail_attachments`. Fix: skip inline images under a size limit, or mark them. Affects D2.
 - **Decision (2026-10-21):**
   1. Hidden preview text: **drop hidden elements** — BeautifulSoup in `_html_to_text` removes elements whose inline
@@ -127,6 +143,18 @@ Still open — decide each:
   2. Split body: **join all body text parts in order**; inside multipart/alternative pick one (plain, else HTML);
      parts with a filename stay attachments; test a forwarded (nested message) mail so nothing is joined twice.
   3. Signature logos: already settled by A22 (skip inline logos).
+- **Built (his, verified by him; light re-check 2026-10-24, cloud session):** `ingestion/gmail/gmail_api.py`.
+  - A6.1 `_html_to_text` drops elements whose inline style hides them (`_element_is_hidden`): display:none and opacity:0
+    always; max-height:0 only with overflow:hidden; visibility:hidden and font-size:0 only when nothing inside can
+    still show (block-level child or a child that re-declares the property), because Outlook wraps real text in
+    font-size:0 cells. A mail with no hiding property in its text skips BeautifulSoup. Class-based hiding not caught.
+  - A6.2 `_collect_body_parts` / `extract_body` join all body text parts in order; multipart/alternative picks plain,
+    else the first HTML; parts with a filename stay attachments; the same part is never walked twice. An attached
+    message (`message/rfc822`) is skipped when the mail has other text (so a bounce does not repeat the original it
+    quotes) and used only when it is the mail's only text. Consequence: a "forward as attachment" WITH a note keeps the
+    note and not the forwarded text.
+  - Re-check: synthetic MIME trees with the BeautifulSoup path (preview span, Outlook cell, opacity, visibility),
+    split text parts, alternative, HTML-only, forward with and without a note, a repeated part object: all as above.
 
 ### A7. How to detect sensitive Chrome pages — [x] decided 2026-10-21 (found 2026-10-17, `chrome_connector.py`) — DISCUSS AT THE END
 - **Today:** a fixed list of 14 words (`login`, `auth`, `payment`, ...) matched as plain substrings of the URL,
@@ -474,6 +502,11 @@ Still open — decide each:
 - **Decision (his, 2026-10-21): grow it by hand, once.** Thursday, on the restored local data: list the top
   50-100 Chrome domains that reached Stage 4 (classified_by = 'llm'/'fallback'), add them to DOMAIN_CATEGORY_MAP
   (~30 min). Paper: "curated domain map"; a self-learning map (LLM agrees N times -> rule) may go in future work.
+- **Built 2026-10-24 (cloud session, first half):** 29 domains added to `DOMAIN_CATEGORY_MAP` (136 -> 165 entries: 96 study,
+  38 entertainment, 20 work, 11 personal; the first `personal` entries) from the simulation's misses above. Left out on
+  purpose, like medium.com: chatgpt.com, claude.ai, docs.google.com, news sites (content too varied for a domain rule).
+  **Still open (local):** the pass over the real top 50-100 Stage-4 domains (`classified_by IN ('llm','fallback')`) on the
+  restored data; the cloud session has no access to it.
 
 ### A18. Improve the initial seed centroids — Stage 3 almost never fires with them — [x] decided 2026-10-21 (found 2026-10-17; his ask 2026-10-21: improve the seeds)
 - Seeds are one 7–9-word bag of words per category. Real items score cosine **0.10–0.55** against them, so the
@@ -610,6 +643,19 @@ Still open — decide each:
   3. **Same filename: match on filename + size** in `enp/attachment_processor._download_attachment_data` (size is
      already stored in `gmail_attachments.file_size`). No schema change. Gmail's attachmentId stays unused (not
      stable between fetches).
+- **Status 2026-10-24:**
+  - Part 2 (skip signature logos) BUILT by him, light re-check done: `gmail_api.extract_attachments` drops parts with
+    Content-Disposition inline, parts with a Content-ID unless the disposition is `attachment`, and images with a known
+    size under 10 KB (`_MIN_ATTACHMENT_IMAGE_BYTES`); an unknown size (0) is kept. A PDF or DOCX under 10 KB stays.
+  - Part 1 (types): XLSX, PPTX and EML built in the cloud session (D2, standard library instead of openpyxl/python-pptx).
+    RTF/ODF were built by mistake and removed. OCR for images and scanned PDFs is still open (Tesseract + pytesseract).
+  - Part 3 (same filename: filename + size) BUILT 2026-10-24 (cloud session): `_download_attachment_data(service, email_id,
+    filename, size)` keeps the same-named parts whose Gmail body size equals the stored `file_size` and takes the first of
+    those; size 0 (unknown) or no size match falls back to the first same-named part. Both callers (`extract_full_text`,
+    the Tier-2 loop) pass the size. `_walk_parts` now lists parts in message order (it listed siblings last-first, so
+    "the first" was the last). Two parts with the same name AND size are still taken as one file. Checked on a mock Gmail
+    message (three same-named PDFs: nested, attachmentId, inline data). NOT checked against the real Gmail API: that
+    `body.size` equals the byte size stored at ingestion (it should; both come from the same field).
 
 ### A23. Attachment text is sent to the LLM — the doc says it never is — [x] decided 2026-10-21
 - Doc line 702: "The LLM API never receives: raw email bodies, full page content, video transcripts, **attachment
@@ -1031,6 +1077,13 @@ Still open — decide each:
   allows redis:// to localhost, so local Redis works); drop `ECHO_TOKEN_ENCRYPTION_KEY` from .env / README;
   existing `.enc` tokens: one-time decrypt to .json, or just sign in again. `.gitignore` already covers
   `token_*.json`.
+- **Built (his, verified by him; light re-check 2026-10-24):** `gmail_api.py` and `youtube_api_client.py` read and write
+  plain `token_gmail.json` / `token_youtube.json` through `ste.security.read_token_text` / `write_token_text` (UTF-8 with
+  BOM tolerated, same-folder temp file + atomic replace, one lock); the Fernet helpers are gone, `validate_redis_tls_url`
+  stays; `.gitignore` covers `token_*.json`, `token_*.json.tmp` and the old `.enc` names; no `ECHO_TOKEN_ENCRYPTION_KEY`
+  or `cryptography` left in `requirements.txt`, README or the code. Old `.enc` files are not migrated: the first start
+  signs in again. Re-check: missing file -> None, write leaves no temp file, BOM file reads clean. C28 (sign-in at startup
+  on a daemon thread, poller never opens a browser) came with it.
 - **Guards:** paper/deck must NOT claim "tokens encrypted at rest". A token shown on the projector is a live key
   to the test mailbox — revoke it after the demo (Google Account -> Security -> third-party access) and sign in
   again.
@@ -1091,6 +1144,10 @@ Still open — decide each:
   - Build: the new `history.list` path (A5) must skip messages whose `labelIds` contain SPAM or TRASH — Likely
     (from memory of the API) history.list has no includeSpamTrash switch, so the list call's default does not
     cover it. Verify when building A5.
+  - **Built 2026-10-24 with A5 (cloud session):** the history ids drop SPAM/TRASH from the `labelIds` the history record
+    carries, and `fetch_and_store_new_emails` checks the labels of the fetched message again (mail trashed after it
+    arrived). Checked on a mock service only; whether a real history record carries `labelIds` is for the live poll to show
+    (if it did not, the second check still catches it, at the cost of one `messages.get`).
   - Fallback if Promotions/Social crowd results in the demo data: skip those two categories too (~30 min).
 
 ### A39. Review every timing and threshold before the final review (his ask, 2026-10-21) — [x] decided 2026-10-21
@@ -1675,13 +1732,16 @@ Still open — decide each:
 - **Also done 2026-10-22:** `README.md:70` no longer lists the deleted "rebuild FAISS, recompute centroids" scripts (now `setup_db.py`, `enp_status.py`, the two files left in `scripts/`).
 - **Also done 2026-10-22:** `docs/Phase III/build/lld/build_lld.py:589` (the LLD generator) now names `recompute_centroids()` run at ENP startup instead of the deleted script. The already-built `.docx` is unchanged until the generator is re-run.
 
-### C28. Gmail sign-in can hang backend shutdown — `ingestion/gmail/router.py` + `backend/main.py` — [ ] (found 2026-10-19, YouTube sign-in change)
+### C28. Gmail sign-in can hang backend shutdown — `ingestion/gmail/router.py` + `backend/main.py` — [x] built with A35, found already done 2026-10-24 (found 2026-10-19, YouTube sign-in change)
 - `authenticate_gmail()` opens the browser sign-in inside an `asyncio.to_thread` worker of the gmail-poller.
   Cancelling the poller task does not stop that thread. Likely (Python's executor joins its workers at
   interpreter exit): stopping the backend while the Gmail sign-in tab is still open hangs until the sign-in
   finishes or the process is killed. Not tested live.
 - **Fix (same as YouTube):** do the Gmail sign-in once at startup on a daemon thread; the poller then only uses
   the token, never opens the browser. Touches `gmail_api.py`, `router.py`, `main.py`.
+- **Done (checked 2026-10-24):** `gmail_api.sign_in_gmail()` runs once on a daemon thread started in the `backend/main.py`
+  lifespan (`gmail-sign-in`); `authenticate_gmail()` never opens a browser and raises `GmailAuthError`, which
+  `router.poll_once` turns into a skipped poll. The tracker entry was simply never ticked.
 
 ### C29. Delete `docs/review/pending_answers_A16_A40_A42_A43.md` — [x] 2026-10-22 (his ask; not in git, so not recoverable)
 - Done: the four decision lines (A16, A40, A42, A43) were reworded without the path, and the brief's build notes,
@@ -1700,7 +1760,14 @@ Still open — decide each:
   - [ ] OCR for images (PNG/JPG/…): install the Tesseract binary, enable `pytesseract` in `requirements.txt`.
   - [ ] Scanned PDFs (no text layer): OCR each page.
   - [ ] Old `.doc` files (python-docx cannot read them).
-  - [ ] PPTX, XLSX, ODT, RTF, HTML.
+  - [x] PPTX, XLSX, EML built 2026-10-24 (cloud session) in `enp/attachment_processor.py`; HTML was already there.
+        (ODT/RTF were built first, then REMOVED the same day on his word: A22 says skip them. `.rtf` / `text/rtf` is now
+        refused explicitly so it is not read as plain text.)
+        Standard library only (zip + regex, per-member 16 MB and per-file 64 MB read caps, no XML parser), so
+        `requirements.txt` does not change. Checked on generated files (slide order, notes, shared strings, inline
+        strings, sheet names, EML plain vs HTML),
+        on corrupt input (returns None) and on an oversized member (skipped). NOT checked on real Office files from
+        a real mailbox; do that locally. Still open: old `.doc`/`.xls`/`.ppt`, OCR, scanned PDFs.
   - [ ] A4 decided 2026-10-21: extract at ingestion into `extracted_text`, merge into embedded text (shared
         800-char budget) + full text into the tsvector, set `is_processed = TRUE`.
 

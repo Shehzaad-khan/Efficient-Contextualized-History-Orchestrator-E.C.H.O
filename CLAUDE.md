@@ -163,7 +163,7 @@ Known open items:
 - LLM provider is plug-and-play via `rse/config.py` `LLM_CONFIG`; Stage-4 classifier
   and insight generator reuse it. Never hardcode a provider elsewhere.
 - Redis keys are namespaced `echo:*` (revisit, attachment cache, regret reminders,
-  `echo:settings:capture`). TTLs: revisit 24h, attachment text 1h.
+  `echo:settings:capture`, `echo:gmail:history_id`). TTLs: revisit 24h, attachment text 1h.
 - The extension gates ALL egress through `postToBackend()` in `background.js` — the
   pause flag (`chrome.storage.local.echo_tracking_paused`) lives there. Keep any new
   network path behind that same function.

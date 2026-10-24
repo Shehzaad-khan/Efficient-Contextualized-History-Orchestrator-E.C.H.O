@@ -333,11 +333,16 @@ Unread mail is searchable but never counts as wellbeing time (§11.2).
 ### 5.2 Ingestion Flow — Step by Step
 
 **Step 1 — poll (every 30 s, `ingestion/gmail/config.py` `CHECK_INTERVAL`).**
-Today `fetch_and_store_new_emails` lists the whole mailbox in pages of 100 and checks ids against the DB in one batched query per page.
-Decided (built Thu–Sun, A5): incremental polling with `history.list` from the `historyId` saved in Redis
-(`echo:gmail:history_id`). On a 404 (id too old) or a missing key, one full listing runs and the new id is saved; the
-dedup constraint makes the fallback safe. The history path must drop messages whose `labelIds` contain `SPAM` or `TRASH`
-(A38; Likely, from memory of the API: `history.list` has no `includeSpamTrash` switch — verify while building).
+Built 2026-10-24 (A5, A38): incremental polling. `fetch_and_store_new_emails` asks `history.list` (`historyTypes=messageAdded`,
+500 per page) for the messages added since the `historyId` saved in Redis (`echo:gmail:history_id`); with nothing new that is one
+cheap call. A missing key (first start, Redis lost or down) or a 404 (id too old) makes it run one full listing instead (100 per
+page, ids checked against the DB in one batched query per page). The full listing reads the mailbox's current `historyId` first,
+so mail that arrives during the listing falls into the next history window. The saved id moves forward only when every new email
+of the poll is in the database (checked with a query, because `store_in_postgresql` returns False both for a duplicate and for an
+error); the dedup constraint makes any repeat harmless. Messages whose `labelIds` contain `SPAM` or `TRASH` are dropped from the
+history ids, and again after `messages.get` (mail trashed after it arrived), because `history.list` has no `includeSpamTrash`
+switch. Emails skipped for an excluded sender are re-checked each poll, so un-excluding captures them (not after a backend
+restart: older excluded mail is no longer re-listed).
 Why not push (Pub/Sub webhook): it needs a GCP topic and a public tunnel, and puts a cloud piece into the local privacy story.
 
 **Step 2 — parse (`ingestion/gmail/gmail_api.py`).** Received time = Gmail `internalDate` (the `Date` header is the
@@ -372,11 +377,11 @@ earlier message carries error text in `auto_keywords`.
 |---|---|---|
 | At ingestion | One `gmail_attachments` row per attachment; `lightweight_extract = "filename \| mime \| size"` (no file content, keeps the hot path fast) | Same row. Inline parts (Content-Disposition inline / Content-ID) and images under ~10 KB are skipped (A22.2; exact size TBD at build) |
 | Text extraction | Only at query time (Tier 2), for a top-3 Gmail result when the query asks for file content | In the ENP worker for every attachment not read yet (built 2026-10-24); text stored in `gmail_attachments.extracted_text` (A4), cut at 200,000 characters (`MAX_EXTRACTED_TEXT_CHARS`, so the stored vector stays under PostgreSQL's 1 MB limit); types with no extractor are not downloaded; a failed download leaves it NULL and the mail is still enriched; `is_processed = TRUE` once merged |
-| Types | PDF (pypdf → pdfplumber), DOCX (incl. tables, header/footer), TXT/MD/CSV/TSV/LOG/JSON/XML/ICS, HTML. Images only if Tesseract is installed (it is not) | Add XLSX (`openpyxl`), PPTX (`python-pptx`), `.eml` (stdlib), OCR for images and scanned PDFs (Tesseract + `pytesseract`). Skipped: `.doc`, RTF, ODT, ZIP, HEIC (A22.1) |
+| Types | PDF (pypdf → pdfplumber), DOCX (incl. tables, header/footer), TXT/MD/CSV/TSV/LOG/JSON/XML/ICS, HTML. Built 2026-10-24 (D2, standard library only, no new dependency): XLSX, PPTX (slides + notes), EML. Images only if Tesseract is installed (it is not) | OCR for images and scanned PDFs (Tesseract + `pytesseract`). Skipped: `.doc`/`.xls`/`.ppt`, RTF, ODT, ZIP, HEIC (A22.1; RTF is refused explicitly so `text/rtf` is not read as plain text). A22 named `openpyxl` and `python-pptx` for XLSX/PPTX; zip-and-regex readers (size-capped, no XML parser) replaced the libraries |
 | Embedding | Not embedded at all (C15) | Token budget (A16, replaces A4's 800-char split): body up to 300 tokens, then attachments fill the rest of the 512-token window, each attachment's start in turn (§8.2) |
 | Keyword search | Not searchable | Full extracted text goes into the stored tsvector (A4, A24.3) |
 | Sent to the LLM | Up to 6,000 chars per attachment, 12,000 total (`MAX_CHARS_PER_ATTACHMENT`, `MAX_CHARS_TOTAL`) | Only the top 3 passages that match the question, ~1,500 chars total, read from the stored text; no Gmail download at query time (A23, A4) |
-| Same filename twice | First one is always downloaded | Match on filename + `file_size` (A22.3) |
+| Same filename twice | First one is always downloaded | Match on filename + `file_size` (A22.3, built 2026-10-24; unknown size or no size match falls back to the first same-named part) |
 
 Binary files are never stored. Audio and video attachments are out of scope.
 
@@ -700,10 +705,13 @@ Source metadata, no content reading. Result: `classified_by = 'structural'`.
 
 ### 9.2 Stage 2 — Domain Lookup (Chrome only)
 
-`DOMAIN_CATEGORY_MAP` in `enp/system_group_classifier.py`: 136 entries (89 study, 31 entertainment, 16 work, 0 personal),
+`DOMAIN_CATEGORY_MAP` in `enp/system_group_classifier.py`: 165 entries (96 study, 38 entertainment, 20 work, 11 personal),
 looked up for the host and each parent domain. Result: `'domain'`.
-Decided (A17): grow it by hand once on Thursday — list the top 50–100 Chrome domains of the restored data that reached
-Stage 4 and add them. A self-learning map is future work.
+Decided (A17): grow it by hand once. On 2026-10-24 it was extended with 29 domains taken from the misses of the 2026-10-17
+simulation (job sites, Indian streaming and cricket sites, learning sites, shopping, food, travel and money sites; the
+last group is the first to map to `personal`). Ambiguous hosts (chatgpt.com, claude.ai, docs.google.com, news sites) were
+left out on purpose. The pass over the top 50–100 Stage-4 domains of the restored data is still to be done locally. A
+self-learning map is future work.
 
 ### 9.3 Stage 3 — Nearest Centroid
 
@@ -1285,12 +1293,12 @@ One backend process (`uvicorn backend.main:app --port 8000`, started from the pr
 3. Start `gmail-poller` (asyncio task; each poll runs in a worker thread).
 4. Start `enp-worker` (thread; centroid recompute at start, built Thu–Sun A36).
 5. One-off `message-cleanup` (chat history > 30 days).
-6. One-off `youtube-sign-in` daemon thread (opens the browser only when no usable token exists).
+6. One-off `youtube-sign-in` and `gmail-sign-in` daemon threads (each opens the browser only when no usable token exists; C28 built).
 7. Retention job (built Thu–Sun, A37).
 
-Shutdown: cancel the poller and cleanup, set the ENP stop event and wait up to 60 s, close the async Redis client.
-Known gaps: the DB pool is not disposed on shutdown (D1); the Gmail sign-in runs inside a poller worker thread and can hang
-shutdown while the sign-in tab is open (C28; fix: sign in once at startup on a daemon thread, like YouTube).
+Shutdown: cancel the poller and cleanup, set the ENP stop event and wait up to 60 s, dispose the SQLAlchemy engine
+(`postgresql_manager.dispose_engine()`, D1), close the async Redis client. The sign-in threads are daemon threads, so an open
+sign-in tab does not hold shutdown (C28). The RSE psycopg2 pool is not closed.
 
 Local services: PostgreSQL 16 (Windows service), Redis (`wsl -d Ubuntu -u root service redis-server start`, then keep WSL awake
 with `wsl -d Ubuntu -u root -- sleep infinity` or Redis stops when WSL idles), Tesseract (to install for OCR, A22).
@@ -1497,7 +1505,7 @@ query latency and tokens per round (A25), embed speed of arctic-xs on the real d
 Known gaps (recorded, not yet fixed): C4 — recall does not see new vectors until a restart; C5 — Chrome dwell after the first
 send is lost; C10 — YouTube auto-seek may save videos at 0 s (unverified); C13 — no LLM timeout; C25 — SQLAlchemy errors can
 print bound values into logs (fix: `hide_parameters=True`); C26 — capture settings logged in full (excluded senders);
-C28 — Gmail sign-in can hang shutdown; D1 — DB pool not disposed; D3 — reminders never shown.
+D3 — reminders never shown. (C28 and D1 are built.)
 
 ## 24. Pending Decisions and Decided-but-Unbuilt Items
 
@@ -2064,7 +2072,7 @@ the project history; "—" where no date was recorded.
 | B3 | Thursday | Clear open times of Gmail rows never opened (`play_sessions_count = 0`) |
 | B4 | info only | Shorts stored as `is_short = FALSE` fix themselves on a re-watch |
 | B5 | Thursday, after schema changes and the A40.1 / A16 code switch | Full re-embed with arctic-xs into a fresh FAISS index |
-| D1 | open | Dispose the DB pool on shutdown |
+| D1 | built 2026-10-22 | Dispose the DB pool on shutdown |
 | D2 | decided via A4/A22 | Full attachment support |
 | D3 | open (build or drop) | Show regret reminders; snooze route |
 | D4 | built 2026-10-23 | Sessions are built on demand (`ensure_sessions_for_day`) |
