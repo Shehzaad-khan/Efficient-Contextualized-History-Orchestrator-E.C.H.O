@@ -21,6 +21,11 @@ When code and doc disagree, check §3 below first — some deviations are delibe
 approved. The owner has given standing permission (2026-10-22) to update the design document
 whenever a decision or change makes it wrong: edit it directly, no need to ask.
 
+**The LLD is stale on purpose (owner, 2026-10-24):** `docs/Phase III/` (the Low Level Design
+`.docx` files and `build/lld/build_lld.py`) was a Phase 3 review requirement and the owner has no
+current need for it. Do NOT keep it up to date and do not list it as pending work. If an LLD is
+ever wanted again, it will be recreated from `Echo_System_Design.md`, which is the up-to-date source.
+
 ---
 
 ## 2. Hard constraints — never violate
