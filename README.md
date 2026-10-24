@@ -108,7 +108,7 @@ The frontend runs without the backend too — it flips into a clearly-badged **d
 
 **Frontend:** React 18 + TypeScript + Vite · Tailwind (custom token system) · Framer Motion + GSAP + Lenis · Chrome Extension (Manifest V3)
 
-**LLM:** OpenAI GPT-5.6 Luna on the Responses API, via LangChain (decision A25) — plug-and-play via `rse/config.py` `LLM_CONFIG`
+**LLM:** OpenAI GPT-6 Luna on the Responses API, via LangChain (decision A25) — plug-and-play via `rse/config.py` `LLM_CONFIG`
 
 ---
 

@@ -33,11 +33,17 @@ LLM_CONFIG: Mapping[str, Any] = MappingProxyType({
     # History: google_genai → openai gpt-4.1-mini on 2026-07-09 (Google free tier
     # allowed only 20 requests/day per model). gpt-4.1-mini → gpt-5.6-luna on
     # 2026-10-18 (A25): cheaper per token ($0.20 / $1.20 per 1M in/out vs
-    # $0.40 / $1.60) and much stronger on reasoning benchmarks.
+    # $0.40 / $1.60) and much stronger on reasoning benchmarks. gpt-5.6-luna →
+    # gpt-6-luna on 2026-10-24: one model for every OpenAI call (chat and Decisions).
     # GOOGLE_API_KEY stays in .env — switch back by changing these strings.
     "provider": "openai",
-    "parser_model": "gpt-5.6-luna",
-    "synthesizer_model": "gpt-5.6-luna",
+    "parser_model": "gpt-6-luna",
+    "synthesizer_model": "gpt-6-luna",
+    # OpenAI Decisions API model for ENP Stage 4 (A21), provider "openai" only.
+    # The Decisions endpoint accepts only "gpt-6-luna", so keep it at that value
+    # even if the two chat models above change. Empty string = skip the Decisions
+    # path (one-word text call).
+    "decisions_model": "gpt-6-luna",
     # OpenAI-only extras (A25). Luna is a reasoning model: "medium" effort for
     # both calls (better answers over faster ones), and the Responses API so the
     # model's reasoning carries across tool rounds. Wired into the callers as
@@ -45,8 +51,9 @@ LLM_CONFIG: Mapping[str, Any] = MappingProxyType({
     "reasoning_effort": "medium",
     "use_responses_api": True,
     # Temperatures apply to non-reasoning models only (other providers, or
-    # gpt-4.1-mini). For gpt-5.x with any effort other than "none", LangChain
-    # drops them before the request (langchain_openai ChatOpenAI temperature check).
+    # gpt-4.1-mini). llm_factory sends no temperature while reasoning_effort is set,
+    # so keep it set for gpt-6-luna: LangChain's own temperature drop only matches
+    # "gpt-5*" model names, not "gpt-6*".
     "parser_temperature": 0.0,
     "synthesizer_temperature": 0.3,
     # Fail fast: quota errors (429 on a DAILY limit) are not transient, and
