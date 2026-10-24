@@ -474,6 +474,11 @@ Still open — decide each:
 - **Decision (his, 2026-10-21): grow it by hand, once.** Thursday, on the restored local data: list the top
   50-100 Chrome domains that reached Stage 4 (classified_by = 'llm'/'fallback'), add them to DOMAIN_CATEGORY_MAP
   (~30 min). Paper: "curated domain map"; a self-learning map (LLM agrees N times -> rule) may go in future work.
+- **Built 2026-10-24 (cloud session, first half):** 29 domains added to `DOMAIN_CATEGORY_MAP` (136 -> 165 entries: 96 study,
+  38 entertainment, 20 work, 11 personal; the first `personal` entries) from the simulation's misses above. Left out on
+  purpose, like medium.com: chatgpt.com, claude.ai, docs.google.com, news sites (content too varied for a domain rule).
+  **Still open (local):** the pass over the real top 50-100 Stage-4 domains (`classified_by IN ('llm','fallback')`) on the
+  restored data; the cloud session has no access to it.
 
 ### A18. Improve the initial seed centroids — Stage 3 almost never fires with them — [x] decided 2026-10-21 (found 2026-10-17; his ask 2026-10-21: improve the seeds)
 - Seeds are one 7–9-word bag of words per category. Real items score cosine **0.10–0.55** against them, so the

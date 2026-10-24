@@ -700,10 +700,13 @@ Source metadata, no content reading. Result: `classified_by = 'structural'`.
 
 ### 9.2 Stage 2 — Domain Lookup (Chrome only)
 
-`DOMAIN_CATEGORY_MAP` in `enp/system_group_classifier.py`: 136 entries (89 study, 31 entertainment, 16 work, 0 personal),
+`DOMAIN_CATEGORY_MAP` in `enp/system_group_classifier.py`: 165 entries (96 study, 38 entertainment, 20 work, 11 personal),
 looked up for the host and each parent domain. Result: `'domain'`.
-Decided (A17): grow it by hand once on Thursday — list the top 50–100 Chrome domains of the restored data that reached
-Stage 4 and add them. A self-learning map is future work.
+Decided (A17): grow it by hand once. On 2026-10-24 it was extended with 29 domains taken from the misses of the 2026-10-17
+simulation (job sites, Indian streaming and cricket sites, learning sites, shopping, food, travel and money sites; the
+last group is the first to map to `personal`). Ambiguous hosts (chatgpt.com, claude.ai, docs.google.com, news sites) were
+left out on purpose. The pass over the top 50–100 Stage-4 domains of the restored data is still to be done locally. A
+self-learning map is future work.
 
 ### 9.3 Stage 3 — Nearest Centroid
 
