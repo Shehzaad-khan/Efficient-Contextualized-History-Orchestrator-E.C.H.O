@@ -11,7 +11,7 @@ Working file — committed to the repo from 2026-10-22 so Claude web can read it
 
 **Audit snapshot — 2026-10-24 (top-level IDs):** 86 entries = **80 complete/resolved + 6 not fully complete**. Counting rule: A1–A45 are owner-decision entries, counted complete when the decision is recorded; their implementation follow-ups are audited separately below. B4 is informational/no action. Breakdown: A 45/45 decisions recorded; B 4 resolved (B1–B3 and informational B4), B5 open; C 29/29 resolved; D 2 complete, D2/D3 open, D5 partial; E1 partial (decision made, implementation absent), E2 open. The six not-fully-complete top-level IDs are B5, D2, D3, D5, E1, E2 (4 open, 2 partial). This top-level count is not a claim that all decided features are implemented.
 
-**Implementation follow-ups inside decided A entries (not additional top-level IDs):** 13 decision IDs still have an implementation step open or partial: 9 have build work remaining; 4 conflict with current AGENTS hard constraints (A23/A24 with hard constraint 3, A26 with hard constraint 5, A42 with hard constraint 4). Their status is checked after A45 below. In particular, A16/A40 are prerequisites for B5; do not run B5 before those decisions' implementation work is complete.
+**Implementation follow-ups inside decided A entries (not additional top-level IDs):** 12 decision IDs still have an implementation step open or partial: 8 have build work remaining; 4 conflict with current AGENTS hard constraints (A23/A24 with hard constraint 3, A26 with hard constraint 5, A42 with hard constraint 4). A7 is complete; its previous cross-check row was stale. Their status is checked after A45 below. In particular, A16/A40 are prerequisites for B5; do not run B5 before those decisions' implementation work is complete.
 
 Original inventory: 45 decisions · 5 live-DB entries · 29 cross-file fixes · 5 build items · 2 later items = **86**. C29 (delete pending-answers file) was added 2026-10-22; A44 retry + A45 fresh Gmail poll were added 2026-10-21 as stretch (A45 closed with no build on 2026-10-24); A42 auto-accept + A43 user-group nesting, A41 Gmail open tracking, A40 model choice, E2 personal-data import, and A37–A39 (retention, spam, timings) were added 2026-10-21; A5/A6 were added 2026-10-15; A7–A24 were added 2026-10-17; A25–A28 were added 2026-10-18; E1 MCP was added 2026-10-18.
 
@@ -1466,11 +1466,10 @@ Still open — decide each:
 
 ### Build-status cross-check for decided A entries — 2026-10-24
 
-The `[x] decided` marks above mean the owner's decision is recorded. They do not mean the feature was built. Static review of the current workspace found these 13 decision IDs still have implementation work:
+The `[x] decided` marks above mean the owner's decision is recorded. They do not mean the feature was built. Static review of the current workspace found these 12 decision IDs still have implementation work (A7's prior open row was stale; A7.1–A7.4 are built as recorded above):
 
 | ID | Current implementation check |
 |----|-------------------------------|
-| A7 | A7.4 is still open: `hasPrivateFormSurface` in `extension/content/chrome_tracker.js` still blocks on any email, tel, or number input; the decided visible-field/form rules are absent. |
 | A16 | The tokenizer-based 512-token `fit_to_window` path is absent; `enp/topic_extractor.py` still uses character caps. |
 | A17 | The 29 hand-added domains are present, but the decided review of the real top 50–100 Stage-4 domains in the restored local data remains open. |
 | A18 | `SEED_TEXTS` are still the short word bags and `CENTROID_MIN_SCORE` remains 0.55; the richer seeds and seed-specific measured threshold are not built. |
