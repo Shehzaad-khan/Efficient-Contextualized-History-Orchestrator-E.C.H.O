@@ -633,8 +633,13 @@ Still open — decide each:
     size under 10 KB (`_MIN_ATTACHMENT_IMAGE_BYTES`); an unknown size (0) is kept. A PDF or DOCX under 10 KB stays.
   - Part 1 (types): XLSX, PPTX and EML built in the cloud session (D2, standard library instead of openpyxl/python-pptx).
     RTF/ODF were built by mistake and removed. OCR for images and scanned PDFs is still open (Tesseract + pytesseract).
-  - Part 3 (same filename: filename + size) NOT built: `_download_attachment_data` still takes the first part with a
-    matching filename.
+  - Part 3 (same filename: filename + size) BUILT 2026-10-24 (cloud session): `_download_attachment_data(service, email_id,
+    filename, size)` keeps the same-named parts whose Gmail body size equals the stored `file_size` and takes the first of
+    those; size 0 (unknown) or no size match falls back to the first same-named part. Both callers (`extract_full_text`,
+    the Tier-2 loop) pass the size. `_walk_parts` now lists parts in message order (it listed siblings last-first, so
+    "the first" was the last). Two parts with the same name AND size are still taken as one file. Checked on a mock Gmail
+    message (three same-named PDFs: nested, attachmentId, inline data). NOT checked against the real Gmail API: that
+    `body.size` equals the byte size stored at ingestion (it should; both come from the same field).
 
 ### A23. Attachment text is sent to the LLM — the doc says it never is — [x] decided 2026-10-21
 - Doc line 702: "The LLM API never receives: raw email bodies, full page content, video transcripts, **attachment

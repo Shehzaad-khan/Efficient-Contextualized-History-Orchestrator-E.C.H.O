@@ -376,7 +376,7 @@ earlier message carries error text in `auto_keywords`.
 | Embedding | Not embedded at all (C15) | Token budget (A16, replaces A4's 800-char split): body up to 300 tokens, then attachments fill the rest of the 512-token window, each attachment's start in turn (§8.2) |
 | Keyword search | Not searchable | Full extracted text goes into the stored tsvector (A4, A24.3) |
 | Sent to the LLM | Up to 6,000 chars per attachment, 12,000 total (`MAX_CHARS_PER_ATTACHMENT`, `MAX_CHARS_TOTAL`) | Only the top 3 passages that match the question, ~1,500 chars total, read from the stored text; no Gmail download at query time (A23, A4) |
-| Same filename twice | First one is always downloaded | Match on filename + `file_size` (A22.3) |
+| Same filename twice | First one is always downloaded | Match on filename + `file_size` (A22.3, built 2026-10-24; unknown size or no size match falls back to the first same-named part) |
 
 Binary files are never stored. Audio and video attachments are out of scope.
 

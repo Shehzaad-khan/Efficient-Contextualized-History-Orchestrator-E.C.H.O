@@ -519,31 +519,47 @@ def _b64url_decode(data: str) -> bytes:
 
 
 def _walk_parts(payload: dict) -> list[dict]:
-    """Flatten the (possibly nested) MIME part tree of a Gmail message."""
+    """Flatten the (possibly nested) MIME part tree of a Gmail message, in message order."""
     parts: list[dict] = []
     stack = [payload]
     while stack:
         part = stack.pop()
         parts.append(part)
-        stack.extend(part.get("parts", []) or [])
+        # Reversed, so the first child is popped (and listed) first.
+        stack.extend(reversed(part.get("parts", []) or []))
     return parts
 
 
-def _download_attachment_data(service: Any, email_id: str, filename: str) -> Optional[bytes]:
+def _select_attachment_parts(parts: list[dict], filename: str, size: int) -> list[dict]:
+    """Parts to try, best first: those named `filename` whose body size equals `size`
+    (A22.3: two attachments with one name are told apart by size). A size of 0 means
+    unknown, and when no same-named part has that size the same-named parts are all
+    tried, in message order, as before."""
+    named = [part for part in parts if part.get("filename") == filename]
+    if size > 0:
+        same_size = [part for part in named if int(part.get("body", {}).get("size") or 0) == size]
+        if same_size:
+            return same_size
+        if len(named) > 1:
+            logger.info("attachment_processor: no same-named part has size %d - taking the first of %d", size, len(named))
+    return named
+
+
+def _download_attachment_data(service: Any, email_id: str, filename: str, size: int = 0) -> Optional[bytes]:
     """
-    Fetch the message, locate the part whose filename matches, and download
-    its binary body. Returns None when the part or data cannot be found.
+    Fetch the message, locate the part whose filename (and, when known, size) matches,
+    and download its binary body. Returns None when the part or data cannot be found.
 
     The message is re-fetched every time on purpose: Gmail's attachmentId is
     not stable between messages.get calls, so a stored one cannot be reused.
-    Two attachments with the same filename are ambiguous; the first is taken.
+    Two attachments with the same filename are told apart by `size`, the byte size
+    stored in gmail_attachments.file_size (A22.3). Two with the same name AND size are
+    taken as the same file: the first is used.
     """
     message = (
         service.users().messages().get(userId="me", id=email_id, format="full").execute()
     )
-    for part in _walk_parts(message.get("payload", {})):
-        if part.get("filename") != filename:
-            continue
+    for part in _select_attachment_parts(_walk_parts(message.get("payload", {})), filename, size):
         body = part.get("body", {})
         if body.get("data"):  # small attachments come inline
             return _b64url_decode(body["data"])
@@ -580,7 +596,7 @@ def extract_full_text(service: Any, email_id: str, attachment: dict[str, Any]) -
     if int(attachment.get("file_size") or 0) > MAX_INGEST_ATTACHMENT_BYTES:
         logger.info("attachment_processor: %s bytes is over the ingestion limit - skipped", attachment.get("file_size"))
         return None
-    data = _download_attachment_data(service, email_id, filename)
+    data = _download_attachment_data(service, email_id, filename, int(attachment.get("file_size") or 0))
     if not data:
         return None
     text = extract_text(data, mime_type, filename, max_chars=MAX_EXTRACTED_TEXT_CHARS)
@@ -693,7 +709,9 @@ def fetch_attachment_text_for_memory(memory_id: str, query_clean: str = "") -> O
                 if service is None:
                     from ingestion.gmail.gmail_api import authenticate_gmail
                     service = authenticate_gmail()
-                data = _download_attachment_data(service, email_id, attachment["filename"])
+                data = _download_attachment_data(
+                    service, email_id, attachment["filename"], int(attachment.get("file_size") or 0)
+                )
             except Exception as exc:
                 logger.error("attachment_processor: Gmail fetch failed for %s (%s)", attachment_id, type(exc).__name__)
                 data = None
