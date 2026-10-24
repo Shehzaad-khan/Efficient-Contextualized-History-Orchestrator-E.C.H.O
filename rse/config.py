@@ -38,6 +38,10 @@ LLM_CONFIG: Mapping[str, Any] = MappingProxyType({
     "provider": "openai",
     "parser_model": "gpt-5.6-luna",
     "synthesizer_model": "gpt-5.6-luna",
+    # OpenAI Decisions API model for ENP Stage 4 (A21), provider "openai" only.
+    # Not the same model as the two above: the Decisions endpoint accepts only
+    # "gpt-6-luna". Empty string = skip the Decisions path (one-word text call).
+    "decisions_model": "gpt-6-luna",
     # OpenAI-only extras (A25). Luna is a reasoning model: "medium" effort for
     # both calls (better answers over faster ones), and the Responses API so the
     # model's reasoning carries across tool rounds. Wired into the callers as

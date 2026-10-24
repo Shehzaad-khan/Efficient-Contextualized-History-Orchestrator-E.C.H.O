@@ -739,10 +739,10 @@ answers from the typed classifier; cost under 1 cent a month). Input: source + t
 clean text (`_STAGE4_TITLE_CHARS`, `_STAGE4_SNIPPET_CHARS`) — for every source, emails included; stated plainly in the
 privacy statement (A19.2).
 
-Decided client (A21, final 2026-10-21, built Thu–Sun):
-- provider `openai` → OpenAI **Decisions API** (`langchain_openai` `OpenAIDecisions`, beta), choices = the 5 names; its probabilities are not stored.
+Decided client (A21, final 2026-10-21, built 2026-10-24 but not yet run against the live API):
+- provider `openai` → OpenAI **Decisions API** (`langchain_openai` `OpenAIDecisions`, beta; `POST /v1/decisions`), one `choice` question, choices = the 5 names; its probabilities are not stored. The model is `LLM_CONFIG["decisions_model"]` (`gpt-6-luna`, the only model the endpoint accepts), separate from the chat models.
 - any other provider → the text call with a strict one-word reply; anything other than the 5 names → `misc` / `'fallback'`.
-- If the Decisions call raises, that item falls back to the one-word path.
+- If the Decisions call raises, refuses, or returns a value outside the 5 names, that item falls back to the one-word path. After 3 failed calls in a row the Decisions API is skipped for 10 minutes.
 - `classification_confidence` is no longer stored; the column was dropped on 2026-10-24 and ENP no longer writes it (Table 2).
 
 Result: `'llm'`; no LLM configured, LLM failure, or bad reply → `misc` with `classified_by = 'fallback'`.

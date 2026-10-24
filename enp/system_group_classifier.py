@@ -13,9 +13,13 @@ Caller: enrichment_pipeline.classify_item -> classify_system_group(item, embeddi
   3. stage3_centroid       cosine of the item's MiniLM vector (its embeddable_text)
                            to 5 category centroids; needs best > 0.55 AND a
                            0.08 lead over the runner-up            -> 'centroid', cosine
-  4. stage4_llm_fallback   LLM reads source + title + first 300 chars of the
-                           clean text (_STAGE4_PROMPT, the doc's prompt) -> 'llm', 0.90
-                           No LLM configured / failure / bad answer -> 'misc', 'fallback', 0.40
+  4. stage4_llm_fallback   source + title + first 300 chars of the clean text go to
+                           the LLM (A21). provider 'openai': the Decisions API, one
+                           `choice` question over the 5 names -> 'llm', API confidence
+                           (logged, not stored). Otherwise, or if that call fails or
+                           refuses: a strict one-word text call (_STAGE4_PROMPT)
+                           -> 'llm', 0.90. No LLM configured / failure / bad answer
+                           -> 'misc', 'fallback', 0.40
 
 Centroids (CENTROIDS):
   - initialize_centroids (ENP start): embed the 5 SEED_TEXTS, then override them
@@ -516,16 +520,134 @@ def _parse_category(reply: Any) -> str | None:
     return None
 
 
+def _stage4_fields(item) -> tuple[str, str, str]:
+    """The only item data Stage 4 sends out: source, 200-char title, 300-char snippet."""
+    return (
+        item.get("source") or item.get("source_type") or "unknown",
+        (item.get("title") or "")[:_STAGE4_TITLE_CHARS],
+        (item.get("clean_text") or item.get("raw_text") or "")[:_STAGE4_SNIPPET_CHARS],
+    )
+
+
+# -------------------------
+# Stage 4 via the OpenAI Decisions API (A21, beta; POST /v1/decisions)
+# -------------------------
+# One `choice` question over the 5 category names. The API answers with one of the
+# supplied values (never free text), so there is no reply parsing. Only used when
+# LLM_CONFIG["provider"] == "openai"; any failure drops that item to the one-word path.
+_STAGE4_QUESTION = "Which category best describes this content?"
+_STAGE4_CHOICES = {
+    "work": "Job or professional tasks: meetings, projects, deadlines, clients, code, workplace tools.",
+    "study": "Learning and coursework: lectures, tutorials, textbooks, exams, university or academic material.",
+    "entertainment": "Leisure media: music, games, comedy, memes, trailers, vlogs, viral videos.",
+    "personal": "Private life: family, friends, events, travel, personal messages.",
+    "misc": "Anything else, or too general to place in the other four (news, shopping, general browsing).",
+}
+_STAGE4_DECISION_INPUT = """Source: {source}
+Title: "{title}"
+Snippet: "{snippet}\""""
+
+# Circuit breaker: a persistent failure (beta not enabled for the account, bad key)
+# would otherwise cost every item a failed call plus its retries before the
+# one-word path runs. After this many failures in a row, skip the Decisions API for a while.
+_DECISIONS_MAX_FAILURES = 3
+_DECISIONS_PAUSE_SECONDS = 10 * 60
+
+_decisions_setup = None  # (OpenAIDecisions client, {"category": Choice}) once built
+_decisions_unavailable = False
+_decisions_failures = 0
+_decisions_paused_until = 0.0  # time.monotonic() value
+
+
+def _get_stage4_decisions():
+    """
+    Lazily build the Decisions client and its question. Returns None (for the rest of
+    the process) when the provider is not openai, LLM_CONFIG["decisions_model"] is
+    empty, or langchain-openai is older than 1.7 (no `langchain_openai.decisions`).
+    Timeout and retry limit come from LLM_CONFIG, like every other LLM client.
+    """
+    global _decisions_setup, _decisions_unavailable
+    if _decisions_setup is not None or _decisions_unavailable:
+        return _decisions_setup
+    try:
+        from rse.config import LLM_CONFIG
+
+        model = LLM_CONFIG.get("decisions_model")
+        if LLM_CONFIG["provider"] != "openai" or not model:
+            _decisions_unavailable = True
+            return None
+        from langchain_openai.decisions import Choice, OpenAIDecisions
+
+        client = OpenAIDecisions(
+            model=model,
+            max_retries=LLM_CONFIG.get("max_retries", 2),
+            timeout=LLM_CONFIG.get("timeout"),
+        )
+        question = Choice(instructions=_STAGE4_QUESTION, choices=_STAGE4_CHOICES)
+        _decisions_setup = (client, {"category": question})
+        logger.info("Stage 4 Decisions API ready: %s", model)
+    except Exception as exc:
+        logger.warning("Stage 4 Decisions API unavailable, using the one-word call: %s", exc)
+        _decisions_unavailable = True
+        _decisions_setup = None
+    return _decisions_setup
+
+
+def _stage4_decisions(item):
+    """
+    Ask the Decisions API. Returns (category, 'llm', confidence) or None, meaning "use
+    the one-word path". `confidence` is the API's own 0-1 value; it is only logged,
+    never stored (A21). A refusal or an unexpected value returns None without counting
+    toward the circuit breaker (it is about that item, not about the service).
+    """
+    global _decisions_failures, _decisions_paused_until
+    if time.monotonic() < _decisions_paused_until:
+        return None
+    setup = _get_stage4_decisions()
+    if setup is None:
+        return None
+    client, questions = setup
+
+    source, title, snippet = _stage4_fields(item)
+    request = {
+        "input": _STAGE4_DECISION_INPUT.format(source=source, title=title, snippet=snippet),
+        "questions": questions,
+    }
+    try:
+        response = client.invoke(request)
+    except Exception as exc:
+        _decisions_failures += 1
+        logger.warning("Stage 4 Decisions call failed (%s); using the one-word call", type(exc).__name__)
+        if _decisions_failures >= _DECISIONS_MAX_FAILURES:
+            _decisions_paused_until = time.monotonic() + _DECISIONS_PAUSE_SECONDS
+            _decisions_failures = 0
+            logger.warning("Stage 4 Decisions API paused for %d s after repeated failures", _DECISIONS_PAUSE_SECONDS)
+        return None
+    _decisions_failures = 0
+
+    answer = response.choices.get("category")  # absent when the answer was a refusal
+    if answer is None or answer.choice not in _VALID_CATEGORIES:
+        logger.warning("Stage 4 Decisions gave no usable category (refused=%s); using the one-word call",
+                       "category" in response.refusals)
+        return None
+    return answer.choice, "llm", float(answer.confidence)
+
+
 def stage4_llm_fallback(item):
+    """Decisions API on OpenAI, else (or if that item fails) the strict one-word text call."""
+    result = _stage4_decisions(item)
+    if result is not None:
+        return result
+    return _stage4_one_word(item)
+
+
+def _stage4_one_word(item):
     llm = _get_stage4_llm()
     if llm is None:
         return _FALLBACK
 
-    prompt = _STAGE4_PROMPT.format(
-        source=item.get("source") or item.get("source_type") or "unknown",
-        title=(item.get("title") or "")[:_STAGE4_TITLE_CHARS],
-        snippet=(item.get("clean_text") or item.get("raw_text") or "")[:_STAGE4_SNIPPET_CHARS],
-    )
+    source, title, snippet = _stage4_fields(item)
+    prompt = _STAGE4_PROMPT.format(source=source, title=title, snippet=snippet)
     try:
         response = llm.invoke(prompt)
     except Exception as exc:
