@@ -26,20 +26,21 @@ whenever a decision or change makes it wrong: edit it directly, no need to ask.
 ## 2. Hard constraints — never violate
 
 1. **Database access is allowed (owner's standing permission, 2026-10-22, final-build run before the 28 Oct review).**
-   PostgreSQL/Neon and Redis/Upstash: live queries, test data, migrations and Neon/Upstash operations need no
-   per-task ask. Guardrails that stay: never search for or expose credentials/tokens/.env values; before any
-   destructive step (DROP, bulk DELETE/UPDATE, deleting a branch or project) take a Neon snapshot or branch, count
-   the affected rows first, and report what ran (see Section B of `docs/review/ste_open_items.md`).
-   **Current state (2026-10-23): the live database is still Neon (`echo-dev`) and Redis is still Upstash.** The A31
-   move to local PostgreSQL + Redis is decided but NOT done (no `pg_dump` yet). Run B1–B3 and all DB work against
-   Neon through the Neon MCP until the owner says the local restore is finished; then delete this note.
+   Local PostgreSQL and Redis: live queries, test data and migrations need no per-task ask. Guardrails that stay:
+   never search for or expose credentials/tokens/.env values; before any destructive step (DROP, bulk DELETE/UPDATE)
+   take a `pg_dump -Fc` of `echo_db` into `C:\Users\mdshe\echo_backups\`, count the affected rows first, and report
+   what ran (see Section B of `docs/review/ste_open_items.md`).
+   **Current state (2026-10-24): the live database is LOCAL PostgreSQL 16 (`echo_db`, role `echo`, sessions in UTC)
+   and Redis is LOCAL (WSL Ubuntu, `redis://127.0.0.1:6379/0`).** The A31 restore from Neon is done (16 tables, counts
+   and md5 identical). Neon `echo-dev` and Upstash are frozen fallbacks: do not point any work at them. WSL stops when
+   no process runs in it, and Redis stops with it; keep it up with `wsl -d Ubuntu -u root -- sleep infinity`.
    At the end of a session also verify by compilation:
    `python -m compileall -q backend enp ingestion rse ste wba scripts` and
    `cd frontend && npm run build` (tsc strict + vite).
 2. **The schema is open, but every change must belong to a decided item** (owner's
    decision A31.3, 2026-10-21; the old 16-table lock is lifted). Each change is written
    twice: in `scripts/setup_db.py` (fresh installs) AND as an ALTER/migration SQL for the
-   restored Neon dump; all schema changes happen Thursday, before data cleanup and re-embed.
+   restored local database; all schema changes happen before the full re-embed (B5).
    Unless a decision says otherwise: `system_group_id` must never be NULL (fallback 'misc'),
    and `UNIQUE(source_type, source_id)` dedup is sacred. There is deliberately no settings
    table — runtime settings live in Redis (`ste/settings_store.py`).

@@ -122,6 +122,9 @@ _POOL_MAX = 10
 # connections when its compute suspends (after ~5 idle minutes), and a dead
 # pooled connection would otherwise fail the first query after a pause.
 _IDLE_PING_SECONDS = 60.0
+# Stored timestamps are naive UTC and the local server runs in Asia/Calcutta, so
+# each pooled connection starts in UTC through the libpq startup option (A31.4).
+_SESSION_TIMEZONE_OPTION = "-c timezone=UTC"
 
 _POOL: Optional[psycopg2.pool.ThreadedConnectionPool] = None
 _POOL_LOCK = threading.Lock()
@@ -174,7 +177,13 @@ def _get_pool() -> psycopg2.pool.ThreadedConnectionPool:
             if _POOL is None:
                 if not DATABASE_URL:
                     raise RuntimeError("DATABASE_URL is not configured for the RSE module.")
-                _POOL = psycopg2.pool.ThreadedConnectionPool(_POOL_MIN, _POOL_MAX, DATABASE_URL)
+                _POOL = psycopg2.pool.ThreadedConnectionPool(
+                    _POOL_MIN,
+                    _POOL_MAX,
+                    DATABASE_URL,
+                    # Extra keywords reach psycopg2.connect; every session starts in UTC (A31.4).
+                    options=_SESSION_TIMEZONE_OPTION,
+                )
                 logger.info("RSE connection pool created (min=%d, max=%d)", _POOL_MIN, _POOL_MAX)
     return _POOL
 

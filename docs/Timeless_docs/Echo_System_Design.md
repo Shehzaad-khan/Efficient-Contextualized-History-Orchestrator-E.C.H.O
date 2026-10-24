@@ -247,11 +247,14 @@ sequenceDiagram
 ### 4.1 PostgreSQL — Main Database
 
 - **Role.** The only permanent store. FAISS and most Redis data can be rebuilt from it; it cannot be rebuilt from them.
-- **Where.** Local PostgreSQL 16 (A31.1). The Neon data of the test account is moved over once with `pg_dump` → restore (A31.2).
-  If Neon runs PostgreSQL 17, `pg_dump` 16 refuses the dump; install the 17 client tools first (A31.6).
-- **Time.** Every timestamp is naive UTC. Each connection is forced to UTC (built Thu–Sun, A31.4: SQLAlchemy engine in
-  `ste/postgresql_manager.py`, psycopg2 connect in `rse/search_coordinator.py`, ENP's connection), because a local
-  server would otherwise take the machine's zone (IST) and shift every `NOW()` by 5:30. The UI shows IST.
+- **Where.** Local PostgreSQL 16, database `echo_db`, role `echo` (A31.1). The Neon data of the test account was moved over
+  once on 2026-10-24 with `pg_dump -Fc` (direct Neon host, not the pooler) → `pg_restore` (A31.2). Neon was PostgreSQL 16.15,
+  so the local 16 client tools worked. All 16 tables matched Neon on row counts and row hashes. Neon stays as a frozen fallback.
+- **Time.** Every timestamp is naive UTC. Each connection is forced to UTC (built 2026-10-24, A31.4: SQLAlchemy engine in
+  `ste/postgresql_manager.py`, psycopg2 pool in `rse/search_coordinator.py`, ENP's connection), because a local
+  server would otherwise take the machine's zone (IST) and shift every `NOW()` by 5:30. As a second layer the database itself is
+  set with `ALTER DATABASE ... SET timezone TO 'UTC'` (done by `scripts/setup_db.py`); `scripts/setup_db.py` and
+  `scripts/enp_status.py` open plain connections and rely on it. The UI shows IST.
   One exception: `regret_events.marked_at` is local time (C22).
 - **Access styles (do not mix inside one file).**
   - SQLAlchemy with `:name` parameters — `ste/postgresql_manager.py`; used by `ste/`, `wba/`, `backend/items.py`, the Gmail
@@ -298,7 +301,8 @@ time; `bge-reranker-base` was worse here and 12× slower. What it reads changes 
 ### 4.3 Redis — Signals and Small State
 
 Redis runs locally in WSL Ubuntu (A31.6: `sudo apt install redis-server`; start with
-`wsl -d Ubuntu -u root service redis-server start`). Socket timeout 5 s (`ste/redis_manager.py`). Every key is under `echo:`.
+`wsl -d Ubuntu -u root service redis-server start`). WSL stops when no process runs in it, and Redis stops with it; keep it up
+with `wsl -d Ubuntu -u root -- sleep infinity`. `REDIS_URL=redis://127.0.0.1:6379/0`. Socket timeout 5 s (`ste/redis_manager.py`). Every key is under `echo:`.
 
 | Key | Written by | TTL | Purpose |
 |---|---|---|---|
@@ -1277,20 +1281,22 @@ Shutdown: cancel the poller and cleanup, set the ENP stop event and wait up to 6
 Known gaps: the DB pool is not disposed on shutdown (D1); the Gmail sign-in runs inside a poller worker thread and can hang
 shutdown while the sign-in tab is open (C28; fix: sign in once at startup on a daemon thread, like YouTube).
 
-Local services: PostgreSQL 16 (Windows service), Redis (`wsl -d Ubuntu -u root service redis-server start`), Tesseract (to install
-for OCR, A22). Frontend: `cd frontend && npm run dev` (port 3000). Extension: load unpacked from `extension/`.
-Fresh install: `python scripts/setup_db.py` creates the schema. Status check: `scripts/enp_status.py`.
+Local services: PostgreSQL 16 (Windows service), Redis (`wsl -d Ubuntu -u root service redis-server start`, then keep WSL awake
+with `wsl -d Ubuntu -u root -- sleep infinity` or Redis stops when WSL idles), Tesseract (to install for OCR, A22).
+Frontend: `cd frontend && npm run dev` (port 3000). Extension: load unpacked from `extension/`.
+Fresh install: `python scripts/setup_db.py` creates the schema and sets the database timezone to UTC. Status check: `scripts/enp_status.py`.
 Scheduling: no in-app cron. Centroid recompute runs at ENP start when stale (A36); weekly auto-assign is triggered by the route.
 
 ## 18. Build Plan — Thu 22 to Sun 25 Oct 2026
 
 Thursday, in this order (A31.3 guardrails):
-1. At home before Thursday: `pg_dump` Neon (install PG 17 client tools if Neon runs 17).
-2. Restore into local PostgreSQL 16; start local Redis.
-3. All schema changes (Part II, D9): Table 17, `gmail_attachments.extracted_text`, stored tsvector + GIN, drop
-   `classification_confidence` — in `scripts/setup_db.py` and as ALTER SQL on the restored dump.
-4. Data cleanup on the restored dump: B1 drop the legacy `gmail_memory` table, B2 dedupe `gmail_attachments` per
-   `(memory_id, filename)`, B3 clear open times of Gmail rows never opened (`play_sessions_count = 0`). Count rows first, then run.
+1. Done 2026-10-24: `pg_dump -Fc` of Neon (PostgreSQL 16.15, so no extra client tools were needed).
+2. Done 2026-10-24: restored into local PostgreSQL 16 (`echo_db`); local Redis running in WSL.
+3. All schema changes (Part II, D9): the `gmail_attachments.memory_id` UUID + foreign key fix is done (2026-10-24). Still open: Table 17,
+   `gmail_attachments.extracted_text`, stored tsvector + GIN, drop `classification_confidence` — in `scripts/setup_db.py` and as
+   ALTER SQL on the restored database.
+4. Data cleanup: B1 (drop the legacy `gmail_memory` table), B2 (dedupe `gmail_attachments`) and B3 (clear open times of Gmail rows
+   never opened) were run on Neon on 2026-10-23, before the dump. The restored data already carries them.
 5. A11 transcript test (morning, final by noon).
 6. Model switch and token budget must be in the code before step 7: arctic-xs + query path + `EMBEDDING_VERSION` (A40.1),
    `fit_to_window` with the per-source token budgets (A16). Model chosen 2026-10-21.
@@ -1515,7 +1521,7 @@ attempts; if not built, the paper says "kept apart and can be retried"), A45 (`f
 # Part II — Database Design
 
 Source of truth for DDL: `scripts/setup_db.py` (schema v5.0, 16 tables). Changes marked (built Thu–Sun) are written into
-that file **and** as ALTER SQL on the restored Neon dump, on Thursday (A31.3).
+that file **and** as ALTER SQL on the restored local database, before the full re-embed (B5) (A31.3).
 
 ## D1. Overview
 
@@ -1543,7 +1549,7 @@ Every timestamp column is naive UTC (`TIMESTAMP` without time zone, `NOW()` in a
 | 16 `message_store` | Chat history | SERIAL | Multi-turn conversation history |
 | 17 visit table (built Thu–Sun) | Weak multi-valued 1:N | (TBD at build) | One row per gated Chrome/YouTube visit with its dwell (A1.1, A1.1b) |
 
-Not in the schema: the legacy `gmail_memory` table still exists in the Neon dump and is dropped after the restore (B1).
+Not in the schema: the legacy `gmail_memory` table was dropped on Neon on 2026-10-23 (B1), before the dump, so it does not exist in `echo_db`.
 
 ## D2. Core Design Principles
 
@@ -1626,10 +1632,10 @@ Constraint: `unique_source_entry UNIQUE (source_type, source_id)`.
 | `full_extract_generated_at` | TIMESTAMP | NULL | Same |
 | `extracted_text` | TEXT | | **New (built Thu–Sun, A4).** Full extracted text; kept out of `raw_text`, which stays the real body |
 
-Old rows: B2 removes duplicates (one per `(memory_id, filename)`) after the restore. Likely (staging note of 2026-09-01, not
-re-checked this session): in the Neon database `gmail_attachments.memory_id` is `character varying` with its FK pointing at
-the legacy `gmail_memory`; it must become UUID with the FK to `gmail_metadata` before B1 drops `gmail_memory`. Check the restored
-schema with `\d gmail_attachments` first.
+Old rows: B2 found no duplicates per `(memory_id, filename)` on 2026-10-23 (4 rows). In the restored copy `memory_id` was
+`character varying` with no foreign key (B1 had dropped the table it pointed at). On 2026-10-24 it was changed to UUID with the
+foreign key to `gmail_metadata(memory_id)` ON DELETE CASCADE (A31.3 item a; 4 rows, 0 orphans). `scripts/setup_db.py` already
+declared it this way.
 
 ### Table 5 — `chrome_metadata`
 

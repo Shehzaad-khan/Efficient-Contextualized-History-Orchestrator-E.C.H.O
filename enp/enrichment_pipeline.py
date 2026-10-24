@@ -86,6 +86,9 @@ HYDRATION_GRACE_SECONDS = 600
 # Whitespace characters BTRIM strips, matching Python's str.strip() for our data.
 _SQL_WHITESPACE = " \t\r\n"
 
+# libpq startup option that puts every new connection in UTC.
+_SESSION_TIMEZONE_OPTION = "-c timezone=UTC"
+
 
 def get_database_url() -> str:
     database_url = os.getenv("DATABASE_URL")
@@ -95,7 +98,8 @@ def get_database_url() -> str:
 
 
 def get_connection():
-    return psycopg2.connect(get_database_url())
+    # Session starts in UTC: stored timestamps are naive UTC, the server is Asia/Calcutta (A31.4).
+    return psycopg2.connect(get_database_url(), options=_SESSION_TIMEZONE_OPTION)
 
 
 def fetch_unprocessed_items(

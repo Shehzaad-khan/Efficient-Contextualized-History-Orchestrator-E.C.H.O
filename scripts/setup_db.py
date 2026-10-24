@@ -439,6 +439,19 @@ WHERE table_schema = 'public'
 ORDER BY table_name;
 """
 
+# Decision A31.4: every stored timestamp is naive UTC (DEFAULT NOW()), but a local
+# PostgreSQL server starts in the machine's zone. The app also forces UTC per
+# connection; this makes the database itself UTC for the plain connections
+# (this script, scripts/enp_status.py, psql). ALTER DATABASE needs the database name
+# as an identifier, so it is built with format('%I').
+SET_DATABASE_TIMEZONE_SQL = """
+DO $$
+BEGIN
+    EXECUTE format('ALTER DATABASE %I SET timezone TO ''UTC''', current_database());
+END
+$$;
+"""
+
 VERIFY_GROUPS_SQL = """
 SELECT system_group_id, group_name
 FROM system_groups
@@ -473,8 +486,9 @@ def run_setup():
 
         print("\n[2/4] Creating schema (16 tables + indexes)...")
         cur.execute(SCHEMA_SQL)
+        cur.execute(SET_DATABASE_TIMEZONE_SQL)
         conn.commit()
-        print("      Schema applied.")
+        print("      Schema applied. Database timezone set to UTC.")
 
         print("\n[3/4] Verifying tables...")
         cur.execute(VERIFY_SQL)

@@ -1,5 +1,5 @@
 """
-postgresql_manager.py — shared SQLAlchemy access to PostgreSQL (Neon).
+postgresql_manager.py — shared SQLAlchemy access to PostgreSQL (local server).
 
 One process-wide Engine (and its connection pool) serves every SQLAlchemy
 user: wba/, enp/, backend/items.py, ingestion/gmail and ste/storage_engine.
@@ -38,10 +38,18 @@ logger = logging.getLogger(__name__)
 # Pool settings. pool_size + max_overflow = at most 15 connections per process.
 _POOL_SIZE = 5
 _MAX_OVERFLOW = 10
-# Neon closes idle connections; recycling every 4 min keeps us inside that window.
+# Servers and proxies may drop idle connections; recycling every 4 min keeps us
+# inside that window and replaces any connection that went stale.
 _POOL_RECYCLE_SECONDS = 240
 
-# A query at least this slow is logged at WARNING (Neon round trips are ~0.2-0.9s).
+# Decision A31.4: every stored timestamp is naive UTC (TIMESTAMP, DEFAULT NOW()).
+# The local PostgreSQL server runs in Asia/Calcutta, so each new connection is
+# started in UTC through the libpq startup option; otherwise NOW() would be
+# shifted by 5:30 before it is stored.
+_SESSION_TIMEZONE_OPTION = "-c timezone=UTC"
+
+# A query at least this slow is logged at WARNING (a local query is normally
+# a few ms; Neon round trips were ~0.2-0.9s).
 _SLOW_QUERY_SECONDS = 1.0
 # How much of the SQL text to show in a query log line.
 _QUERY_PREVIEW_CHARS = 120
@@ -63,7 +71,7 @@ def get_engine() -> Engine:
     Double-checked locking: the fast path reads `_engine` without the lock.
     Only the first callers take the lock, and the second check stops two
     threads that raced past the first check from building two engines
-    (two pools = up to 30 Neon connections instead of 15).
+    (two pools = up to 30 PostgreSQL connections instead of 15).
     """
     global _engine
     if _engine is not None:
@@ -76,12 +84,16 @@ def get_engine() -> Engine:
                 hide_parameters=True,
                 # pool_pre_ping issues a validation SELECT 1 before every checkout.
                 # Against Neon in us-east-1 that measured ~190ms of the ~860ms each
-                # operation cost — roughly 4s across a full retrieval query. Recycling
-                # connections well inside Neon's idle window guards staleness instead.
+                # operation cost — roughly 4s across a full retrieval query. On a
+                # local PostgreSQL the ping is cheap, but it is still an extra round
+                # trip per checkout, so it stays off: recycling connections well
+                # inside any server idle window guards staleness instead.
                 pool_pre_ping=False,
                 pool_recycle=_POOL_RECYCLE_SECONDS,
                 pool_size=_POOL_SIZE,
                 max_overflow=_MAX_OVERFLOW,
+                # Passed to psycopg2.connect, so every pooled connection starts in UTC.
+                connect_args={"options": _SESSION_TIMEZONE_OPTION},
             )
             # Never log the URL: it carries the database password.
             logger.info(

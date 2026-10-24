@@ -6,7 +6,7 @@ Working file — committed to the repo from 2026-10-22 so Claude web can read it
 **How to work through it**
 1. Section A is ON HOLD until the first review pass of every file is finished (his decision, 2026-10-17). Then decide A first — it changes what B, C and D look like.
 2. Section C items are done only when we review that file (one-file-at-a-time rule).
-3. Section B needs a Neon snapshot or branch before any statement runs.
+3. Section B needs a backup before any statement runs: a Neon snapshot or branch for Neon (B1–B3, done), a `pg_dump -Fc` of `echo_db` into `C:\Users\mdshe\echo_backups\` for the local database (B5).
 4. Section D is built after the whole review is finished.
 
 Summary: 45 decisions · 5 live-DB repairs · 29 cross-file fixes · 5 build items + 2 later items = **86** (C29 delete the pending-answers file added 2026-10-22; A44 auto-retry of failed ENP items + A45 fresh Gmail poll added 2026-10-21 as stretch; A42 auto-accept confident group suggestions + A43 user groups under system groups added 2026-10-21; A41 Gmail open tracking added 2026-10-21; A40 model choice added 2026-10-21; E2 personal-data import added 2026-10-21; A37–A39 added 2026-10-21: panel retention + spam suggestions, timings review; A5, A6 added 2026-10-15; A7–A24 added 2026-10-17 — all decisions on hold until the review pass ends; A25–A28 added 2026-10-18 and DECIDED, build in Step 2; A25 dependency upgrade DONE 2026-10-18; E1 MCP added 2026-10-18 for after completion).
@@ -844,6 +844,33 @@ Still open — decide each:
   6. Redis: **WSL Ubuntu** (`sudo apt install redis-server`; start before use with
      `wsl -d Ubuntu -u root service redis-server start`). PostgreSQL 16 is already installed natively as a Windows
      service. Check at home before the dump: if Neon runs PG 17, pg_dump 16 refuses -> install PG 17 client tools.
+- **Built 2026-10-24 (restore + UTC + Redis; schema items, B1–B5 and the arctic-xs switch are NOT part of this run):**
+  - Neon was PostgreSQL 16.15 (not 17), so the local 16.12 client dumped it directly. Dump taken from the direct host
+    (not the `-pooler` host) with `pg_dump -Fc --no-owner --no-privileges`; file and baseline are in
+    `C:\Users\mdshe\echo_backups\` (outside the repo, together with `.env` and `data_faiss/` copies).
+  - Local database `echo_db` (it already existed, empty), owner role `echo` (no CREATEDB), `ALTER DATABASE echo_db SET
+    timezone TO 'UTC'`. Restore: `pg_restore --no-owner --no-privileges --exit-on-error`, 0 errors.
+  - Check: all 16 tables have the same row count AND the same md5 of their rows (`md5(string_agg(t::text ... order by
+    t::text))`) as Neon; 36 indexes and 35 constraints on both sides (35 counted before the migration below added the foreign key; 36 now).
+  - Migration SQL run (A31.3 item a), in one transaction: `ALTER TABLE gmail_attachments ALTER COLUMN memory_id TYPE uuid
+    USING memory_id::uuid;` then `ALTER TABLE gmail_attachments ADD CONSTRAINT gmail_attachments_memory_id_fkey FOREIGN
+    KEY (memory_id) REFERENCES gmail_metadata(memory_id) ON DELETE CASCADE;` (4 rows, 0 orphans). `scripts/setup_db.py`
+    already declared this, so no change there.
+  - Schema diff, restored vs fresh `setup_db.py` on a scratch database (dropped afterwards): the only differences are
+    (1) a leftover enum type `userrole` (ADMIN/FACULTY/STUDENT) from the removed auth layer, which nothing uses;
+    (2) the two CHECK constraints print in a different but equivalent form. Neither was changed (no decided item).
+  - UTC per connection (A31.4) built in `ste/postgresql_manager.py`, `rse/search_coordinator.py` (this pool also serves
+    `conversation_memory.py`) and `enp/enrichment_pipeline.py`. Shown on a database WITHOUT the ALTER DATABASE setting:
+    plain connection = Asia/Calcutta, with the option = UTC. `scripts/setup_db.py` and `scripts/enp_status.py` open plain
+    connections and rely on the database-level setting.
+  - Redis: `REDIS_URL=redis://127.0.0.1:6379/0` (WSL Ubuntu, Redis 7.0.15). Upstash held only a test key `foo` and no
+    `echo:*` key, so nothing was copied. WSL stops when no process runs in it and Redis stops with it; hold it with
+    `wsl -d Ubuntu -u root -- sleep infinity`. Open choice: `vmIdleTimeout` in `.wslconfig` (not set).
+  - Smoke test on the local stores: `/health` ok; `POST /retrieval/query` returned 10 results; `/export` 109 items;
+    `enp_status.py`: 0 pending, 0 failed. Found, not caused by the move: FAISS has 110 vectors vs 109 `embedding_index`
+    rows (the B5 re-embed rebuilds the index), and the LLM synthesis step got HTTP 401 from OpenAI (the `OPENAI_API_KEY`
+    in `.env` is rejected).
+  - Neon `echo-dev` and Upstash are untouched. Rollback = put the two lines from `env.neon-upstash.bak` back in `.env`.
 
 ### A32. KNN alone can never create a group suggestion — [x] decided 2026-10-21 (found 2026-10-18, wba/group_manager.py review) — DISCUSS AT THE END
 - Hybrid score = 0.5 × rule_score + 0.5 × knn_score; a suggestion needs score > 0.70 OR a rule match.
@@ -1267,7 +1294,7 @@ Still open — decide each:
 - **If not built:** the paper stays silent (as now); demo pre-flight sends the test mail early, so the 30 s gap
   never shows.
 
-## B. Live Neon actions — your explicit go + snapshot first
+## B. Live database actions — your explicit go + backup first (B1–B3 ran on Neon; B5 runs on local `echo_db`)
 
 | ID | Action | Status |
 |----|--------|--------|
