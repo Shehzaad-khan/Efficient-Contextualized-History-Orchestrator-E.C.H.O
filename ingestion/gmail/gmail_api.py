@@ -4,7 +4,7 @@ Echo Personal Memory System
 
     authenticate_gmail()              OAuth -> Gmail API service object
     sign_in_gmail()                   browser sign-in at backend startup if needed
-    fetch_and_store_new_emails(svc)   one poll: list -> find new -> parse -> store
+    fetch_and_store_new_emails(svc)   one poll: find new ids -> parse -> store
     extract_body(message)             readable body text from a Gmail message
     extract_attachments(message, id)  attachment metadata (no file content)
 
@@ -19,8 +19,16 @@ ste.storage_engine.store_gmail_message):
     gmail_metadata          sender, recipients, labels, thread id, is_sent
     gmail_attachments       filename | mime | size only (Tier 1, CLAUDE.md §3)
 
-Skipped on purpose: drafts (unsent typed text — privacy rule) and senders the
-user excluded in settings.
+Skipped on purpose: drafts (unsent typed text — privacy rule), senders the
+user excluded in settings, and mail in Spam or Trash (A38).
+
+Finding new mail (A5): Redis key echo:gmail:history_id holds the Gmail historyId the
+last successful poll reached. A poll asks history.list for the messages added since
+then (one cheap call when nothing arrived). With no saved id (first start, Redis lost
+or down) or an id Gmail no longer knows (404), it makes ONE full listing of the mailbox
+instead, after reading the mailbox's current historyId, so mail that arrives during
+the listing is seen by the next poll. The id moves forward only when every new email
+of the poll is stored; UNIQUE(source_type, source_id) makes any repeat harmless.
 
 Callers and threads:
     backend.main                     sign_in_gmail() on a daemon thread at startup
@@ -52,8 +60,9 @@ from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 
-from ste import postgresql_manager, settings_store
+from ste import postgresql_manager, redis_manager, settings_store
 from ste.security import read_token_text, write_token_text
 from .config import SCOPES
 from .database import store_in_postgresql
@@ -65,6 +74,8 @@ TOKEN_PATH = PROJECT_ROOT / "token_gmail.json"
 CREDENTIALS_PATH = PROJECT_ROOT / "credentials.json"
 
 _LIST_PAGE_SIZE = 100          # Gmail's messages.list page size
+_HISTORY_PAGE_SIZE = 500       # history.list allows up to 500
+_SKIPPED_LABELS = frozenset({"SPAM", "TRASH"})  # A38: Gmail's own spam marking is the filter
 _MAX_API_ATTEMPTS = 4          # 1 call + 3 retries: waits 2 s, 4 s, 8 s
 _FIRST_RETRY_DELAY_SECONDS = 2
 _MIN_ATTACHMENT_IMAGE_BYTES = 10 * 1024
@@ -488,13 +499,18 @@ def _received_at(message: dict, date_header: str) -> str:
 
 # ── Polling ──────────────────────────────────────────────────────────────────
 
-def _call_with_backoff(fn: Callable[[], Any], what: str) -> Any:
-    """Run one Gmail API call; retry with exponential backoff (2 s, 4 s, 8 s)."""
+def _call_with_backoff(fn: Callable[[], Any], what: str, no_retry_statuses: tuple[int, ...] = ()) -> Any:
+    """Run one Gmail API call; retry with exponential backoff (2 s, 4 s, 8 s).
+
+    An HTTP error whose status is in `no_retry_statuses` is raised at once: the answer
+    will not change (history.list's 404 for a historyId Gmail has forgotten)."""
     delay = _FIRST_RETRY_DELAY_SECONDS
     for attempt in range(1, _MAX_API_ATTEMPTS + 1):
         try:
             return fn()
         except Exception as exc:
+            if isinstance(exc, HttpError) and exc.resp.status in no_retry_statuses:
+                raise
             if attempt == _MAX_API_ATTEMPTS:
                 raise
             logger.warning("Gmail %s failed (attempt %d/%d), retrying in %d s: %s",
@@ -517,6 +533,44 @@ def _list_all_message_ids(service) -> list[str]:
         page_token = results.get("nextPageToken")
         if not page_token:
             return ids
+
+
+def _current_history_id(service) -> str:
+    """The mailbox's current historyId (what a full listing is "as of")."""
+    profile = _call_with_backoff(lambda: service.users().getProfile(userId="me").execute(), "getProfile")
+    return str(profile["historyId"])
+
+
+def _list_new_ids_from_history(service, start_history_id: str) -> tuple[list[str], str]:
+    """Ids of messages added since `start_history_id` (oldest first, no Spam/Trash), and the
+    historyId to save once they are stored. Raises HttpError 404 when Gmail no longer knows
+    the start id: the caller then falls back to a full listing."""
+    ids: list[str] = []
+    seen: set[str] = set()
+    page_token = None
+    latest = start_history_id
+    while True:
+        response = _call_with_backoff(
+            lambda: service.users().history()
+            .list(userId="me", startHistoryId=start_history_id, historyTypes=["messageAdded"],
+                  maxResults=_HISTORY_PAGE_SIZE, pageToken=page_token).execute(),
+            "history.list",
+            no_retry_statuses=(404,),
+        )
+        for record in response.get("history", []):
+            for added in record.get("messagesAdded", []):
+                message = added.get("message", {})
+                message_id = message.get("id")
+                if not message_id or message_id in seen:
+                    continue
+                seen.add(message_id)
+                if _SKIPPED_LABELS.intersection(message.get("labelIds", [])):
+                    continue
+                ids.append(message_id)
+        latest = str(response.get("historyId") or latest)
+        page_token = response.get("nextPageToken")
+        if not page_token:
+            return ids, latest
 
 
 def _already_stored(message_ids: list[str]) -> set[str]:
@@ -587,19 +641,42 @@ def _build_email_data(message_id: str, msg: dict, headers: dict[str, str], recei
 def fetch_and_store_new_emails(service) -> int:
     """One poll. Returns how many emails were newly stored.
 
-    Steps: list every message id -> drop ids already stored -> download each
-    new one -> skip drafts and excluded senders -> store oldest first (so
-    created_at order matches arrival order when ENP picks them up).
+    Steps: find candidate ids (history since the saved historyId, else a full listing)
+    -> drop ids already stored -> download each new one -> skip drafts, Spam/Trash and
+    excluded senders -> store oldest first (so created_at order matches arrival order
+    when ENP picks them up) -> save the new historyId if everything was stored.
     Errors are logged, never raised: the poll loop must keep running.
     """
     with _poll_lock:
         started = time.perf_counter()
         try:
-            all_ids = _list_all_message_ids(service)
-            stored_ids = _already_stored(all_ids)
-            new_ids = [i for i in all_ids if i not in stored_ids and not _still_excluded(i)]
+            saved_history_id = redis_manager.get_gmail_history_id()
+            candidate_ids: list[str] | None = None
+            new_history_id = ""
+            mode = "history"
+            if saved_history_id:
+                try:
+                    candidate_ids, new_history_id = _list_new_ids_from_history(service, saved_history_id)
+                except HttpError as exc:
+                    if exc.resp.status != 404:
+                        raise
+                    logger.warning("Gmail history id is too old; listing the whole mailbox once")
+            if candidate_ids is None:
+                mode = "full"
+                # Read BEFORE listing: mail that arrives while the listing runs is then
+                # inside the next history window instead of falling between the two.
+                new_history_id = _current_history_id(service)
+                candidate_ids = _list_all_message_ids(service)
+            else:
+                # Emails skipped for an excluded sender are re-checked, so un-excluding a
+                # sender still captures them (a full listing finds them by itself).
+                known = set(candidate_ids)
+                candidate_ids += [i for i in _excluded_ids if i not in known]
 
-            drafts = excluded = 0
+            stored_ids = _already_stored(candidate_ids)
+            new_ids = [i for i in candidate_ids if i not in stored_ids and not _still_excluded(i)]
+
+            drafts = excluded = spam = 0
             new_emails: list[tuple[str, dict, dict[str, str], str]] = []
             for message_id in new_ids:
                 msg = _call_with_backoff(
@@ -607,7 +684,11 @@ def fetch_and_store_new_emails(service) -> int:
                     .get(userId="me", id=message_id, format="full").execute(),
                     "messages.get",
                 )
-                if "DRAFT" in msg.get("labelIds", []):
+                labels = msg.get("labelIds", [])
+                if _SKIPPED_LABELS.intersection(labels):
+                    spam += 1  # trashed or marked spam after it arrived
+                    continue
+                if "DRAFT" in labels:
                     # Unsent typed text is never captured. Not cached: once sent,
                     # Gmail may keep the same id with the SENT label instead.
                     drafts += 1
@@ -628,13 +709,24 @@ def fetch_and_store_new_emails(service) -> int:
             for message_id, msg, headers, received_at in new_emails:
                 if store_in_postgresql(_build_email_data(message_id, msg, headers, received_at)):
                     stored += 1
+
+            # store_in_postgresql returns False both for "already stored" and for an error,
+            # so ask the database. Move the saved historyId only when nothing was lost.
+            emails_saved = True
+            if new_emails:
+                present = _already_stored([email[0] for email in new_emails])
+                emails_saved = all(email[0] in present for email in new_emails)
+            if not emails_saved:
+                logger.warning("Gmail poll: some emails were not stored; the next poll will retry them")
+            elif new_history_id and new_history_id != saved_history_id:
+                redis_manager.set_gmail_history_id(new_history_id)
         except Exception:
             logger.exception("Gmail poll failed")
             return 0
 
         logger.info(
-            "Gmail poll: %d in mailbox, %d new, %d stored, %d drafts skipped, "
-            "%d excluded-sender skipped (%.1f s)",
-            len(all_ids), len(new_ids), stored, drafts, excluded, time.perf_counter() - started,
+            "Gmail poll (%s): %d candidates, %d new, %d stored, %d drafts skipped, "
+            "%d spam/trash skipped, %d excluded-sender skipped (%.1f s)",
+            mode, len(candidate_ids), len(new_ids), stored, drafts, spam, excluded, time.perf_counter() - started,
         )
         return stored

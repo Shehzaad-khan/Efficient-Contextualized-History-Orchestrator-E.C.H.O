@@ -333,11 +333,16 @@ Unread mail is searchable but never counts as wellbeing time (§11.2).
 ### 5.2 Ingestion Flow — Step by Step
 
 **Step 1 — poll (every 30 s, `ingestion/gmail/config.py` `CHECK_INTERVAL`).**
-Today `fetch_and_store_new_emails` lists the whole mailbox in pages of 100 and checks ids against the DB in one batched query per page.
-Decided (built Thu–Sun, A5): incremental polling with `history.list` from the `historyId` saved in Redis
-(`echo:gmail:history_id`). On a 404 (id too old) or a missing key, one full listing runs and the new id is saved; the
-dedup constraint makes the fallback safe. The history path must drop messages whose `labelIds` contain `SPAM` or `TRASH`
-(A38; Likely, from memory of the API: `history.list` has no `includeSpamTrash` switch — verify while building).
+Built 2026-10-24 (A5, A38): incremental polling. `fetch_and_store_new_emails` asks `history.list` (`historyTypes=messageAdded`,
+500 per page) for the messages added since the `historyId` saved in Redis (`echo:gmail:history_id`); with nothing new that is one
+cheap call. A missing key (first start, Redis lost or down) or a 404 (id too old) makes it run one full listing instead (100 per
+page, ids checked against the DB in one batched query per page). The full listing reads the mailbox's current `historyId` first,
+so mail that arrives during the listing falls into the next history window. The saved id moves forward only when every new email
+of the poll is in the database (checked with a query, because `store_in_postgresql` returns False both for a duplicate and for an
+error); the dedup constraint makes any repeat harmless. Messages whose `labelIds` contain `SPAM` or `TRASH` are dropped from the
+history ids, and again after `messages.get` (mail trashed after it arrived), because `history.list` has no `includeSpamTrash`
+switch. Emails skipped for an excluded sender are re-checked each poll, so un-excluding captures them (not after a backend
+restart: older excluded mail is no longer re-listed).
 Why not push (Pub/Sub webhook): it needs a GCP topic and a public tunnel, and puts a cloud piece into the local privacy story.
 
 **Step 2 — parse (`ingestion/gmail/gmail_api.py`).** Received time = Gmail `internalDate` (the `Date` header is the

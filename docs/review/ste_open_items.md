@@ -86,7 +86,7 @@ Summary: 45 decisions · 5 live-DB repairs · 29 cross-file fixes · 5 build ite
   - Limit: semantic sees only each attachment's start; deep content is found by keyword only.
   - Build: B5 (Thursday re-embed) must also extract + backfill attachments for the test mailbox.
 
-### A5. Replace Gmail polling with something incremental — [x] decided 2026-10-21 (found 2026-10-15, `gmail_api.py`) — DISCUSS AT THE END
+### A5. Replace Gmail polling with something incremental — [x] decided 2026-10-21, built 2026-10-24 (found 2026-10-15, `gmail_api.py`) — DISCUSS AT THE END
 - **Today:** every 30 s, `fetch_and_store_new_emails` pages through ALL message ids in the mailbox (100 per
   Gmail call). The DB check is now batched, but a 10,000-email mailbox is still 100 Gmail list calls per poll,
   forever, even when nothing arrived.
@@ -110,6 +110,22 @@ Summary: 45 decisions · 5 live-DB repairs · 29 cross-file fixes · 5 build ite
   changes since the saved `historyId` (Redis key `echo:gmail:history_id`). Fallback: on 404 (id too old) or a
   missing key, one full listing, then save the new id. Dedup (`UNIQUE(source_type, source_id)`) makes the fallback
   safe. Why not the webhook: needs GCP Pub/Sub + a tunnel, and puts a cloud piece in the local privacy story.
+- **Built 2026-10-24 (cloud session):** `ingestion/gmail/gmail_api.py` (`_list_new_ids_from_history`, `_current_history_id`,
+  `fetch_and_store_new_emails`) + `ste/redis_manager.py` (`get_gmail_history_id` / `set_gmail_history_id`, key
+  `echo:gmail:history_id`, no TTL; Redis down = full listing, one WARNING per outage).
+  - History call: `historyTypes=["messageAdded"]`, 500 per page, no retry on 404 (`_call_with_backoff(..., no_retry_statuses)`).
+  - Full listing (no key, Redis down, or 404) reads `getProfile().historyId` BEFORE listing.
+  - The id moves forward only when every new email of the poll is in the DB (re-queried; `store_in_postgresql` cannot tell a
+    duplicate from an error). A failed store keeps the old id, so the next poll sees the same window again.
+  - Excluded-sender mail: ids kept in `_excluded_ids` are re-checked each poll, so un-excluding still captures them. After a
+    backend restart that memory is gone, and mail from before the saved id is no longer re-listed (the old full listing
+    re-fetched it): un-excluding a sender does not bring back its OLD mail. Accepted.
+  - Not covered: mail moved OUT of Spam later (no `messageAdded` for it); a label-only change. Accepted.
+  - Checked on a mock Gmail service (9 scenarios: first full sync, idle poll = one call, new mail with spam/trash/sent, store
+    failure then retry, 404 fallback without a sleep, Redis down, excluded then un-excluded sender, mail trashed before the
+    fetch, draft) and on the Redis helpers with a fake client. NOT checked against the real Gmail API: the field names
+    (`history[].messagesAdded[].message.labelIds`, response `historyId`) are from the API docs/memory, so run one live poll
+    and look for "Gmail poll (history)" in `logs/echo.log`.
 
 ### A6. Gmail HTML/body cleaning gaps — [x] decided 2026-10-21, A6.1 + A6.2 built (found 2026-10-15, `gmail_api.py`) — DISCUSS AT THE END
 Fixed already: HTML keeps line breaks (ENP can now strip quotes/signatures), script/style/head/comments/
@@ -1128,6 +1144,10 @@ Still open — decide each:
   - Build: the new `history.list` path (A5) must skip messages whose `labelIds` contain SPAM or TRASH — Likely
     (from memory of the API) history.list has no includeSpamTrash switch, so the list call's default does not
     cover it. Verify when building A5.
+  - **Built 2026-10-24 with A5 (cloud session):** the history ids drop SPAM/TRASH from the `labelIds` the history record
+    carries, and `fetch_and_store_new_emails` checks the labels of the fetched message again (mail trashed after it
+    arrived). Checked on a mock service only; whether a real history record carries `labelIds` is for the live poll to show
+    (if it did not, the second check still catches it, at the cost of one `messages.get`).
   - Fallback if Promotions/Social crowd results in the demo data: skip those two categories too (~30 min).
 
 ### A39. Review every timing and threshold before the final review (his ask, 2026-10-21) — [x] decided 2026-10-21

@@ -202,6 +202,36 @@ def increment_enp_retry_count(memory_id: str) -> int:
     return count
 
 
+GMAIL_HISTORY_ID_KEY = "echo:gmail:history_id"
+_history_id_warned = False  # one WARNING per outage; the 30 s poll would repeat it forever
+
+
+def get_gmail_history_id() -> Optional[str]:
+    """The Gmail historyId the last successful poll reached, or None (no key, or Redis
+    down). None makes the poller do one full listing, which is always safe."""
+    global _history_id_warned
+    try:
+        value = get_sync_client().get(GMAIL_HISTORY_ID_KEY)
+        _history_id_warned = False
+        return value or None
+    except Exception as exc:
+        (logger.debug if _history_id_warned else logger.warning)(
+            "Gmail history id unreadable (%s); the poll will list the whole mailbox", type(exc).__name__)
+        _history_id_warned = True
+        return None
+
+
+def set_gmail_history_id(history_id: str) -> None:
+    """Save the historyId a poll reached. No TTL: a lost key only costs one full listing."""
+    global _history_id_warned
+    try:
+        get_sync_client().set(GMAIL_HISTORY_ID_KEY, str(history_id))
+    except Exception as exc:
+        (logger.debug if _history_id_warned else logger.warning)(
+            "Gmail history id could not be saved (%s); the next poll will list the whole mailbox", type(exc).__name__)
+        _history_id_warned = True
+
+
 def clear_enp_retry_count(memory_id: str) -> None:
     try:
         get_sync_client().delete(enp_retry_key(memory_id))
