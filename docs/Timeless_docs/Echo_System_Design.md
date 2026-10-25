@@ -731,7 +731,9 @@ threshold **and** leads the runner-up by the margin. Result: `'centroid'`.
   (A40) unrelated pairs score ~0.35 higher, so the score part must move up and is re-measured Thursday; the 0.08 lead is the
   portable part (start value, tuned Thursday). The recomputed-centroid 0.55 / 0.08 is the v2.1 value; no decision re-tunes it
   for arctic-xs.
-- **Seeds (A18, built Thu–Sun):** 5–10 real example sentences per category, centroid = their mean. Today: one 7–9-word phrase per category (`SEED_TEXTS`).
+- **Seeds (A18, built 2026-10-25):** 8 example sentences per category (`SEED_TEXTS`), centroid = the mean of their embeddings.
+  The seed-specific threshold above is not built yet: until it is measured on the local data and wired in, seeds still use
+  0.55 / 0.08, so Stage 3 fires rarely on seeds.
 - **Recompute (A20 + A36, built Thu–Sun):** per category, from items classified `structural`, `user_override` or `llm`
   (at least 10, `_MIN_CONFIRMED_FOR_RECOMPUTE`). Balanced: average each source's vectors first, then average the per-source
   means, so Gmail promotions do not define "misc" alone. Triggered at ENP start when `centroids.npz` is missing or > 30 days old.

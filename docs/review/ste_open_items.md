@@ -553,6 +553,25 @@ Still open — decide each:
      category (Stage-1 'structural' labels): pick the lowest score/lead threshold with ZERO wrong (start guess
      0.25 / 0.08). A category with recomputed centroids (A36) goes back to the doc's 0.55 / 0.08. Thursday, after
      the restore (~30 min, local DB read under the standing permission).
+- **Build status 2026-10-25 — part 1 DONE, part 2 STILL TO DO (needs the local DB; run it in the local session):**
+  - **Part 1 built (cloud session, working tree, not committed):** `SEED_TEXTS` in `enp/system_group_classifier.py` is now
+    8 example sentences per category (was one 7–9-word bag), and `initialize_centroids` embeds each sentence and takes
+    the mean as the seed centroid. Not run or measured: the cloud session has no PostgreSQL and no embedding model.
+  - **Part 2 NOT built — the seed-specific Stage-3 threshold. To do in the local session:**
+    1. Read local `echo_db` (standing permission, read-only, no backup needed): pick rows with `classified_by =
+       'structural'` (a known correct category), per source (gmail / chrome / youtube).
+    2. Get each row's stored arctic-embed-xs vector (`get_manager().get_vector()`), score it by `cosine` against the
+       NEW seed centroids only (build them with `initialize_centroids`, ignore `centroids.npz`).
+    3. Sweep score x lead (start guess 0.25 / 0.08; arctic-xs scores unrelated pairs ~0.35 higher than MiniLM, so expect
+       the score part to land higher, the 0.08 lead is the portable part). Pick the **lowest pair with ZERO wrong**
+       answers. Report fires / correct per source, and the best-centroid accuracy without a threshold.
+    4. Add the result as its own constants (e.g. `SEED_MIN_SCORE` / `SEED_MIN_MARGIN`) in `enp/system_group_classifier.py`
+       and change `stage3_centroid` so a category still on its seed uses them, while a category in
+       `_persisted_categories` (recomputed, A36) keeps `CENTROID_MIN_SCORE` 0.55 / `CENTROID_MIN_MARGIN` 0.08.
+       Today `stage3_centroid` still applies 0.55 / 0.08 to the seeds too, so the richer seeds alone may not make
+       Stage 3 fire much more often until this is done. A `TODO(A18 part 2)` marks the constant in code.
+    5. Write the measured numbers here, in design doc §9.3, and remove the TODO comment. This is the same Thursday
+       re-tune as in A40 (and the "Thursday task" line in the A32 area).
 
 ### A19. Stage 4 LLM: one call per item, and the doc contradicts itself on privacy — [x] decided 2026-10-21
 - Doc §9.4: "Items are batched (every few minutes) to minimise API calls — not one call per item." Code: one
@@ -1565,7 +1584,7 @@ The `[x] decided` marks above mean the owner's decision is recorded. They do not
 |----|-------------------------------|
 | A16 | **Built and applied by B5 2026-10-25 (commit c719cdc):** `embedding_generator.fit_to_window` + `topic_extractor` ordered `TextPart`s (see the A16 entry). Closed once B5 has re-embedded with it. |
 | A17 | The 29 hand-added domains are present, but the decided review of the real top 50–100 Stage-4 domains in the restored local data remains open. |
-| A18 | `SEED_TEXTS` are still the short word bags and `CENTROID_MIN_SCORE` remains 0.55; the richer seeds and seed-specific measured threshold are not built. |
+| A18 | **Part 1 built 2026-10-25 (working tree, not committed):** `SEED_TEXTS` are now 8 example sentences per category, averaged in `initialize_centroids`. **Part 2 still open:** the seed-specific Stage-3 threshold must be measured on the local `echo_db` (lowest score/lead with zero wrong) and wired into `stage3_centroid`; `CENTROID_MIN_SCORE` is still 0.55 for seeds. Steps are in the A18 entry. |
 | A23 | Tier-2 attachment content still starts at the beginning of extracted text; query-matched top passages are not selected. This plan conflicts with current AGENTS hard constraint 3 (no dynamic context compression), so hold pending scope reconciliation. |
 | A24 | A24.3 full-text keyword indexing is built, but A24.2 query-matched cleaned-text windows are absent; the synthesizer still uses the leading snippet. This plan conflicts with current AGENTS hard constraint 3 (no dynamic context compression), so hold pending scope reconciliation. |
 | A26 | The agent/tool loop is not wired; `rse/README.md` still lists it under “Not yet wired.” The approved loop changes current AGENTS hard constraint 5 (exactly two LLM calls per query), so hold pending scope reconciliation. |
