@@ -13,15 +13,20 @@ import {
   demoQueryReply,
   demoRecent,
   demoRegret,
+  demoRules,
 } from './demoData'
 import type {
   DailySummary,
+  GroupRule,
   GroupSuggestion,
   HeatmapCell,
   MemoryItem,
   QueryResponse,
   QueryStep,
   RegretAnalytics,
+  RegretReminder,
+  SessionRow,
+  SourceType,
   UserGroup,
   WeeklyInsight,
 } from './types'
@@ -255,6 +260,33 @@ export function createGroup(name: string, description?: string): Promise<UserGro
   )
 }
 
+/** All rules of a group, paused ones included (the rules screen shows both). */
+export function fetchGroupRules(groupId: string): Promise<GroupRule[]> {
+  return withFallback(
+    async () =>
+      (await request<{ rules: GroupRule[] }>(`/wellbeing/groups/${groupId}/rules?include_inactive=true`)).rules,
+    () => demoRules[groupId] ?? [],
+  )
+}
+
+/**
+ * Pause or resume a rule. Unlike the calls above, a failure is NOT answered with
+ * demo data: the toggle must not look saved when it was not, so the caller gets
+ * the error and puts the switch back.
+ */
+export async function setRuleActive(groupId: string, ruleId: string, active: boolean): Promise<void> {
+  if (demoMode) return
+  try {
+    await request<{ is_active: boolean }>(`/wellbeing/groups/${groupId}/rules/${ruleId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ active }),
+    })
+  } catch (error) {
+    void probeBackend()
+    throw error
+  }
+}
+
 export function fetchReviewQueue(): Promise<GroupSuggestion[]> {
   return withFallback(
     async () => (await request<{ suggestions: GroupSuggestion[] }>('/wellbeing/groups/review')).suggestions,
@@ -300,6 +332,36 @@ export function setReminderSettings(enabled: boolean): Promise<{ reminders_enabl
         body: JSON.stringify({ enabled }),
       }),
     () => ({ reminders_enabled: enabled }),
+  )
+}
+
+/** Today's stored sessions; the backend rebuilds today's on every call. */
+export function fetchTodaySessions(): Promise<SessionRow[]> {
+  return withFallback(
+    async () => (await request<{ sessions: SessionRow[] }>('/wellbeing/sessions')).sessions,
+    () => [],
+  )
+}
+
+/** The reminder check. Always null in demo mode: a reminder is the user's own note, never a made-up one. */
+export function fetchRegretReminder(sourceType: SourceType, sessionMinutes: number): Promise<RegretReminder | null> {
+  return withFallback(
+    async () =>
+      (
+        await request<{ reminder: RegretReminder | null }>(
+          `/wellbeing/regret/reminder?source_type=${sourceType}&session_minutes=${Math.floor(sessionMinutes)}`,
+        )
+      ).reminder,
+    () => null,
+  )
+}
+
+export function snoozeRegretRemindersToday(): Promise<void> {
+  return withFallback(
+    async () => {
+      await request<{ snoozed_today: boolean }>('/wellbeing/regret/reminders/snooze', { method: 'POST' })
+    },
+    () => undefined,
   )
 }
 

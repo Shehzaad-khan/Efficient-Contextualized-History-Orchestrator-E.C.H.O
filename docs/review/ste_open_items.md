@@ -9,7 +9,7 @@ Working file — committed to the repo from 2026-10-22 so Claude web can read it
 3. Section B needs a backup before any statement runs: a Neon snapshot or branch for Neon (B1–B3, done), a `pg_dump -Fc` of `echo_db` into `C:\Users\mdshe\echo_backups\` for the local database (B5).
 4. Section D is built after the whole review is finished.
 
-**Audit snapshot — 2026-10-24 (top-level IDs):** 86 entries = **80 complete/resolved + 6 not fully complete**. Counting rule: A1–A45 are owner-decision entries, counted complete when the decision is recorded; their implementation follow-ups are audited separately below. B4 is informational/no action. Breakdown: A 45/45 decisions recorded; B 4 resolved (B1–B3 and informational B4), B5 open; C 29/29 resolved; D 2 complete, D2/D3 open, D5 partial; E1 partial (decision made, implementation absent), E2 open. The six not-fully-complete top-level IDs are B5, D2, D3, D5, E1, E2 (4 open, 2 partial). This top-level count is not a claim that all decided features are implemented.
+**Audit snapshot — 2026-10-24 (top-level IDs):** 86 entries = **80 complete/resolved + 6 not fully complete**. Counting rule: A1–A45 are owner-decision entries, counted complete when the decision is recorded; their implementation follow-ups are audited separately below. B4 is informational/no action. Breakdown: A 45/45 decisions recorded; B 4 resolved (B1–B3 and informational B4), B5 open; C 29/29 resolved; D 2 complete, D2/D3 open, D5 partial; E1 partial (decision made, implementation absent), E2 open. The six not-fully-complete top-level IDs are B5, D2, D3, D5, E1, E2 (4 open, 2 partial). This top-level count is not a claim that all decided features are implemented. **Update 2026-10-25: D3 and D5 are built** (see their entries), so of these six, four remain: B5, D2, E1, E2.
 
 **Implementation follow-ups inside decided A entries (not additional top-level IDs):** 11 decision IDs still have an implementation step open or partial: 7 have build work remaining; 4 conflict with current AGENTS hard constraints (A23/A24 with hard constraint 3, A26 with hard constraint 5, A42 with hard constraint 4). A7 is complete; its previous cross-check row was stale. Their status is checked after A45 below. In particular, A16/A40 are prerequisites for B5; do not run B5 before those decisions' implementation work is complete.
 
@@ -1945,19 +1945,45 @@ The `[x] decided` marks above mean the owner's decision is recorded. They do not
   days once when first asked; or a background task in backend/main.py (C7). Before first use, clear any rows
   built with the old UTC-day logic (`DELETE FROM sessions`, his go).
 
-### D5. No route to pause/resume a group rule — [~] 2026-10-22 route built; UI toggle + dead rules open (found 2026-10-18, wba/group_manager.py review)
+### D5. No route to pause/resume a group rule — [x] 2026-10-25 route + rules screen built (found 2026-10-18, wba/group_manager.py review)
 - `group_manager.set_rule_active` exists (DB Table 14: is_active pauses a rule, keeps match history) but no
   backend route or UI calls it. Also not surfaced: rules with match_count = 0 after 30 days ("dead rules").
 - Build: `PATCH /wellbeing/rules/{rule_id}` {active} + a toggle in the group rules list; or drop from scope.
 - **Built 2026-10-22:** `PATCH /wellbeing/groups/{group_id}/rules/{rule_id}` body `{"active": bool}`; 404 when the rule is not in that group. `set_rule_active(group_id, rule_id, active)` now also checks the group (its only caller is this route). Route is registered (router routes listed). SQL NOT run against Postgres. Left: the toggle in the UI; surfacing dead rules (match_count = 0 after 30 days).
+- **UI built 2026-10-25:** a rules screen at `/groups/:groupId/rules` (`frontend/src/pages/GroupRulesPage.tsx`), reached from the
+  "rules →" link on each goal group in Patterns. It lists the group's rules, paused ones included
+  (`GET /wellbeing/groups/{id}/rules?include_inactive=true`), with a switch per rule that calls the PATCH route. The switch
+  changes at once and goes back, with a short message, if the save fails (`setRuleActive` in `lib/api.ts` does not fall back to
+  demo data, so a failed save never looks saved). Dead rules: an active rule with `match_count = 0` and older than 30 days shows
+  "no matches in 30+ days" (worked out in the page from `created_at`; no backend change). Pausing matches the backend: the matcher
+  loads active rules only. Checked in a browser with demo data and with a mocked backend (toggle, failed save, revert);
+  NOT yet tried against the live backend and database. Not built: adding a rule from the UI (the POST route exists) and showing
+  the step-9 rule suggestions.
 
-### D3. Regret reminders are never shown — [ ] (found 2026-10-18, wba/regret_system.py review)
+### D3. Regret reminders are never shown — [x] 2026-10-25 built in the dashboard (found 2026-10-18, wba/regret_system.py review)
 - `GET /wellbeing/regret/reminder` works (rate limits, cooldown, user's own note) but NO client calls it: the
   extension and frontend only use the enable/disable setting. Nothing reports `session_minutes` either.
 - The payload offers "Got it / Snooze for today / Disable permanently"; only Disable has a backend route
   (`POST /regret/reminders/settings`). Snooze-for-today needs a route (e.g. set the per-type day key).
 - Build: extension polls the route during a long Chrome/YouTube session and shows a non-blocking notice; or
   drop reminders from the final scope and say so (§11.6 marks them optional).
+- **Built 2026-10-25, in the dashboard (not the extension):**
+  - Backend: `POST /wellbeing/regret/reminders/snooze` (`snooze_reminders_today` in `wba/regret_system.py`) fills today's total
+    counter to its cap, the key `maybe_get_reminder` already checks, so nothing else changed. It stops all types for the day,
+    because the per-type cap is 1 and the reminder just shown already used it. 503 when Redis is down. Checked against a real
+    Redis: after a snooze both a new type and the same type return nothing.
+  - Frontend: `components/RegretReminderNotice.tsx`, mounted once in `AppShell`. While the dashboard is open it checks every 2
+    minutes: is today's latest stored session still going (last activity within the 20-minute gap) and at least 15 minutes
+    long? If so it takes the source type of the newest item and asks `GET /wellbeing/regret/reminder`; the backend still applies
+    every other rule (habit, cooldown, limits, disabled). A returned reminder shows as a card in the corner with the user's own
+    note: "Got it", "Snooze for today", "Turn off reminders" (the last also switches the Settings toggle off). It never blocks or
+    takes focus, and shows nothing in demo mode (a reminder is always the user's own note, never a made-up one).
+  - **Limit, on purpose:** it only appears while an Echo dashboard tab is open. The extension was not changed, so a reminder
+    does not pop up on the YouTube/Chrome page itself. That would need a notification or an in-page banner from the extension
+    (`background.js` / `postToBackend`, with the pause flag respected).
+  - The session length comes from stored sessions (dwell sums), not a live timer, so it can trail real time by a few minutes.
+  - Checked in a browser with a mocked backend (card appears, snooze sends the call and closes it); NOT yet tried against the live
+    backend and database with a real regret habit.
 
 ---
 

@@ -286,6 +286,28 @@ def reminders_enabled() -> bool:
         return False
 
 
+def snooze_reminders_today() -> bool:
+    """User control: "Snooze for today" — no more reminders until tomorrow (D3).
+
+    Fills the day's total counter to its cap, the same key maybe_get_reminder
+    already checks, so no new state or check is needed. The per-type counter
+    would not help here: the reminder just shown already used its type's one
+    slot, so only the total cap also stops the other content types.
+    Returns False when Redis is unreachable (the route answers 503).
+    """
+    client = _redis()
+    if client is None:
+        return False
+    total_key = f"echo:regret:reminder:total:{date.today().isoformat()}"
+    try:
+        client.set(total_key, MAX_REMINDERS_TOTAL_PER_DAY, ex=_DAY_TTL_SECONDS)
+    except redis.RedisError as exc:
+        logger.warning("Regret reminder snooze not saved: Redis error (%s)", type(exc).__name__)
+        return False
+    logger.info("Regret reminders snoozed for today")
+    return True
+
+
 def maybe_get_reminder(source_type: str, current_session_minutes: int) -> Optional[dict[str, Any]]:
     """
     Return a reminder payload when ALL conditions hold, else None:

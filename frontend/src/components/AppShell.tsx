@@ -7,6 +7,7 @@ import gsap from 'gsap'
 import { ScrollTrigger } from 'gsap/ScrollTrigger'
 import type { ReactNode } from 'react'
 import ConstellationCanvas from './ConstellationCanvas'
+import RegretReminderNotice from './RegretReminderNotice'
 import { isDemoMode, onDemoModeChange, probeBackend } from '../lib/api'
 
 gsap.registerPlugin(ScrollTrigger)
@@ -144,6 +145,8 @@ export default function AppShell({ children }: { children: ReactNode }) {
           </NavLink>
         ))}
       </nav>
+
+      <RegretReminderNotice />
 
       {/* ── Page ─────────────────────────────────────────────────────────── */}
       <div className="relative z-page pb-24 lg:pb-0 lg:pl-56">

@@ -87,6 +87,17 @@ export interface UserGroup {
   auto_assignment_active: boolean
 }
 
+/** One rule of a goal group (backend wba/group_manager.py `list_rules`). */
+export interface GroupRule {
+  rule_id: string
+  group_id: string
+  rule_type: 'keyword' | 'domain' | 'channel' | 'sender' | 'time_window'
+  rule_value: string
+  is_active: boolean
+  created_at: string
+  match_count: number
+}
+
 export interface GroupSuggestion {
   suggestion_id: string
   memory_id: string
@@ -115,6 +126,21 @@ export interface RegretAnalytics {
   by_hour: { hour: number; regret_count: number }[]
   by_category: { group_name: string; regret_count: number; total_seconds: number }[]
   items: RegrettedItem[]
+}
+
+/** A stored session (GET /wellbeing/sessions). Times are naive UTC strings. */
+export interface SessionRow {
+  session_id: string
+  session_start: string
+  session_end: string
+  total_duration_seconds: number
+}
+
+/** A regret reminder (GET /wellbeing/regret/reminder): always the user's own earlier note. */
+export interface RegretReminder {
+  source_type: SourceType
+  your_note: string
+  options: string[]
 }
 
 export interface WeeklyInsight {

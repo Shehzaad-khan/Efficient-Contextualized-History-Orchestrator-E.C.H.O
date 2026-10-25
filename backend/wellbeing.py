@@ -32,6 +32,7 @@ Endpoints (prefix /wellbeing):
         GET  /regret/analytics                 — rate, by hour, by category, item list
         GET  /regret/reminder                  — rate-limited reminder check
         POST /regret/reminders/settings        — enable/disable reminders
+        POST /regret/reminders/snooze          — no more reminders until tomorrow
     Insights:
         GET  /insights/weekly                  — aggregated weekly insight (LLM or fallback)
 
@@ -78,6 +79,7 @@ from wba.regret_system import (
     regretted_items,
     reminders_enabled,
     set_reminders_enabled,
+    snooze_reminders_today,
     toggle_regret,
 )
 from wba.time_aggregator import activity_heatmap, recent_items
@@ -366,6 +368,17 @@ def regret_reminder_settings(request: ReminderSettingsRequest):
     if not applied:
         raise HTTPException(status_code=503, detail="Reminder settings unavailable (Redis down)")
     return {"reminders_enabled": enabled_now}
+
+
+@router.post("/regret/reminders/snooze")
+def regret_reminder_snooze():
+    try:
+        applied = snooze_reminders_today()
+    except Exception:
+        raise _server_error("regret reminder snooze")
+    if not applied:
+        raise HTTPException(status_code=503, detail="Reminder snooze unavailable (Redis down)")
+    return {"snoozed_today": True}
 
 
 # ── Insights ──────────────────────────────────────────────────────────────────

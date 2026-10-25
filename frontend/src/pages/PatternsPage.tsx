@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
+import { Link } from 'react-router-dom'
 import { Check, Plus, X } from 'lucide-react'
 import PageTitle from '../components/PageTitle'
 import Counter from '../components/Counter'
@@ -139,6 +140,13 @@ function Groups({ groups, onCreate }: { groups: UserGroup[]; onCreate: (name: st
               <p className="meta mt-0.5 text-[9px]">
                 {group.auto_assignment_active ? 'auto-sorting on' : `${Math.max(0, 6 - group.member_count)} more to auto-sort`}
               </p>
+              <Link
+                to={`/groups/${group.group_id}/rules`}
+                className="meta mt-1 inline-block text-[9px] text-ember-400 transition hover:text-ember-300"
+                aria-label={`Rules for ${group.group_name}`}
+              >
+                rules →
+              </Link>
             </div>
           </li>
         ))}

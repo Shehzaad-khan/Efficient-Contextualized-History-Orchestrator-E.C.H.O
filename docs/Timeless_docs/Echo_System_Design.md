@@ -26,7 +26,7 @@ Numbering: §1–§21 keep the section numbers of architecture v2.1, because cod
 ("DB design Table 14"), and adds Table 17. Appendix A lists every change from the earlier design.
 
 Open items at a glance (details in §24): no design decision is open. A1–A45 and E1 are decided; the last four
-(A16, A40, A42, A43) were closed on 21 Oct 2026. Still open are build-or-drop items D3 and D5 (D4 was built on 23 Oct 2026), not design questions.
+(A16, A40, A42, A43) were closed on 21 Oct 2026. D3 and D5 were built on 25 Oct 2026, D4 on 23 Oct 2026.
 
 ---
 
@@ -1087,7 +1087,7 @@ Values stored lowercase; five rule types (`VALID_RULE_TYPES`):
 | time_window | `YYYY-MM-DD,YYYY-MM-DD`, inclusive, on the item's local created date | `2026-01-01,2026-03-31` |
 
 When 5 or more accepted items share a pattern (`RULE_SUGGESTION_MIN_MATCHES = 5`), the UI offers a rule; the user approves it.
-`match_count` counts matches. `PATCH /wellbeing/groups/{group_id}/rules/{rule_id}` pauses or resumes a rule (D5, built 2026-10-22). Still open: a toggle in the UI, and dead rules are not surfaced.
+`match_count` counts matches. `PATCH /wellbeing/groups/{group_id}/rules/{rule_id}` pauses or resumes a rule (D5, route 2026-10-22). The rules screen (`/groups/:groupId/rules`, built 2026-10-25) has a switch per rule, and marks an active rule with no matches in 30+ days.
 
 ### 11.5 Session Computation
 
@@ -1113,8 +1113,10 @@ page, YouTube per video, Shorts per session.
 
 Reminders (optional, rate-limited): only when a habit exists (≥ 3 times in 30 days), the current session is ≥ 15 minutes,
 at most 1 per source type and 2 in total per day, 2 h cooldown, and the user has not disabled them. Content is always the user's
-own earlier note. Open build item (D3): `GET /wellbeing/regret/reminder` works but no client calls it, and only "Disable" has a
-route ("Snooze for today" has none) — build or drop from scope, undecided.
+own earlier note. Built 2026-10-25 (D3): the dashboard checks `GET /wellbeing/regret/reminder` every 2 minutes while a
+stored session is still running and at least 15 minutes long, and shows the note in a small card with "Got it", "Snooze for today"
+(`POST /wellbeing/regret/reminders/snooze`, ends today's reminders) and "Turn off reminders". It appears only while a dashboard
+tab is open; the extension does not show reminders on the page itself.
 
 ### 11.7 LLM-Generated Insights
 
@@ -1513,7 +1515,7 @@ query latency and tokens per round (A25), embed speed of arctic-xs on the real d
 Known gaps (recorded, not yet fixed): C4 — recall does not see new vectors until a restart; C5 — Chrome dwell after the first
 send is lost; C10 — YouTube auto-seek may save videos at 0 s (unverified); C13 — no LLM timeout; C25 — SQLAlchemy errors can
 print bound values into logs (fix: `hide_parameters=True`); C26 — capture settings logged in full (excluded senders);
-D3 — reminders never shown. (C28 and D1 are built.)
+(C28, D1 and D3 are built.)
 
 ## 24. Pending Decisions and Decided-but-Unbuilt Items
 
@@ -1522,7 +1524,7 @@ Still open, as build-or-drop items rather than design questions:
 
 | Id | Topic | Where it matters |
 |---|---|---|
-| D3 / D5 | Build or drop: regret reminders UI, rule pause toggle in the UI (route done). D4 (automatic session building) is built, 2026-10-23 | §11.4–§11.6 |
+| D3 / D5 | Built 2026-10-25: regret reminder card in the dashboard (with a snooze route), rules screen with a pause switch. D4 (automatic session building) is built, 2026-10-23 | §11.4–§11.6 |
 
 **Decided, no build:** A40.2 (keep the cross-encoder model), A41 (Gmail open tracking kept), A43 (user groups stay unlinked).
 
@@ -1783,7 +1785,7 @@ Before first real use, rows built with the old UTC-day logic are cleared (D4 not
 | `group_id` | UUID | NOT NULL, FK CASCADE | |
 | `rule_type` | VARCHAR(30) | NOT NULL | keyword, domain, channel, sender, time_window (checked in code, `VALID_RULE_TYPES`) |
 | `rule_value` | TEXT | NOT NULL | Lowercase |
-| `is_active` | BOOLEAN | TRUE | Pause without losing history (PATCH route built; no UI toggle yet, D5) |
+| `is_active` | BOOLEAN | TRUE | Pause without losing history (PATCH route + rules-screen switch, D5) |
 | `created_at` | TIMESTAMP | `NOW()` | |
 | `match_count` | INTEGER | 0 | Rule usefulness |
 
@@ -2082,8 +2084,8 @@ the project history; "—" where no date was recorded.
 | B5 | Thursday, after schema changes and the A40.1 / A16 code switch | Full re-embed with arctic-xs into a fresh FAISS index |
 | D1 | built 2026-10-22 | Dispose the DB pool on shutdown |
 | D2 | decided via A4/A22 | Full attachment support |
-| D3 | open (build or drop) | Show regret reminders; snooze route |
+| D3 | built 2026-10-25 | Regret reminder card in the dashboard; snooze route |
 | D4 | built 2026-10-23 | Sessions are built on demand (`ensure_sessions_for_day`) |
-| D5 | partly done (route built 2026-10-22) | UI toggle to pause/resume a group rule; surface dead rules |
+| D5 | built 2026-10-25 (route 2026-10-22) | Rules screen: pause/resume switch per rule; quiet rules marked |
 | E1 | decided 2026-10-21 — in this build | Echo as an MCP server: `search_memories`, `get_memory`, `recent_activity` over stdio (§10.11); wellbeing tools optional |
 | E2 | stretch, from Mon 26 Oct | Import personal history (Takeout, Chrome `History`) and an export button; separate branch |
