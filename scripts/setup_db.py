@@ -333,6 +333,8 @@ CREATE TABLE IF NOT EXISTS group_rules (
 -- Human-in-the-loop audit trail. Every classification decision passes here.
 -- decision DEFAULT is 'pending' — items must be explicitly accepted.
 -- CRITICAL: 'auto_accepted' as default breaks the human-in-the-loop guarantee.
+-- Only the A42 confident path (rule match AND KNN >= the KNN bar, wba/group_manager.py)
+-- writes 'auto_accepted' explicitly, with reviewed = FALSE so the weekly review can undo it.
 -- =============================================================================
 CREATE TABLE IF NOT EXISTS group_suggestions (
     suggestion_id UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -344,7 +346,7 @@ CREATE TABLE IF NOT EXISTS group_suggestions (
     knn_score     FLOAT       DEFAULT NULL,
     suggested_at  TIMESTAMP   DEFAULT NOW(),
 
-    -- MUST default to 'pending'. Never 'auto_accepted'.
+    -- MUST default to 'pending'. Never 'auto_accepted' as a default (A42 writes it explicitly).
     decision      VARCHAR(20) DEFAULT 'pending',
 
     -- FALSE = must appear in next weekly review screen.

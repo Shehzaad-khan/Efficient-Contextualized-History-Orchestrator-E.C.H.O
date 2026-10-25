@@ -18,8 +18,8 @@ Endpoints (prefix /wellbeing):
         GET  /groups                           — list groups with member counts
         POST /groups                           — create group
         DELETE /groups/{group_id}              — deactivate (soft delete)
-        GET  /groups/review                    — weekly review queue (Phase 3)
-        POST /groups/auto-assign               — run hybrid classification (Phase 2)
+        GET  /groups/review                    — weekly review queue (Phase 3): pending + auto_accepted (A42)
+        POST /groups/auto-assign               — run hybrid classification (Phase 2); returns auto_accepted count
         GET  /groups/{group_id}/items          — confirmed members
         POST /groups/{group_id}/assign         — manual seeding (Phase 1)
         GET  /groups/{group_id}/rules          — list rules

@@ -39,8 +39,9 @@ Instructions for any AI agent (Antigravity, Cursor, Claude Code, etc.) working o
    - Memory decay / recency-based score boosting.
    - *Do not add these even if generic RAG guides suggest them.*
 4. **Human-in-the-loop for user groups is architecturally enforced:**
-   - No row enters `memory_user_groups` except through `group_suggestions` with an explicit accepted decision.
-   - `wba/group_manager.py` is the only write path. Never bypass it.
+   - No row enters `memory_user_groups` except through `group_suggestions`, and `wba/group_manager.py` is the only write path. Never bypass it.
+   - An item needs the user's explicit accept (`decision='accepted'`), **except the confident path** (owner's decision A42, 2026-10-21): a rule match AND a KNN score >= the shared KNN bar (`KNN_ONLY_THRESHOLD`) is written `decision='auto_accepted'`, `reviewed=FALSE` in one transaction with the membership. It stays in the weekly review, where Remove undoes it. Anything less certain stays `pending`.
+   - Only items the user confirmed (`decision='accepted'`) are used as KNN examples and count toward the 5 confirmed members a group needs before auto-sorting starts. An `auto_accepted` item becomes confirmed only when the user keeps it (or assigns it by hand).
 5. **Exactly 2 LLM calls per retrieval query:**
    - `parse_intent` and `synthesize`.
    - Regardless of widen-loop iterations, everything between them is deterministic Python.
@@ -56,7 +57,7 @@ Instructions for any AI agent (Antigravity, Cursor, Claude Code, etc.) working o
 ## 3. Deliberate Deviations from the Architecture Doc (Do NOT "Fix" These)
 
 - **Re-ranking:** Reciprocal Rank Fusion (RRF, $k=60$) + local cross-encoder (`ms-marco-MiniLM-L-6-v2`) + effort score replaces §10.5's weighted formula. The 20% recency term was intentionally dropped (see prohibited features).
-- **`group_suggestions.decision` defaults to `'pending'`** (DB design v5) — not §15.3's `auto_accepted`. Stricter human-in-the-loop wins.
+- **`group_suggestions.decision` defaults to `'pending'`** (DB design v5) — not §15.3's `auto_accepted` for everything. Only the A42 confident path (rule AND KNN agree) writes `'auto_accepted'`, and those rows stay in the weekly review for undo.
 - **Tier-1 attachment `lightweight_extract`:** Stores filename, MIME type, and size (not the first 500 characters of content) to keep the ingestion hot path fast. Tier-2 (`enp/attachment_processor.py`) extracts full text on demand.
 - **Regret POST toggles:** 1:N event rows (odd count = regretted) instead of separate POST/DELETE routes.
 - **File naming:** File names may differ slightly from the doc's "Key Files" list (e.g. `gmail_api.py` instead of `gmail_connector.py`); functionality is what matters.

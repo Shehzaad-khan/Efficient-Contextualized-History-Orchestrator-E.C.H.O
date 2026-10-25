@@ -138,7 +138,9 @@ function Groups({ groups, onCreate }: { groups: UserGroup[]; onCreate: (name: st
             <div className="shrink-0 text-right">
               <p className="font-mono text-xs text-ink-soft">{group.member_count} items</p>
               <p className="meta mt-0.5 text-[9px]">
-                {group.auto_assignment_active ? 'auto-sorting on' : `${Math.max(0, 6 - group.member_count)} more to auto-sort`}
+                {group.auto_assignment_active
+                  ? 'auto-sorting on'
+                  : `${Math.max(0, 5 - (group.confirmed_count ?? group.member_count))} more to auto-sort`}
               </p>
               <Link
                 to={`/groups/${group.group_id}/rules`}
@@ -200,6 +202,11 @@ function ReviewQueue({
               <div className="flex flex-wrap items-center gap-2">
                 <SourceBadge source={suggestion.source_type} />
                 <span className="meta text-ink-faint">→ {suggestion.group_name}</span>
+                {suggestion.decision === 'auto_accepted' && (
+                  <span className="rounded-pill border border-ember-500/30 px-2 py-0.5 font-mono text-[9px] uppercase tracking-wider text-ember-300">
+                    added automatically
+                  </span>
+                )}
               </div>
               <p className="mt-1 truncate text-sm text-ink-soft">{suggestion.title || '(untitled)'}</p>
             </div>
@@ -209,7 +216,7 @@ function ReviewQueue({
                 onClick={() => onDecide(suggestion.suggestion_id, true)}
                 className="btn-ghost p-2"
                 aria-label={`Keep in ${suggestion.group_name}`}
-                title="Keep"
+                title={suggestion.decision === 'auto_accepted' ? 'Keep' : 'Add to group'}
               >
                 <Check size={14} aria-hidden="true" className="text-moss" />
               </button>
@@ -218,7 +225,7 @@ function ReviewQueue({
                 onClick={() => onDecide(suggestion.suggestion_id, false)}
                 className="btn-ghost p-2"
                 aria-label={`Remove from ${suggestion.group_name}`}
-                title="Remove"
+                title={suggestion.decision === 'auto_accepted' ? 'Remove' : "Don't add"}
               >
                 <X size={14} aria-hidden="true" className="text-youtube" />
               </button>
@@ -349,7 +356,9 @@ export default function PatternsPage() {
               the sunday review{reviewQueue.length > 0 ? ` · ${reviewQueue.length} waiting` : ''}
             </h2>
             <p className="mb-4 text-xs leading-5 text-ink-mute">
-              Echo sorted these into your groups automatically — nothing sticks without your say.
+              Echo never decides alone when it is unsure. If a rule you wrote and the similarity to items you
+              confirmed both agree, the item is added and shown here, where one click undoes it. Anything less
+              certain waits for your yes. Only items you confirmed ever teach Echo.
             </p>
             <ReviewQueue suggestions={reviewQueue} onDecide={handleDecide} />
           </section>

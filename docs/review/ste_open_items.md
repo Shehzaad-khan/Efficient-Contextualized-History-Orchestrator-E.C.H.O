@@ -1532,6 +1532,29 @@ Still open — decide each:
     - Docs that stay yours to change: DB design doc (lines 331, 336-337) and architecture doc §15.3 step 5.
     - Threshold check on Thursday's data (arctic-xs start ~0.65).
 
+- **Built 2026-10-25 (all four parts; tested on a throwaway PostgreSQL 16 with fake vectors, NOT on the live `echo_db`):**
+  - `wba/group_manager.py`: in `_run_auto_assignment`, a rule match AND `knn_score >= KNN_ONLY_THRESHOLD` calls the new
+    `_insert_auto_accepted` (one transaction: `group_suggestions` with `decision='auto_accepted'`, `reviewed=FALSE`,
+    `decided_at=NOW()` + `memory_user_groups` + rule `match_count`). Anything else that was a suggestion before is still
+    `pending`. `KNN_ONLY_THRESHOLD` is the one shared bar (A32 + A42.1). The run now returns `auto_accepted` too.
+  - A42.3: `_CONFIRMED_MEMBER_SQL` leaves out members still marked `auto_accepted`. It is used by `_load_group_context`
+    (KNN examples), `list_groups` (new `confirmed_count`; `auto_assignment_active` = `confirmed_count >= 5`) and
+    `manual_assign`. `member_count` still counts every member. Keep (accept) makes an item confirmed; Remove (reject)
+    deletes the membership (existing path). `manual_assign` on an auto-added item confirms it.
+  - Frontend (`PatternsPage.tsx`): "added automatically" tag on `auto_accepted` rows, new panel wording (A42.4), "N more to
+    auto-sort" counts confirmed members.
+  - `AGENTS.md` constraint 4 and the `decision` default line now carry the A42 exception (they said strict-only before and
+    would have made an agent refuse this build); `setup_db.py` comments updated, no schema change.
+  - Checked: rule+KNN item auto-added and listed in the review; rule-only and KNN-only items stay `pending`; a group
+    with fewer than 5 confirmed members never auto-adds; auto-added items are not KNN examples and do not count toward
+    readiness; Keep raises both; Remove removes the member; a second run adds nothing twice.
+  - **Still to do locally:** re-measure the KNN bar on the real rows (A40 start 0.65; also the "Thursday re-tune" in A32/A40),
+    then set `KNN_ONLY_THRESHOLD`. Until then auto-adds use 0.65 on unmeasured data.
+  - **Found while testing (fixed, same file):** `create_group` and `add_rule` ran `INSERT ... RETURNING` through
+    `postgresql_manager.fetchone`, which never commits under SQLAlchemy 2.x, so the group or rule was reported as created
+    but rolled back. Both now use `transaction()`. If creating a group or rule in the app ever seemed to vanish after a
+    reload, this was why. Not checked on the live DB.
+
 ### A43. User groups as fine-grained children of system groups? — [x] decided 2026-10-21 (his ask, 2026-10-21)
 - His view: user groups should be finer grains of the 5 system groups (work, study, entertainment, personal, misc).
 - Today: NOT like that. `user_groups` has no link to `system_groups` (`scripts/setup_db.py:224`); group_manager
@@ -1592,7 +1615,7 @@ The `[x] decided` marks above mean the owner's decision is recorded. They do not
 | A28 | **Built 2026-10-25 (working tree, not committed):** see the A28 entry. The progress lines are built; streaming the reply text itself is not (see the entry). |
 | A37 | **Built 2026-10-25 (working tree, not committed):** see the A37 entry. Closed. |
 | A40 | **Model switch built 2026-10-25 (commit c719cdc):** arctic-xs, query/document paths, `EMBEDDING_VERSION = "snowflake-arctic-embed-xs-v1"`, refuse-to-load on a version mismatch. Still open: the threshold retune (Stage 9, needs an evaluation question set) and B5.  **2026-10-25 his choice C (no question set yet): the design's start values were set, not measured:** `MIN_TOP_SIMILARITY` 0.35 -> 0.55 (`rse/config.py`), `KNN_ONLY_THRESHOLD` 0.60 -> 0.65 (`wba/group_manager.py`); recomputed-centroid 0.55 / 0.08 left as designed; the seed-centroid threshold needs A18, not built. Sanity check on the real index (105 title questions, 10 made-up unrelated ones): right answers scored 0.641-0.84 (median 0.777), unrelated up to 0.607 (median 0.518); 0.35 blocked 0 of 10 unrelated, 0.55 blocked 8 of 10. The sample suggests ~0.62 would separate it, but it is small and the right-answer questions are title-based (optimistic): measure on a real question set (Stage 9). **Deferred by him 2026-10-25: the recompute of these values (Stage 9 measuring, and the A18 seed threshold) waits until after Sun 25 Oct. He retests everything on live data Mon 26 + Tue 27 Oct, and the values are recomputed from that data before the demo. Until then the option C start values stay. Open item.** |
-| A42 | Group suggestions still require manual acceptance; no confident auto-accept path or threshold is present. The approved auto-accept path conflicts with current AGENTS hard constraint 4 (explicit human acceptance), so hold pending scope reconciliation. |
+| A42 | **Built 2026-10-25:** the confident path, accepted-only KNN examples and readiness count, and the review label are in. **Still open:** the KNN bar `KNN_ONLY_THRESHOLD` (0.65) is a start value and must be re-measured on the local data (shared with A32); see the A42 entry. |
 
 ## B. Live database actions — your explicit go + backup first (B1–B3 ran on Neon; B5 runs on local `echo_db`)
 

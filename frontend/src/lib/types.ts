@@ -84,6 +84,8 @@ export interface UserGroup {
   group_name: string
   description: string | null
   member_count: number
+  /** Members the user confirmed; auto-sorting starts at 5 of these (A42.3). Absent from older backends. */
+  confirmed_count?: number
   auto_assignment_active: boolean
 }
 

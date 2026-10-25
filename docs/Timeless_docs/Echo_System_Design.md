@@ -1022,7 +1022,7 @@ time to today, so past days changed after the fact.
    or any rule matched — so KNN alone can never suggest (its maximum is 0.5). Decided (A32, built Thu–Sun): suggest when any
    rule matches, **or** (no rule match) `knn_score ≥` the **KNN bar** (start value 0.65 with arctic-xs, tuned Thursday; was
    ~0.60 on MiniLM). An item gets at most one suggestion per group, ever.
-   - **Auto-accept the confident ones (A42, decided 2026-10-21, built Thu–Sun).** A suggestion is auto-accepted only when a rule
+   - **Auto-accept the confident ones (A42, decided 2026-10-21, built 2026-10-25).** A suggestion is auto-accepted only when a rule
      matches **and** `knn_score ≥` the same KNN bar (one shared constant with A32). Two independent signals must agree; either
      one alone stays `pending`. The confident path writes `group_suggestions` (`decision = 'auto_accepted'`, `reviewed = FALSE`,
      `decided_at = NOW()`) and `memory_user_groups` in one transaction (Part II, D6). It fires only for KNN-ready groups, so a new
@@ -1268,7 +1268,7 @@ The full database design is Part II. §15.1 and §15.2 of v2.1 moved there (D5 r
 | 2 | Rule engine | active `group_rules` of each group matched against the item |
 | 3 | KNN check (group has ≥ 5 confirmed items, A39) | cosine to confirmed members (`decision = 'accepted'` only, A42.3) via FAISS `get_vector`; mean of the top 3 = `knn_score` |
 | 4 | Scoring | `rule_score` = matched / active rules; `knn_score` |
-| 5 | Threshold | Confident — rule match **and** `knn_score ≥` KNN bar (A42, built Thu–Sun) → one transaction: `INSERT group_suggestions (decision = 'auto_accepted', reviewed = FALSE, decided_at = NOW())` + `INSERT memory_user_groups`. Otherwise any rule match, or (no rule match) `knn_score ≥` KNN bar (A32) → `INSERT group_suggestions (decision = 'pending', reviewed = FALSE)`, nothing written to `memory_user_groups`. KNN bar: start value 0.65, tuned Thursday |
+| 5 | Threshold | Confident — rule match **and** `knn_score ≥` KNN bar (A42, built 2026-10-25) → one transaction: `INSERT group_suggestions (decision = 'auto_accepted', reviewed = FALSE, decided_at = NOW())` + `INSERT memory_user_groups`. Otherwise any rule match, or (no rule match) `knn_score ≥` KNN bar (A32) → `INSERT group_suggestions (decision = 'pending', reviewed = FALSE)`, nothing written to `memory_user_groups`. KNN bar: start value 0.65, tuned Thursday |
 | 6 | Review screen (weekly) | `SELECT … FROM group_suggestions WHERE reviewed = FALSE` — `pending` rows and `auto_accepted` rows (labelled "added automatically") |
 | 7 | User accepts / Keep | Pattern B: `decision = 'accepted', reviewed = TRUE, decided_at = NOW()` + `INSERT memory_user_groups … ON CONFLICT DO NOTHING`, one transaction |
 | 8 | User rejects / Remove | `decision = 'rejected', reviewed = TRUE` + `DELETE` the membership (the undo for an auto-add); the item is never suggested to that group again |
@@ -1799,11 +1799,11 @@ Before first real use, rows built with the old UTC-day logic are cleared (D4 not
 | `rule_score` | FLOAT | NULL | Share of active rules matched |
 | `knn_score` | FLOAT | NULL | Mean cosine of the 3 most similar confirmed members |
 | `suggested_at` | TIMESTAMP | `NOW()` | |
-| `decision` | VARCHAR(20) | `'pending'` | pending, accepted, rejected, auto_accepted (A42, built Thu–Sun). No CHECK. **Must default to `'pending'`**; `setup_db.py` verifies it. Only the confident path writes `'auto_accepted'`, explicitly |
+| `decision` | VARCHAR(20) | `'pending'` | pending, accepted, rejected, auto_accepted (A42, built 2026-10-25). No CHECK. **Must default to `'pending'`**; `setup_db.py` verifies it. Only the confident path writes `'auto_accepted'`, explicitly |
 | `reviewed` | BOOLEAN | FALSE | FALSE = listed in the weekly review queue (pending and auto_accepted rows); set TRUE by Keep / accept or Remove / reject |
 | `decided_at` | TIMESTAMP | NULL | Set on accept / reject, and at insert for an auto-accepted row |
 
-A42 (decided 2026-10-21, built Thu–Sun): a rule match AND `knn_score ≥` the KNN bar writes this row with
+A42 (decided 2026-10-21, built 2026-10-25): a rule match AND `knn_score ≥` the KNN bar writes this row with
 `decision = 'auto_accepted'`, `reviewed = FALSE`, together with the membership (Pattern B2). Keep turns it into `accepted`;
 Remove turns it into `rejected` and deletes the membership. No schema change (`decision` is VARCHAR(20) with no CHECK).
 
@@ -1924,7 +1924,7 @@ erDiagram
 suggestion) → `INSERT memory_user_groups … ON CONFLICT DO NOTHING` → COMMIT. Reject / Remove is the same transaction shape with
 `decision = 'rejected'` and `DELETE` of the membership.
 
-**Pattern B2 — confident auto-accept (A42, built Thu–Sun, `wba/group_manager.py`).** One transaction:
+**Pattern B2 — confident auto-accept (A42, built 2026-10-25, `wba/group_manager.py`).** One transaction:
 `INSERT group_suggestions (decision = 'auto_accepted', reviewed = FALSE, decided_at = NOW())` → `INSERT memory_user_groups` →
 COMMIT. The row then waits in the weekly review, where Keep or Remove runs Pattern B.
 
