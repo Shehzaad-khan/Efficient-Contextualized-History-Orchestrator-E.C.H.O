@@ -80,8 +80,8 @@ check_attachments → [fetch_attachment | fetch_api] → synthesize   LLM Call 2
   user's local dates and are converted with `local_to_utc_naive` before every comparison.
 - **No recency boosting anywhere.** The effort score is engagement depth only
   (dwell/watch time, scroll, revisits, interactions, completion); the keyword
-  branch never falls back to a "most recent items" list. Recency decay, MMR and
-  context compression are explicitly out of scope.
+  branch never falls back to a "most recent items" list. Recency decay and MMR
+  are explicitly out of scope (query-matched passage selection, A23/A24, was allowed on 2026-10-21).
 - **Graceful degradation everywhere**: FAISS unavailable → keyword-only
   retrieval; cross-encoder unavailable → RRF order + effort; synthesis LLM
   failure → deterministic list in the same answer format; dead pooled DB

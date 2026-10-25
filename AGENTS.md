@@ -7,13 +7,13 @@ Instructions for any AI agent (Antigravity, Cursor, Claude Code, etc.) working o
 
 ## 1. What This Project Is
 
-**E.C.H.O (Efficient Contextualized History Orchestrator)** is a local-first, single-user personal memory system. It captures Gmail, Chrome, and YouTube activity through strict intent gates, enriches content in the background, and answers natural-language multi-turn queries through a deterministic LangGraph retrieval graph with **exactly 2 LLM calls per query**. A digital wellbeing module reflects time patterns without judging.
+**E.C.H.O (Efficient Contextualized History Orchestrator)** is a local-first, single-user personal memory system. It captures Gmail, Chrome, and YouTube activity through strict intent gates, enriches content in the background, and answers natural-language multi-turn queries through a LangGraph retrieval graph whose search is deterministic Python, with **usually 2 LLM calls per query, at most 6** (A26). A digital wellbeing module reflects time patterns without judging.
 
 **Source of Truth:**
 - `docs/Timeless_docs/Echo_System_Design.md` (architecture + database design in one file; replaced `Echo_Architecture_Design.md` and `Echo_DB_Design.md` on 2026-10-21)
 
 > [!IMPORTANT]
-> When code and documentation disagree, check **§3 (Deliberate Deviations)** first — some deviations are deliberate and approved. **Never edit the design document under `docs/Timeless_docs/` unless the owner asks.**
+> When code and documentation disagree, check **§3 (Deliberate Deviations)** first — some deviations are deliberate and approved. The owner gave standing permission (2026-10-22) to update the design document whenever a decision or change makes it wrong: edit it directly, no need to ask. The LLD under `docs/Phase III/` is stale on purpose (owner, 2026-10-24): do not update it.
 
 ---
 
@@ -35,16 +35,16 @@ Instructions for any AI agent (Antigravity, Cursor, Claude Code, etc.) working o
    - There is deliberately no settings table — runtime settings live in Redis (`ste/settings_store.py`).
 3. **Prohibited RSE features (Owner's explicit architectural decision):**
    - MMR / diversity re-ranking.
-   - Dynamic context compression.
    - Memory decay / recency-based score boosting.
    - *Do not add these even if generic RAG guides suggest them.*
+   - Query-matched passage selection ("contextual compression") is **allowed** since the owner's A23 follow-up (2026-10-21), which removed that prohibition.
 4. **Human-in-the-loop for user groups is architecturally enforced:**
    - No row enters `memory_user_groups` except through `group_suggestions`, and `wba/group_manager.py` is the only write path. Never bypass it.
    - An item needs the user's explicit accept (`decision='accepted'`), **except the confident path** (owner's decision A42, 2026-10-21): a rule match AND a KNN score >= the shared KNN bar (`KNN_ONLY_THRESHOLD`) is written `decision='auto_accepted'`, `reviewed=FALSE` in one transaction with the membership. It stays in the weekly review, where Remove undoes it. Anything less certain stays `pending`.
    - Only items the user confirmed (`decision='accepted'`) are used as KNN examples and count toward the 5 confirmed members a group needs before auto-sorting starts. An `auto_accepted` item becomes confirmed only when the user keeps it (or assigns it by hand).
-5. **Exactly 2 LLM calls per retrieval query:**
-   - `parse_intent` and `synthesize`.
-   - Regardless of widen-loop iterations, everything between them is deterministic Python.
+5. **LLM calls per retrieval query: usually 2, max 6** (owner's decision A26, 2026-10-18):
+   - Luna calls a `search_memories` tool for up to 5 rounds; after round 5 the next call must answer. The cap is enforced in code, never only in the prompt.
+   - The search itself (FTS + FAISS, RRF, cross-encoder, neighbourhood) is deterministic Python.
 6. **Privacy boundaries:**
    - The LLM receives only query text, short snippets, and aggregated numbers — never raw email/page bodies, full transcripts, or full database rows.
    - Incognito browsing, typed text, and app-page content (Slack/Notion/Jira) are never captured.
@@ -58,8 +58,14 @@ Instructions for any AI agent (Antigravity, Cursor, Claude Code, etc.) working o
 
 - **Re-ranking:** Reciprocal Rank Fusion (RRF, $k=60$) + local cross-encoder (`ms-marco-MiniLM-L-6-v2`) + effort score replaces §10.5's weighted formula. The 20% recency term was intentionally dropped (see prohibited features).
 - **`group_suggestions.decision` defaults to `'pending'`** (DB design v5) — not §15.3's `auto_accepted` for everything. Only the A42 confident path (rule AND KNN agree) writes `'auto_accepted'`, and those rows stay in the weekly review for undo.
-- **Tier-1 attachment `lightweight_extract`:** Stores filename, MIME type, and size (not the first 500 characters of content) to keep the ingestion hot path fast. Tier-2 (`enp/attachment_processor.py`) extracts full text on demand.
+- **Embeddable text and embedding model (A16 + A40, 2026-10-21):** short hints first, long parts last, cut to the model's own token window with its tokenizer; the stored `embeddable_text` is exactly what was embedded. Model = snowflake-arctic-embed-xs (512 tokens, 384-d), replacing all-MiniLM-L6-v2 (`EMBEDDING_VERSION = "snowflake-arctic-embed-xs-v1"`).
+- **Tier-1 attachment `lightweight_extract`:** Stores filename, MIME type, and size (not the first 500 characters of content) to keep the ingestion hot path fast. The ENP worker extracts the full text later (`enp/attachment_processor.extract_full_text`, A4) into `gmail_attachments.extracted_text`; the on-demand Tier-2 path still exists for the query.
 - **Regret POST toggles:** 1:N event rows (odd count = regretted) instead of separate POST/DELETE routes.
+- **Session gap is 20 minutes**, not §11.5's 5 (owner's decision, 2026-10-18; `wba/wellbeing_analytics.py` `SESSION_GAP_MINUTES`).
+- **No email signature removal** (A12, 2026-10-21), not §5.2/§9.1's "remove signatures": the heuristic cut real body text.
+- **App pages (Slack/Notion/Jira) are stored as per-page memory items** with their tab title and `raw_text = NULL` (A8, 2026-10-21), not §6.5's "session duration only". Their text is never captured.
+- **Stage-4 classification runs per ambiguous item**, inside the ENP batch, not one batched call as §9.4 says (A19). It sends the source, a title capped at 200 characters and a clean-text snippet capped at 300 characters, never full emails, pages or transcripts. A missing LLM, a failed call or an invalid category falls back to `misc` with `classified_by = 'fallback'`.
+- **Conversation history keeps the `PostgresChatMessageHistory` table format, not the class:** `rse/conversation_memory.py` reads and writes the `message_store` table directly through the RSE psycopg2 pool.
 - **File naming:** File names may differ slightly from the doc's "Key Files" list (e.g. `gmail_api.py` instead of `gmail_connector.py`); functionality is what matters.
 
 ---
