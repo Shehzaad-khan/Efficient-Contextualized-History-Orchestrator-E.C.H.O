@@ -70,6 +70,7 @@ from ingestion.gmail.router import router as gmail_router
 from backend.retrieval import router as retrieval_router
 from backend.items import router as items_router
 from rse.conversation_memory import cleanup_old_sessions
+from ste.retention import purge_expired_items
 from ste.redis_manager import get_async_client
 from ste import postgresql_manager
 
@@ -126,6 +127,15 @@ async def _stop_enp_worker(enp_task: asyncio.Task, stop_event: threading.Event) 
         logger.exception("ENP background worker ended with an error")
 
 
+def _run_retention() -> None:
+    """Run the retention purge once; a failure is logged, never raised, so the
+    backend still starts (the purge simply tries again at the next start)."""
+    try:
+        purge_expired_items()
+    except Exception:
+        logger.exception("Retention purge failed")
+
+
 async def _connect_redis() -> bool:
     """Create the shared async Redis client and check it answers.
 
@@ -166,6 +176,9 @@ async def lifespan(app: FastAPI):
     # cleanup_old_sessions logs its own result and never raises.
     cleanup_task = asyncio.create_task(asyncio.to_thread(cleanup_old_sessions), name="message-cleanup")
 
+    # A37: delete items older than the user's retention window (default: keep forever).
+    retention_task = asyncio.create_task(asyncio.to_thread(_run_retention), name="retention")
+
     # Plain daemon threads, not asyncio.to_thread: either sign-in can wait in
     # the browser for as long as the user takes, and Python's exit drops daemon
     # threads instead of waiting for them. The sign-in functions log their own
@@ -177,9 +190,9 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         # Shutdown
-        for task in (gmail_task, cleanup_task):
+        for task in (gmail_task, cleanup_task, retention_task):
             task.cancel()
-        await asyncio.gather(gmail_task, cleanup_task, return_exceptions=True)
+        await asyncio.gather(gmail_task, cleanup_task, retention_task, return_exceptions=True)
 
         await _stop_enp_worker(enp_task, enp_stop_event)
         postgresql_manager.dispose_engine()

@@ -1,11 +1,19 @@
 """
-embedding_generator.py — text -> 384-d MiniLM vectors (architecture §5, §9; ENP module)
+embedding_generator.py — text -> 384-d arctic-embed-xs vectors (architecture §5, §9; ENP module)
 Echo Personal Memory System
 
 Callers:
-  enp/enrichment_pipeline.py      item embeddings (ENP thread), centroid seeds
-  rse/search_coordinator.py       query variants  (FastAPI threadpool, per request)
-  rse/time_anchor.py              anchor query    (FastAPI threadpool, per request)
+  enp/enrichment_pipeline.py      item embeddings (ENP thread), centroid seeds -> document path
+  rse/search_coordinator.py       query variants  (FastAPI threadpool, per request) -> query path
+  rse/time_anchor.py              anchor query    (FastAPI threadpool, per request) -> query path
+
+Two paths, one model. snowflake-arctic-embed-xs is trained for asymmetric search: a
+question is embedded with the prompt "Represent this sentence for searching relevant
+passages: " in front, a document with no prompt. The query prompt comes from the model's
+own config (model.prompts), not from a string here; the empty "document" prompt is
+sentence-transformers' default for a model that defines none (get_model() checks both
+values). Stored items and centroid seeds always take the document path; only text
+typed as a question takes the query path.
 
 One shared SentenceTransformer per process, loaded on first use (~1-3 s).
 
@@ -18,12 +26,12 @@ Threading (checked by simulation, 2026-10-17):
     threads: no errors, vectors identical to single-threaded ones), so encode()
     is not locked and a query never waits for an ENP batch.
 
-Vectors come out unit-length (norm 1.0): all-MiniLM-L6-v2 ends with a Normalize
-layer, so normalize_embeddings=False changes nothing. Checked 2026-10-17: the
-loaded model is Transformer -> Pooling -> Normalize, and all 110 vectors in the
-saved FAISS index have norm 1.0. For unit vectors, L2 order equals cosine order;
-the cosine that ste/faiss_manager.py computes is therefore correct, just no
-longer necessary for ranking.
+Vectors come out unit-length (norm 1.0): the model ends with a Normalize layer
+(Transformer -> Pooling(cls) -> Normalize, checked 2026-10-25), so
+normalize_embeddings=False changes nothing. _validate_embeddings enforces it:
+a vector whose norm is not 1.0 +- 0.001 raises instead of reaching the index. For
+unit vectors, L2 order equals cosine order; the cosine that ste/faiss_manager.py
+computes is therefore correct, just no longer necessary for ranking.
 Changing the model or normalization requires a new
 ste.faiss_manager.EMBEDDING_VERSION and a full re-embed.
 
@@ -40,6 +48,7 @@ under an existing FAISS index through a silent upstream update.
 
 from __future__ import annotations
 
+from bisect import bisect_right
 import logging
 import os
 from pathlib import Path
@@ -49,13 +58,20 @@ from typing import Any, Sequence
 
 import numpy as np
 
+from enp.topic_extractor import TextPart
 from rse.config import CROSS_ENCODER_MODEL
 from ste.faiss_manager import VECTOR_DIMENSION
 
-MODEL_NAME = "all-MiniLM-L6-v2"
-MODEL_REPO_ID = f"sentence-transformers/{MODEL_NAME}"
+MODEL_REPO_ID = "Snowflake/snowflake-arctic-embed-xs"
 DEFAULT_BATCH_SIZE = 32
 HF_OFFLINE_ENV = "HF_HUB_OFFLINE"
+# Names of the two entries of model.prompts (the query one is defined by the model's
+# config, the document one is empty by sentence-transformers' default).
+DOCUMENT_PROMPT_NAME = "document"
+QUERY_PROMPT_NAME = "query"
+UNIT_NORM_TOLERANCE = 0.001
+# fit_to_window tokenizes at most this many characters of one part (see _window_prefix).
+PREFIX_CHARS = 40_000
 
 logger = logging.getLogger(__name__)
 
@@ -124,27 +140,135 @@ def get_model():
             ) from exc
 
         started_at = time.perf_counter()
-        logger.info("Loading embedding model %s", MODEL_NAME)
+        logger.info("Loading embedding model %s", MODEL_REPO_ID)
         try:
-            loaded = SentenceTransformer(MODEL_NAME)
+            loaded = SentenceTransformer(MODEL_REPO_ID)
         except Exception:
             if _offline_set_here:
                 # e.g. a half-finished earlier download left an incomplete snapshot.
                 logger.error(
                     "Offline load of %s failed. Delete its folder in %s or set %s=0, then restart",
-                    MODEL_NAME,
+                    MODEL_REPO_ID,
                     _hub_cache_dir(),
                     HF_OFFLINE_ENV,
                 )
             raise
+        # Check the VALUES: sentence-transformers gives every model both keys, with "" for
+        # a prompt the model does not define, so a key-presence test can never fail.
+        # An empty query prompt would embed questions as documents (no error, worse search).
+        # A non-empty document prompt would be missing from the 510-token budget in
+        # fit_to_window, which is computed on the bare text.
+        if not loaded.prompts.get(QUERY_PROMPT_NAME):
+            raise RuntimeError(f"{MODEL_REPO_ID} has no {QUERY_PROMPT_NAME!r} prompt; found {loaded.prompts}")
+        if loaded.prompts.get(DOCUMENT_PROMPT_NAME):
+            raise RuntimeError(
+                f"{MODEL_REPO_ID} has a {DOCUMENT_PROMPT_NAME!r} prompt; fit_to_window does not count its tokens"
+            )
         logger.info(
             "Embedding model %s loaded on %s in %.0f ms",
-            MODEL_NAME,
+            MODEL_REPO_ID,
             loaded.device,
             (time.perf_counter() - started_at) * 1000,
         )
         _model = loaded
         return loaded
+
+
+def _content_token_budget() -> int:
+    """Tokens of text the model reads: its window minus the special tokens ([CLS], [SEP])."""
+    model = get_model()
+    return int(model.max_seq_length) - model.tokenizer.num_special_tokens_to_add(pair=False)
+
+
+def _token_end_offsets(text: str) -> list[int]:
+    """End character of each content token of text (no special tokens), in order."""
+    encoded = get_model().tokenizer(
+        text, add_special_tokens=False, return_offsets_mapping=True, verbose=False
+    )
+    return [end for _, end in encoded["offset_mapping"]]
+
+
+def _window_prefix(text: str, budget: int) -> str:
+    """text, or its first PREFIX_CHARS (cut at a space) when that already holds more than a window of tokens.
+
+    The output never uses more than `budget` tokens of one part, so a multi-megabyte
+    attachment need not be tokenized whole. Cutting at whitespace keeps the tokens of
+    the prefix identical to the first tokens of the full text.
+    """
+    if len(text) <= PREFIX_CHARS:
+        return text
+    cut = PREFIX_CHARS
+    while cut > 0 and not text[cut - 1].isspace() and not text[cut].isspace():
+        cut -= 1
+    prefix = text[:cut].rstrip() if cut > 0 else text[:PREFIX_CHARS]
+    return prefix if len(_token_end_offsets(prefix)) > budget else text
+
+
+def _cut_to_tokens(text: str, token_ends: list[int], max_tokens: int) -> str:
+    """The longest start of text that has at most max_tokens tokens and ends on a whole word.
+
+    A word is a run without whitespace. A text that is one single word has no
+    boundary to back off to, so it is cut at the token instead.
+    """
+    if max_tokens >= len(token_ends):
+        return text
+    if max_tokens <= 0:
+        return ""
+    cut = token_ends[max_tokens - 1]
+    if cut < len(text) and not text[cut].isspace():
+        word_start = cut
+        while word_start > 0 and not text[word_start - 1].isspace():
+            word_start -= 1
+        if word_start > 0:
+            cut = word_start
+    return text[:cut].rstrip() or text[: token_ends[max_tokens - 1]]
+
+
+def fit_to_window(parts: Sequence[TextPart]) -> str:
+    """Join the parts into the text the model will embed, cut to its window with its own tokenizer.
+
+    The window is read from the model (max_seq_length minus special tokens), not
+    hard-coded. Steps:
+      1. In order, each part takes min(its tokens, its max_tokens, what is left).
+         A part with max_tokens None is kept whole unless the window runs out.
+      2. Room still left (a short last part, a word-boundary backoff) goes back to
+         the parts that were cut, in order: no body is cut while room is unused.
+      3. A final re-tokenization of the joined text is the safety net.
+    Cuts fall on whole words. The result is what must be stored as embeddable_text.
+    """
+    budget = _content_token_budget()
+    texts = [_window_prefix((part.text or "").strip(), budget) for part in parts]
+    kept = [index for index, text in enumerate(texts) if text]
+    if not kept:
+        return ""
+
+    token_ends = {index: _token_end_offsets(texts[index]) for index in kept}
+    cuts: dict[int, str] = {}
+    used: dict[int, int] = {}
+    remaining = budget
+    for index in kept:
+        cap = parts[index].max_tokens
+        allowed = min(len(token_ends[index]), remaining, cap if cap is not None else remaining)
+        cuts[index] = _cut_to_tokens(texts[index], token_ends[index], allowed)
+        used[index] = bisect_right(token_ends[index], len(cuts[index]))
+        remaining -= used[index]
+
+    for index in kept:
+        if remaining <= 0:
+            break
+        if used[index] >= len(token_ends[index]):
+            continue
+        cuts[index] = _cut_to_tokens(texts[index], token_ends[index], used[index] + remaining)
+        new_used = bisect_right(token_ends[index], len(cuts[index]))
+        remaining -= new_used - used[index]
+        used[index] = new_used
+
+    joined = " ".join(cuts[index] for index in kept if cuts[index])
+    joined_ends = _token_end_offsets(joined)
+    if len(joined_ends) > budget:
+        logger.warning("fit_to_window: joined text had %d tokens after cutting; cutting again to %d", len(joined_ends), budget)
+        joined = _cut_to_tokens(joined, joined_ends, budget)
+    return joined
 
 
 def _validate_embeddings(embeddings: np.ndarray) -> np.ndarray:
@@ -155,14 +279,21 @@ def _validate_embeddings(embeddings: np.ndarray) -> np.ndarray:
         raise ValueError(
             f"Expected embedding dimension {VECTOR_DIMENSION}, got {matrix.shape[1]}"
         )
+    norms = np.linalg.norm(matrix, axis=1)
+    if not np.all(np.abs(norms - 1.0) <= UNIT_NORM_TOLERANCE):
+        raise ValueError(
+            f"Embeddings must have unit length (1.0 +- {UNIT_NORM_TOLERANCE}); "
+            f"got norms from {norms.min():.4f} to {norms.max():.4f}"
+        )
     return matrix
 
 
-def generate_embeddings(texts: Sequence[str], batch_size: int = DEFAULT_BATCH_SIZE) -> np.ndarray:
-    """Embed many texts at once -> float32 array of shape (len(texts), 384).
+def _encode(texts: Sequence[str], prompt_name: str, batch_size: int) -> np.ndarray:
+    """Embed many texts with one of the model's prompts -> float32 array (len(texts), 384).
 
     None becomes "". An empty text still gets a vector (of the bare special
-    tokens), which means nothing; callers make sure there is text to embed.
+    tokens, plus the prompt on the query path), which means nothing; callers
+    make sure there is text to embed.
     """
     clean_texts = [str(text or "").strip() for text in texts]
     if not clean_texts:
@@ -176,20 +307,36 @@ def generate_embeddings(texts: Sequence[str], batch_size: int = DEFAULT_BATCH_SI
     started_at = time.perf_counter()
     embeddings = model.encode(
         clean_texts,
+        prompt_name=prompt_name,
         batch_size=batch_size,
         show_progress_bar=False,
         convert_to_numpy=True,
         normalize_embeddings=False,
     )
     logger.debug(
-        "Embedded %d text(s) in %.0f ms",
+        "Embedded %d text(s) on the %s path in %.0f ms",
         len(clean_texts),
+        prompt_name,
         (time.perf_counter() - started_at) * 1000,
     )
     return _validate_embeddings(embeddings)
 
 
+def generate_embeddings(texts: Sequence[str], batch_size: int = DEFAULT_BATCH_SIZE) -> np.ndarray:
+    """Document path: embed many stored texts -> float32 array of shape (len(texts), 384)."""
+    return _encode(texts, DOCUMENT_PROMPT_NAME, batch_size)
+
+
 def generate_embedding(text: str) -> np.ndarray:
-    """Embed one text -> float32 vector of shape (384,)."""
-    vector = generate_embeddings([text], batch_size=1)
-    return vector[0]
+    """Document path: embed one stored text (or centroid seed) -> float32 vector of shape (384,)."""
+    return generate_embeddings([text], batch_size=1)[0]
+
+
+def generate_query_embeddings(texts: Sequence[str], batch_size: int = DEFAULT_BATCH_SIZE) -> np.ndarray:
+    """Query path: embed many questions (with the model's query prompt) -> shape (len(texts), 384)."""
+    return _encode(texts, QUERY_PROMPT_NAME, batch_size)
+
+
+def generate_query_embedding(text: str) -> np.ndarray:
+    """Query path: embed one question -> float32 vector of shape (384,)."""
+    return generate_query_embeddings([text], batch_size=1)[0]

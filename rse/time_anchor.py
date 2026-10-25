@@ -146,10 +146,10 @@ def _semantic_anchor_lookup(terms: str, source_hint: Optional[str]) -> Optional[
     closest one. Returns None when nothing reaches MIN_TOP_SIMILARITY.
     """
     try:
-        from enp.embedding_generator import generate_embedding
+        from enp.embedding_generator import generate_query_embedding
         from ste.faiss_manager import get_manager
 
-        vector = generate_embedding(terms)
+        vector = generate_query_embedding(terms)
         hits = get_manager().search_all(vector, ANCHOR_CANDIDATE_LIMIT)
         similarity_by_id = {
             memory_id: similarity for memory_id, similarity in hits if similarity >= MIN_TOP_SIMILARITY

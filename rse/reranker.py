@@ -18,7 +18,7 @@ any recency-decay term.
 
 Threading: the model is loaded once behind a lock (two first requests loading
 at the same time can crash with "Cannot copy out of meta tensor" — measured for
-the MiniLM bi-encoder in enp/embedding_generator.py). predict() itself is safe
+the bi-encoder in enp/embedding_generator.py). predict() itself is safe
 to call from several request threads at once.
 Logs carry counts, scores and timings only — never the query or item titles.
 """

@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { CornerDownLeft } from 'lucide-react'
+import AnswerBody from '../components/AnswerBody'
 import PageTitle from '../components/PageTitle'
-import { askEcho } from '../lib/api'
-import type { ChatMessage } from '../lib/types'
+import { askEchoStreaming } from '../lib/api'
+import type { ChatMessage, QueryStep } from '../lib/types'
 
 const EASE_OUT = [0.22, 1, 0.36, 1] as const
 
@@ -17,8 +18,8 @@ const SUGGESTIONS = [
 let messageCounter = 0
 const nextId = () => `m${++messageCounter}`
 
-/** A pulsing dot on the thread while Echo searches. */
-function ThinkingIndicator() {
+/** A pulsing dot on the thread while Echo searches, with the steps finished so far. */
+function ThinkingIndicator({ steps }: { steps: QueryStep[] }) {
   return (
     <motion.div
       initial={{ opacity: 0 }}
@@ -35,6 +36,16 @@ function ThinkingIndicator() {
         <span className="animate-breathe">…</span>
       </p>
       <div className="shimmer-line mt-3 h-px w-48" aria-hidden="true" />
+      {steps.length > 0 && (
+        <ul className="mt-3 space-y-1 font-mono text-xs text-ink-faint">
+          {steps.map((step) => (
+            <li key={step.node}>
+              {step.label}
+              {step.count !== null ? ` · ${step.count}` : ''}
+            </li>
+          ))}
+        </ul>
+      )}
     </motion.div>
   )
 }
@@ -54,9 +65,13 @@ function EchoAnswer({ message }: { message: ChatMessage }) {
       <p className="meta mb-2">
         echo{typeof message.resultCount === 'number' && !message.noResults ? ` · ${message.resultCount} memories` : ''}
       </p>
-      <div className="max-w-[68ch] whitespace-pre-wrap text-[15px] leading-7 text-ink-soft">
-        {message.text}
-      </div>
+      {message.markdown && message.sources && message.sources.length > 0 ? (
+        <AnswerBody markdown={message.markdown} sources={message.sources} />
+      ) : (
+        <div className="max-w-[68ch] whitespace-pre-wrap text-[15px] leading-7 text-ink-soft">
+          {message.text}
+        </div>
+      )}
     </motion.article>
   )
 }
@@ -80,6 +95,7 @@ export default function RecallPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
+  const [steps, setSteps] = useState<QueryStep[]>([])
   const sessionRef = useRef<string | null>(null)
   const endRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -94,10 +110,14 @@ export default function RecallPage() {
       if (!query || busy) return
       setInput('')
       setBusy(true)
+      setSteps([])
       setMessages((current) => [...current, { id: nextId(), role: 'user', text: query }])
 
       try {
-        const reply = await askEcho(query, sessionRef.current)
+        // A step repeats when the search widens: the line updates in place (keyed by node).
+        const reply = await askEchoStreaming(query, sessionRef.current, (step) =>
+          setSteps((current) => [...current.filter((existing) => existing.node !== step.node), step]),
+        )
         sessionRef.current = reply.session_id
         setMessages((current) => [
           ...current,
@@ -107,6 +127,8 @@ export default function RecallPage() {
             text: reply.final_answer,
             resultCount: reply.result_count,
             noResults: reply.no_results,
+            markdown: reply.answer_markdown,
+            sources: reply.answer_sources,
           },
         ])
       } catch {
@@ -124,12 +146,29 @@ export default function RecallPage() {
 
   const empty = messages.length === 0
 
+  /** A new chat is a new session id: forget the old one and clear the screen. */
+  function startNewChat() {
+    sessionRef.current = null
+    setMessages([])
+    setSteps([])
+    inputRef.current?.focus()
+  }
+
   return (
     <div className="flex min-h-[calc(100vh-6rem)] flex-col">
       <PageTitle
         eyebrow="recall"
         title="Ask your memory."
-        aside={<p className="meta">gmail · chrome · youtube</p>}
+        aside={
+          <div className="flex items-center gap-4">
+            {!empty && (
+              <button type="button" onClick={startNewChat} disabled={busy} className="btn-ghost font-mono text-xs normal-case disabled:opacity-40">
+                New chat
+              </button>
+            )}
+            <p className="meta">gmail · chrome · youtube</p>
+          </div>
+        }
       />
 
       {/* Conversation */}
@@ -171,7 +210,7 @@ export default function RecallPage() {
           ),
         )}
 
-        <AnimatePresence>{busy && <ThinkingIndicator key="thinking" />}</AnimatePresence>
+        <AnimatePresence>{busy && <ThinkingIndicator key="thinking" steps={steps} />}</AnimatePresence>
         <div ref={endRef} />
       </div>
 

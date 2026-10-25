@@ -2,12 +2,43 @@
 
 export type SourceType = 'gmail' | 'chrome' | 'youtube'
 
+/** One item an answer cites (backend rse/llm_synthesizer.py `_source_entry`). */
+export interface AnswerSource {
+  n: number
+  memory_id: string | null
+  source_type: SourceType | null
+  anchor: string
+  date_label: string
+  created_at_local: string | null
+  title: string
+  link: string | null
+  role: 'direct' | 'related'
+}
+
 export interface QueryResponse {
   final_answer: string
   session_id: string
   no_results: boolean
   result_count: number
   parsed_intent?: Record<string, unknown> | null
+  /** The answer with ⟦n⟧ markers that point into `answer_sources` (for the pill UI). */
+  answer_markdown?: string
+  answer_sources?: AnswerSource[]
+}
+
+/** One finished search step from POST /retrieval/query/stream (a fixed label, never question text). */
+export interface QueryStep {
+  node: string
+  label: string
+  count: number | null
+}
+
+/** One past chat from GET /retrieval/sessions. */
+export interface SessionSummary {
+  session_id: string
+  title: string
+  last_active: string
+  turns: number
 }
 
 export interface MemoryItem {
@@ -106,4 +137,7 @@ export interface ChatMessage {
   pending?: boolean
   resultCount?: number
   noResults?: boolean
+  /** The reply with ⟦n⟧ markers and the items they cite; drawn as memory pills (A27). */
+  markdown?: string
+  sources?: AnswerSource[]
 }

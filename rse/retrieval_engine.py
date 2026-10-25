@@ -41,7 +41,7 @@ Logs carry the session id, counts and timings only — never the query or answer
 import logging
 import time
 import uuid
-from typing import Any
+from typing import Any, Iterator
 
 from langgraph.graph import StateGraph, END
 
@@ -174,6 +174,97 @@ def run_query(
         parsed_intent, and all other state fields, plus session_id and
         result_count.
     """
+    session_id, initial_state = _start_session(user_query, session_id)
+    started = time.perf_counter()
+
+    graph_failed = False
+    try:
+        final_state = _COMPILED_GRAPH.invoke(initial_state)
+    except Exception as exc:
+        # Full detail goes to the log only; the user gets a plain message (an
+        # exception text can carry hostnames or SQL).
+        logger.exception("run_query: graph execution failed — %s", type(exc).__name__)
+        graph_failed = True
+        final_state = _failure_state(initial_state)
+
+    return _finish_query(session_id, user_query, final_state, graph_failed, started)
+
+
+def run_query_stream(
+    user_query: str,
+    session_id: str | None = None,
+) -> Iterator[dict[str, Any]]:
+    """
+    run_query, but yields progress events while the graph runs (A28).
+
+    Events, in order:
+        {"event": "session", "session_id": ...}                       once, first
+        {"event": "step", "node": ..., "label": ..., "count": n|None} after each graph node
+        {"event": "done", "result": <the run_query dict>}             once, last
+
+    The graph, the history handling and the saved turn are exactly run_query's;
+    only the invocation differs (graph.stream instead of invoke). A graph failure
+    ends with a "done" event carrying the same plain failure message run_query
+    returns, never an exception, so the caller always gets a last event.
+    Step labels are fixed texts and counts: never the query, an item title or a
+    snippet, so a progress line can be shown or logged without leaking content.
+    """
+    session_id, initial_state = _start_session(user_query, session_id)
+    started = time.perf_counter()
+    yield {"event": "session", "session_id": session_id}
+
+    final_state: dict[str, Any] = dict(initial_state)
+    graph_failed = False
+    try:
+        # "updates" gives {node_name: the keys that node wrote}; the state has no
+        # reducers (last write wins), so folding the updates in order rebuilds
+        # what invoke() would return.
+        for update in _COMPILED_GRAPH.stream(initial_state, stream_mode="updates"):
+            for node, written in update.items():
+                if written:
+                    final_state.update(written)
+                yield _step_event(node, written or {})
+    except Exception as exc:
+        logger.exception("run_query_stream: graph execution failed — %s", type(exc).__name__)
+        graph_failed = True
+        final_state = _failure_state(initial_state)
+
+    yield {"event": "done", "result": _finish_query(session_id, user_query, final_state, graph_failed, started)}
+
+
+# What each finished graph node says to the user, and which written key (if any)
+# supplies a count to show beside it. No query text, titles or snippets.
+_STEP_LABELS: dict[str, tuple[str, str | None]] = {
+    "parse_intent":            ("Understood your question", None),
+    "resolve_time_anchor":     ("Checked time references", None),
+    "postgres_keyword_search": ("Searched by keywords", "postgres_results"),
+    "faiss_semantic_search":   ("Searched by meaning", "faiss_results"),
+    "merge_and_rrf":           ("Combined the matches", "merged_candidates"),
+    "evaluate_quality":        ("Checked the matches", None),
+    "widen_scope":             ("Widened the search", None),
+    "rerank_cross_encoder":    ("Ranked the best matches", "ranked_results"),
+    "extend_neighborhood":     ("Looked at what surrounds them", None),
+    "check_attachments":       ("Checked attachments", None),
+    "fetch_attachment":        ("Read an attachment", None),
+    "fetch_api":               ("Checked Gmail for new mail", "api_results"),
+    "synthesize":              ("Wrote the answer", None),
+    "no_results_found":        ("Found nothing close", None),
+}
+
+
+def _step_event(node: str, written: dict[str, Any]) -> dict[str, Any]:
+    label, count_key = _STEP_LABELS.get(node, (node.replace("_", " ").capitalize(), None))
+    value = written.get(count_key) if count_key else None
+    return {
+        "event": "step",
+        "node": node,
+        "label": label,
+        "count": len(value) if isinstance(value, (list, tuple)) else None,
+    }
+
+
+def _start_session(user_query: str, session_id: str | None) -> tuple[str, EchoState]:
+    """The session id (made when missing) and the graph's starting state."""
     if session_id is None:
         session_id = str(uuid.uuid4())
         logger.info("run_query: new session_id generated: %s", session_id)
@@ -204,21 +295,26 @@ def run_query(
 
     logger.info("run_query: starting graph (session=%s, history=%d messages)",
                 session_id, len(conversation_history))
-    started = time.perf_counter()
+    return session_id, initial_state
 
-    graph_failed = False
-    try:
-        final_state = _COMPILED_GRAPH.invoke(initial_state)
-    except Exception as exc:
-        # Full detail goes to the log only; the user gets a plain message (an
-        # exception text can carry hostnames or SQL).
-        logger.exception("run_query: graph execution failed — %s", type(exc).__name__)
-        graph_failed = True
-        final_state = dict(initial_state)
-        message = "Something went wrong while searching your memories. Please try again in a moment."
-        final_state.update({"final_answer": message, "answer_markdown": message,
-                            "answer_sources": [], "no_results": True})
 
+def _failure_state(initial_state: EchoState) -> dict[str, Any]:
+    """The state returned when the graph raised: a plain message, no results."""
+    message = "Something went wrong while searching your memories. Please try again in a moment."
+    failed = dict(initial_state)
+    failed.update({"final_answer": message, "answer_markdown": message,
+                   "answer_sources": [], "no_results": True})
+    return failed
+
+
+def _finish_query(
+    session_id: str,
+    user_query: str,
+    final_state: dict[str, Any],
+    graph_failed: bool,
+    started: float,
+) -> dict[str, Any]:
+    """Save the turn, log the counts, and build the dict run_query returns."""
     # Persist the turn — but not a failure message, which would only confuse
     # the next question's history.
     answer = final_state.get("final_answer", "")

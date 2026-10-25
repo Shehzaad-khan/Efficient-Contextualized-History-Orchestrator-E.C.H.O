@@ -3,7 +3,7 @@ faiss_manager.py — STE Module
 Echo Personal Memory System
 
 The semantic index (architecture §8 STE, DB design `embedding_index`):
-a FAISS IndexFlatL2 over unit-length all-MiniLM-L6-v2 vectors (384-d),
+a FAISS IndexFlatL2 over unit-length snowflake-arctic-embed-xs vectors (384-d),
 mirrored by a numpy cache, plus one `embedding_index` row per vector in
 PostgreSQL. L2 distance is not cosine similarity — anything that needs a
 similarity score must compute true cosine from the vectors (cosine()).
@@ -59,7 +59,7 @@ try:
 except ImportError:  # pragma: no cover - dependency-driven
     faiss = None
 
-EMBEDDING_VERSION = "all-MiniLM-L6-v2-v1"
+EMBEDDING_VERSION = "snowflake-arctic-embed-xs-v1"
 VECTOR_DIMENSION = 384
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 # Runtime data, kept out of the source folders.
@@ -79,7 +79,7 @@ _TEMP_MARKER = ".tmp"
 # the files gone, load_index() starts empty and ENP re-embeds every row it sees
 # as unprocessed.
 _REBUILD_HINT = (
-    "To rebuild: stop the backend, delete the files in data_faiss/, run "
+    "To rebuild: stop the backend, delete the files in data_faiss/ (centroids.npz too), run "
     "UPDATE memory_items SET preprocessed = FALSE, then restart the backend "
     "(ENP re-embeds every row; rows marked 'failed' also need ENP_RETRY_FAILED=true)."
 )
@@ -122,7 +122,7 @@ def cosine(a: np.ndarray, b: np.ndarray) -> float:
 
 class FAISSManager:
     """
-    IndexFlatL2 over unit-length MiniLM vectors, mirrored by a numpy cache.
+    IndexFlatL2 over unit-length arctic-embed-xs vectors, mirrored by a numpy cache.
 
     The numpy cache (``_buffer``) is the source of truth; ``_index`` is derived
     from it and kept in sync incrementally:
@@ -324,6 +324,30 @@ class FAISSManager:
                 return None
             return self._buffer[offset].copy()
 
+    def remove_many(self, memory_ids: list[str]) -> int:
+        """Drop these items' vectors from memory; returns how many were indexed.
+
+        Unknown ids are ignored. The surviving rows keep their order, the index is
+        rebuilt on its next read, and nothing is written to disk: call save_index()
+        afterwards. The embedding_index rows are not touched here (retention
+        deletes them with the memory_items row, by CASCADE).
+        """
+        doomed = {str(memory_id) for memory_id in memory_ids}
+        with self._lock:
+            keep = [offset for offset, memory_id in enumerate(self._memory_ids) if memory_id not in doomed]
+            removed = self._count - len(keep)
+            if removed == 0:
+                return 0
+            kept_vectors = self._buffer[np.array(keep, dtype=np.intp)].copy()
+            self._buffer = np.empty((max(len(keep), INITIAL_CAPACITY), self.dimension), dtype=np.float32)
+            self._buffer[: len(keep)] = kept_vectors
+            self._memory_ids = [self._memory_ids[offset] for offset in keep]
+            self._count = len(keep)
+            self._rebuild_mappings()
+            self._index_stale = True
+        logger.info("FAISS removed %d vectors (%d left)", removed, len(keep))
+        return removed
+
     def save_index(self, path: str | Path | None = None) -> Path:
         """Write the index and its metadata atomically (temp file + os.replace each).
 
@@ -363,9 +387,11 @@ class FAISSManager:
         """Replace this instance's contents with the index on disk.
 
         Neither file exists -> start empty (first run).
-        Only one exists, or they disagree -> raise ValueError. Starting empty
-        there would let the next save_index() overwrite the surviving vectors.
-        The error message carries the rebuild steps (_REBUILD_HINT).
+        Only one exists, or they disagree, or the index was built with another
+        embedding model -> raise ValueError. Starting empty there would let the
+        next save_index() overwrite the surviving vectors; loading vectors of
+        another model would compare them with new queries and return nonsense
+        without an error. The error message carries the rebuild steps (_REBUILD_HINT).
         """
         started_at = time.perf_counter()
         target = Path(path or self.index_path)
@@ -394,11 +420,10 @@ class FAISSManager:
             stored_version = metadata.get("embedding_version")
             if stored_version != self.embedding_version:
                 # Vectors from another model are not comparable with new ones.
-                logger.warning(
-                    "FAISS index was built with embedding_version=%s, current is %s. %s",
-                    stored_version,
-                    self.embedding_version,
-                    _REBUILD_HINT,
+                raise ValueError(
+                    f"FAISS index was built with embedding_version={stored_version}, "
+                    f"current is {self.embedding_version}. "
+                    + _REBUILD_HINT
                 )
 
             index = faiss.read_index(str(target))

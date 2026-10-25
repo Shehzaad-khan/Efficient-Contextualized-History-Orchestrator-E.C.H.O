@@ -12,9 +12,10 @@ and are fused downstream by merge_and_rrf:
       the parsed intent.
 
   faiss_semantic_search — embeds every query variant locally with
-      sentence-transformers, searches the FULL FAISS index per variant
-      (FAISSManager.search_all, which holds the manager's lock while reading),
-      deduplicates keeping the best cosine per memory_id. MiniLM vectors are
+      sentence-transformers on the QUERY path (the model's query prompt;
+      stored items use the document path), searches the FULL FAISS index per
+      variant (FAISSManager.search_all, which holds the manager's lock while
+      reading), deduplicates keeping the best cosine per memory_id. The vectors are
       unit-length, so the index's L2 order equals cosine order; search_all
       still reports true cosine.
 
@@ -439,11 +440,11 @@ def faiss_semantic_search(state: EchoState) -> dict[str, Any]:
 
     started = time.perf_counter()
     try:
-        from enp.embedding_generator import generate_embeddings
+        from enp.embedding_generator import generate_query_embeddings
         from ste.faiss_manager import get_manager
 
         manager = get_manager()
-        embeddings = generate_embeddings(variants)
+        embeddings = generate_query_embeddings(variants)
 
         best_scores: dict[str, float] = {}
         hits_per_variant: list[int] = []

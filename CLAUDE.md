@@ -84,7 +84,9 @@ ever wanted again, it will be recreated from `Echo_System_Design.md`, which is t
 - **Embeddable text = short hints first, long parts last, cut to the embedding model's own
   token window with its tokenizer** (owner's decisions A16 + A40, 2026-10-21): the stored
   `embeddable_text` is exactly what was embedded. Embedding model = snowflake-arctic-embed-xs
-  (512 tokens, 384-d), replacing all-MiniLM-L6-v2 from Thursday's re-embed.
+  (512 tokens, 384-d), replacing all-MiniLM-L6-v2. Built in code 2026-10-25 (`fit_to_window`, query path,
+  `EMBEDDING_VERSION = "snowflake-arctic-embed-xs-v1"`); the stored vectors switch at the B5 re-embed. Until then
+  `FAISSManager.load_index` refuses an index of another version (ValueError with the rebuild steps).
 - **Tier-1 attachment `lightweight_extract`** stores filename/mime/size, not the first
   500 chars of content (keeps the ingestion hot path fast). The full text is extracted
   later by the ENP worker (`enp/attachment_processor.extract_full_text`, A4) into
@@ -148,12 +150,13 @@ Known open items:
   (SQLAlchemy, `:name` params) is used by wba/, enp/, backend/items.py, ingestion/gmail.
   `rse/search_coordinator.py` uses psycopg2 + `%s` params directly. Don't mix styles
   within a file.
-- **FAISS is IndexFlatL2 over unit-length MiniLM vectors** (C14: the model's pipeline ends
-  in a Normalize layer; every saved vector has norm 1.0). For unit vectors, L2 order equals
+- **FAISS is IndexFlatL2 over unit-length arctic-embed-xs vectors** (C14: the model's pipeline ends
+  in a Normalize layer; `embedding_generator` raises on any vector whose norm is not 1.0 ± 0.001). For unit vectors, L2 order equals
   cosine order, but an L2 distance is still not a similarity score. Anywhere a cosine
-  threshold matters (0.35 quality gate, KNN group scoring, centroids), compute cosine from
-  the vectors (`get_manager().get_vector()` / `search_all()`; the manager's state is private). When the embedding model changes (A40), check the new model also
-  outputs unit-length vectors, or normalize explicitly.
+  threshold matters (0.55 quality gate, KNN group scoring, centroids), compute cosine from
+  the vectors (`get_manager().get_vector()` / `search_all()`; the manager's state is private). When the embedding model changes again, `EMBEDDING_VERSION` must change with it
+  and `centroids.npz` must be rebuilt too; the unit-length check in `embedding_generator` will catch a
+  model that does not normalize.
 - **FastAPI route ordering**: static paths (`/groups/review`) must be declared before
   parametrized ones (`/groups/{group_id}/...`) in `backend/wellbeing.py`.
 - Backend CORS allows ports 3000/8000; the Vite dev server must stay on 3000.

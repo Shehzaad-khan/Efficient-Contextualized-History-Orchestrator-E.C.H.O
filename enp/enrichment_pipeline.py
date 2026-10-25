@@ -11,8 +11,9 @@ worker turns those rows into searchable memories:
                                Gmail: also extracts attachment text into
                                gmail_attachments.extracted_text (A4)
   3. clean_item_text           text_cleaner: HTML, quotes -> clean text
-  4. build_embeddable_text     topic_extractor: the text to embed + auto_keywords
-  5. generate_embeddings       embedding_generator: MiniLM, whole batch at once
+  4. build_embeddable_text     topic_extractor: ordered text parts + auto_keywords;
+                               fit_to_window cuts them to the model's window (A16)
+  5. generate_embeddings       embedding_generator: arctic-embed-xs, whole batch at once
   6. classify_system_group     system_group_classifier: 4-stage system group
   7. FAISSManager.add          vector + embedding_index row
   8. save_index                FAISS file written BEFORE any row is marked done
@@ -51,7 +52,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from enp.attachment_processor import extract_full_text
-from enp.embedding_generator import generate_embedding, generate_embeddings
+from enp.embedding_generator import fit_to_window, generate_embedding, generate_embeddings
 from enp.system_group_classifier import (
     centroids_need_recompute,
     classify_system_group,
@@ -59,7 +60,7 @@ from enp.system_group_classifier import (
     recompute_centroids,
 )
 from enp.text_cleaner import clean_item_text
-from enp.topic_extractor import build_embeddable_text, sender_domain_hint
+from enp.topic_extractor import TextPart, build_embeddable_text, sender_domain_hint
 from ste.faiss_manager import EMBEDDING_VERSION, VECTOR_DIMENSION, FAISSManager, get_manager
 from ste.storage_engine import SYSTEM_GROUP_IDS
 from ste.redis_manager import (
@@ -382,8 +383,8 @@ def _fetch_gmail_context(
     item["content_primary_text"] = item.get("raw_text", "")
     item["message_history"] = _fetch_thread_history(conn, item) or None
     # Needs email_id (set above). Stored in gmail_attachments.extracted_text; the text
-    # also reaches search_vector in step 9. attachment_texts itself is not read yet:
-    # merging it into the embedded text is A16's job (the token budget).
+    # also reaches search_vector in step 9 and, as parts after the body, the embedded
+    # text (topic_extractor, A4 + A16).
     item["attachment_texts"] = _load_attachment_texts(conn, item, gmail_service) if attachment_filenames else []
     return item
 
@@ -477,29 +478,37 @@ def prepare_item_for_embedding(
     nothing at all can be embedded."""
     item = load_item_context(conn, base_item, gmail_service)
     cleaned = clean_item_text(item)
-    embeddable_text, auto_keywords = build_embeddable_text(
+    parts, auto_keywords = build_embeddable_text(
         item,
         cleaned.clean_text,
         headings=cleaned.headings,
     )
+    embeddable_text = fit_to_window(parts)
 
     if not embeddable_text.strip():
         # Identity of last resort: title/domain-only rows (Chrome telemetry
         # without HTML, a video whose metadata never arrived) still get indexed.
         # Failing them is terminal and would hide them from retrieval and the
         # timeline for good.
-        embeddable_text = " ".join(
-            str(part).strip()
-            for part in (
-                item.get("title", ""),
-                item.get("domain", ""),
-                item.get("subject", ""),
-                item.get("channel_name", ""),
-                item.get("video_id", ""),
-                item.get("url", ""),
+        # Through fit_to_window like every other text: a very long url must not
+        # make the stored text longer than what the model reads.
+        embeddable_text = fit_to_window([
+            TextPart(
+                " ".join(
+                    str(part).strip()
+                    for part in (
+                        item.get("title", ""),
+                        item.get("domain", ""),
+                        item.get("subject", ""),
+                        item.get("channel_name", ""),
+                        item.get("video_id", ""),
+                        item.get("url", ""),
+                    )
+                    if part and str(part).strip()
+                ),
+                None,
             )
-            if part and str(part).strip()
-        )
+        ])
         logger.debug("memory_id=%s embedded from identity fields only", item["memory_id"])
     if not embeddable_text.strip():
         raise ValueError(f"No embeddable text constructed for memory_id={item['memory_id']}")

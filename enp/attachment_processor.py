@@ -32,11 +32,12 @@ Supported (doc §5.4: "PDF, DOC, DOCX, TXT, and image files (via Tesseract OCR)"
     PPTX               slide text + speaker notes, in slide order (zip + regex, no library)
     XLSX               one line per row, cells joined with ' | ', sheet name above its rows
     EML                Subject/From/To/Date + the plain (else HTML) body
-    images             Tesseract OCR — OPTIONAL and OFF today: pytesseract and the
-                       Tesseract binary are not installed (requirements.txt)
-Not supported (decision A22): legacy .doc/.xls/.ppt, RTF, ODT/ODS/ODP, ZIP, HEIC, and
-scanned PDFs (no text layer; OCR for them is still to build). Audio/video are out of
-scope (doc §5.4). The PPTX, XLSX and EML readers (D2) use only the standard library,
+    images             Tesseract OCR — needs pytesseract AND the Tesseract program;
+                       without either, OCR is off and images fall back to Tier 1
+    scanned PDFs       a PDF with no text layer is rendered (pypdfium2) and read by the
+                       same OCR, at most OCR_PDF_MAX_PAGES pages
+Not supported (decision A22): legacy .doc/.xls/.ppt, RTF, ODT/ODS/ODP, ZIP, HEIC.
+Audio/video are out of scope (doc §5.4). The PPTX, XLSX and EML readers (D2) use only the standard library,
 so they add no dependency.
 Unsupported or failed -> the Tier-1 lightweight_extract (filename|mime|size).
 
@@ -58,12 +59,14 @@ import base64
 import codecs
 from email import policy as email_policy
 from email.parser import BytesParser
+import functools
 from html import unescape
-import importlib.util
 import io
 import logging
+import os
 from pathlib import PurePath
 import re
+import shutil
 import time
 from typing import Any, Optional
 import zipfile
@@ -108,6 +111,20 @@ XLSX_EXTENSIONS = (".xlsx", ".xlsm")
 RTF_EXTENSIONS = (".rtf",)  # skipped on purpose (A22), but text/rtf must not reach the plain-text reader
 EML_EXTENSIONS = (".eml",)
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tif", ".tiff", ".webp")
+
+# OCR (D2). A scanned PDF is rendered at OCR_PDF_DPI and read page by page, at most
+# OCR_PDF_MAX_PAGES pages; one page that takes longer than OCR_PAGE_TIMEOUT_SECONDS
+# is abandoned (pytesseract raises, the extraction returns None).
+OCR_PDF_DPI = 200
+OCR_PDF_MAX_PAGES = 10
+OCR_PAGE_TIMEOUT_SECONDS = 60
+_WINDOWS_TESSERACT_PATHS = (
+    r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+    r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+    # Unpacked without an installer (7-Zip extraction of the UB-Mannheim setup exe):
+    # needs no administrator rights.
+    os.path.expanduser(r"~\tools\tesseract\tesseract.exe"),
+)
 
 
 def _extension(filename: str) -> str:
@@ -418,18 +435,94 @@ def _extract_eml(data: bytes) -> Optional[str]:
         return None
 
 
-def _extract_image_ocr(data: bytes) -> Optional[str]:
+@functools.lru_cache(maxsize=1)
+def _ocr_ready() -> bool:
+    """True when pytesseract, Pillow and the Tesseract program are all usable.
+
+    Checked once per process (the answer is cached), so installing Tesseract
+    needs a backend restart to be noticed. The program is found, in order, from
+    the TESSERACT_CMD environment variable, the PATH, then the default Windows
+    install folders.
+    """
     try:
         import pytesseract
-        from PIL import Image
+        from PIL import Image  # noqa: F401  (OCR input type; checked here so a missing Pillow reads as "not ready")
     except ImportError:
-        logger.info("attachment_processor: pytesseract/Pillow not installed — skipping OCR")
+        logger.info("attachment_processor: pytesseract/Pillow not installed — OCR is off")
+        return False
+
+    configured = os.getenv("TESSERACT_CMD")
+    if configured:
+        pytesseract.pytesseract.tesseract_cmd = configured
+    elif shutil.which("tesseract") is None:
+        for candidate in _WINDOWS_TESSERACT_PATHS:
+            if os.path.isfile(candidate):
+                pytesseract.pytesseract.tesseract_cmd = candidate
+                break
+    try:
+        version = pytesseract.get_tesseract_version()
+    except Exception as exc:
+        logger.info("attachment_processor: Tesseract program not found (%s) — OCR is off", type(exc).__name__)
+        return False
+    logger.info("attachment_processor: OCR ready (Tesseract %s)", version)
+    return True
+
+
+def _ocr_image(image: Any) -> str:
+    """Text read from one PIL image; "" when nothing is readable."""
+    import pytesseract
+
+    return pytesseract.image_to_string(image, timeout=OCR_PAGE_TIMEOUT_SECONDS).strip()
+
+
+def _extract_image_ocr(data: bytes) -> Optional[str]:
+    if not _ocr_ready():
         return None
     try:
-        return pytesseract.image_to_string(Image.open(io.BytesIO(data))).strip() or None
+        from PIL import Image
+
+        return _ocr_image(Image.open(io.BytesIO(data))) or None
     except Exception as exc:
         logger.warning("attachment_processor: OCR failed (%s)", type(exc).__name__)
         return None
+
+
+def _ocr_pdf(data: bytes, max_chars: int) -> Optional[str]:
+    """OCR a scanned PDF (no text layer): render each page, read it, stop at the char cap.
+
+    At most OCR_PDF_MAX_PAGES pages are read, so a 300-page scan costs the same
+    as a 10-page one. Returns None when OCR is off, the PDF cannot be rendered
+    (corrupt, password-protected) or no page has readable text.
+    """
+    if not _ocr_ready():
+        return None
+    try:
+        import pypdfium2
+    except ImportError:
+        logger.info("attachment_processor: pypdfium2 not installed — scanned PDFs are not read")
+        return None
+    document = None
+    try:
+        document = pypdfium2.PdfDocument(data)
+        pages: list[str] = []
+        total = 0
+        for index in range(min(len(document), OCR_PDF_MAX_PAGES)):
+            page = document[index]
+            image = page.render(scale=OCR_PDF_DPI / 72).to_pil()
+            page_text = _ocr_image(image)
+            pages.append(page_text)
+            total += len(page_text)
+            if total >= max_chars:
+                break
+        text = "\n".join(page for page in pages if page).strip()
+        logger.info("attachment_processor: scanned PDF — OCR read %d page(s), %d chars", len(pages), len(text))
+        return text or None
+    except Exception as exc:
+        logger.warning("attachment_processor: scanned-PDF OCR failed (%s)", type(exc).__name__)
+        return None
+    finally:
+        if document is not None:
+            document.close()
 
 
 def _is_office_or_mail_type(mime: str, ext: str) -> bool:
@@ -462,7 +555,7 @@ def can_extract_text(mime_type: str, filename: str) -> bool:
     if mime.startswith("text/") or ext in TEXT_EXTENSIONS:
         return True
     if mime.startswith("image/") or ext in IMAGE_EXTENSIONS:
-        return importlib.util.find_spec("pytesseract") is not None
+        return _ocr_ready()
     return False
 
 
@@ -483,7 +576,8 @@ def extract_text(
     ext = _extension(filename)
 
     if "pdf" in mime or ext in PDF_EXTENSIONS:
-        return _extract_pdf(data, max_chars)
+        # No text layer (a scan) -> read the page images instead.
+        return _extract_pdf(data, max_chars) or _ocr_pdf(data, max_chars)
     if "wordprocessingml" in mime or ext in DOCX_EXTENSIONS:
         return _extract_docx(data)
     if "msword" in mime or ext == ".doc":

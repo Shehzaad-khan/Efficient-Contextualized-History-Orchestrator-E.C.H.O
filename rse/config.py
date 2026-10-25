@@ -94,7 +94,9 @@ RERANK_DOC_CHAR_LIMIT = 512
 
 # ── Quality evaluation ────────────────────────────────────────────────────────
 # Top candidate cosine similarity below this → result_quality 'weak'.
-MIN_TOP_SIMILARITY = 0.35
+# 0.55 is the design's START value for arctic-embed-xs (A40; was 0.35 on MiniLM). Unrelated text scores
+# ~0.37-0.60 with arctic-xs, so 0.35 never fired. Not yet measured on a question set (Stage 9).
+MIN_TOP_SIMILARITY = 0.55
 MIN_RESULT_COUNT = 2
 
 # ── Neighborhood extension ────────────────────────────────────────────────────

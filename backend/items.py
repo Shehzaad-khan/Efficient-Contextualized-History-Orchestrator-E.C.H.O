@@ -155,6 +155,8 @@ class SettingsUpdate(BaseModel):
     youtube_enabled: Optional[bool] = None
     excluded_domains: Optional[list[_ExclusionEntry]] = Field(None, max_length=500)
     excluded_senders: Optional[list[_ExclusionEntry]] = Field(None, max_length=500)
+    # A37: applied by the retention job at the next backend start, never on save.
+    retention: Optional[Literal["forever", "1y", "6m"]] = None
 
 
 @router.get("/settings")

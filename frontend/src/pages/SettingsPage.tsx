@@ -8,6 +8,7 @@ import {
   onDemoModeChange,
   setReminderSettings,
   updateCaptureSettings,
+  type RetentionChoice,
 } from '../lib/api'
 
 const EASE_OUT = [0.22, 1, 0.36, 1] as const
@@ -69,8 +70,15 @@ const CAPTURE_KEY_MAP = {
   youtubeCapture: 'youtube_enabled',
 } as const
 
+const RETENTION_OPTIONS: ReadonlyArray<{ value: RetentionChoice; label: string }> = [
+  { value: 'forever', label: 'Keep forever' },
+  { value: '1y', label: '1 year' },
+  { value: '6m', label: '6 months' },
+]
+
 export default function SettingsPage() {
   const [settings, setSettings] = useState<LocalSettings>(loadSettings)
+  const [retention, setRetention] = useState<RetentionChoice>('forever')
   const [demo, setDemo] = useState(isDemoMode())
 
   useEffect(() => onDemoModeChange(setDemo), [])
@@ -87,6 +95,7 @@ export default function SettingsPage() {
         chromeCapture: remote.chrome_enabled,
         youtubeCapture: remote.youtube_enabled,
       }))
+      setRetention(remote.retention)
     })
     return () => {
       cancelled = true
@@ -104,6 +113,11 @@ export default function SettingsPage() {
       const backendKey = CAPTURE_KEY_MAP[key as keyof typeof CAPTURE_KEY_MAP]
       void updateCaptureSettings({ [backendKey]: Boolean(value) })
     }
+  }
+
+  function chooseRetention(value: RetentionChoice) {
+    setRetention(value)
+    void updateCaptureSettings({ retention: value })
   }
 
   const apiBase = (import.meta.env.VITE_API_BASE as string | undefined) ?? 'http://localhost:8000'
@@ -148,6 +162,40 @@ export default function SettingsPage() {
               checked={settings.youtubeCapture}
               onChange={(value) => update('youtubeCapture', value)}
             />
+          </motion.section>
+
+          <motion.section
+            className="card px-6 py-5"
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5, ease: EASE_OUT, delay: 0.25 }}
+            aria-labelledby="retention-heading"
+          >
+            <h2 id="retention-heading" className="meta">
+              retention
+            </h2>
+            <p className="mt-3 text-sm font-medium text-ink">How long Echo keeps your memories</p>
+            <p className="mt-1 text-xs leading-5 text-ink-mute">
+              {retention === 'forever'
+                ? 'Nothing is deleted by age. Recalling old things is the point of Echo.'
+                : 'Items older than this are deleted for good — text, search index and cache — the next time the backend starts.'}
+            </p>
+            <div role="radiogroup" aria-label="Retention period" className="mt-4 flex flex-wrap gap-2">
+              {RETENTION_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  role="radio"
+                  aria-checked={retention === option.value}
+                  onClick={() => chooseRetention(option.value)}
+                  className={`rounded-pill px-4 py-1.5 text-xs transition duration-300 ease-out ${
+                    retention === option.value ? 'bg-ember-500 text-ink' : 'bg-night-700 text-ink-mute hover:text-ink'
+                  }`}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
           </motion.section>
 
           <motion.section
