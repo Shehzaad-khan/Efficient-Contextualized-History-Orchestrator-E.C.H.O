@@ -69,9 +69,9 @@ check_attachments → [fetch_attachment | fetch_api] → synthesize   LLM Call 2
 - **Rank fusion, not score fusion.** `ts_rank` and cosine live on incomparable
   scales; RRF uses only rank positions, so no scale calibration is needed.
   Ties are broken by best single-branch rank, then id — never by recency.
-- **True cosine.** MiniLM vectors are unit-length, so FAISS's L2 order equals
+- **True cosine.** arctic-embed-xs vectors are unit-length, so FAISS's L2 order equals
   cosine order; `FAISSManager.search_all` (locked against ENP writes) still
-  reports true cosine, so the 0.35 quality threshold stays meaningful.
+  reports true cosine, so the 0.55 quality threshold stays meaningful.
 - **Query expansion is free.** Variants come out of the same parse_intent call;
   embeddings are local sentence-transformers. Zero extra API calls.
 - **Anchor constraint is enforced twice**: as SQL in the keyword branch and as
@@ -92,7 +92,7 @@ check_attachments → [fetch_attachment | fetch_api] → synthesize   LLM Call 2
 ## Dependencies
 
 Local models (also listed in root `requirements.txt`): `sentence-transformers`
-(bi-encoder `all-MiniLM-L6-v2` via `enp.embedding_generator`, plus
+(bi-encoder `Snowflake/snowflake-arctic-embed-xs` via `enp.embedding_generator`; questions take its query path, plus
 `cross-encoder/ms-marco-MiniLM-L-6-v2` loaded once in `reranker.py`),
 `faiss-cpu` via `ste.faiss_manager`, `numpy`. LLM: `langchain` +
 `langchain-openai` (≥1.7.2; GPT-6 Luna on the Responses API).

@@ -4,7 +4,7 @@ Echo Personal Memory System
 
 Caller: enrichment_pipeline.prepare_item_for_embedding -> clean_item_text(item).
 Returns CleanedContent(clean_text, headings); topic_extractor builds the
-embeddable text from it (and does its own length capping with truncate()).
+embeddable text parts from it; embedding_generator.fit_to_window does the length cutting.
 
 What arrives here (raw_text as stored by each connector):
   gmail    plain text. ingestion/gmail/gmail_api.py already turned HTML into text

@@ -115,7 +115,7 @@ export function askEcho(query: string, sessionId: string | null): Promise<QueryR
       request<QueryResponse>(
         '/retrieval/query',
         { method: 'POST', body: JSON.stringify({ query, session_id: sessionId }) },
-        // Cold queries pay one-time model loads (cross-encoder + MiniLM) plus
+        // Cold queries pay one-time model loads (cross-encoder + embedding model) plus
         // 2 Gemini calls and up to 3 widen-loop search rounds — measured ~60s
         // worst case. Aborting early would silently swap in a fabricated demo
         // answer, which is worse than waiting.

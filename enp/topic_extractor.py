@@ -3,20 +3,24 @@ topic_extractor.py — embeddable text + auto_keywords (architecture §5.2, §5.
 Echo Personal Memory System
 
 Caller: enrichment_pipeline.prepare_item_for_embedding ->
-build_embeddable_text(item, clean_text, headings) -> (embeddable_text, auto_keywords).
+build_embeddable_text(item, clean_text, headings) -> (parts, auto_keywords), then
+embedding_generator.fit_to_window(parts) -> the embeddable_text.
 
-embeddable_text (what MiniLM embeds; also stored in embedding_index for auditing).
-Same parts as the doc, short hints first, long text last:
-  gmail    subject + keywords (own + thread, §5.3) + sender domain + body   (doc §5.2)
-  chrome   title + headings + domain + content snippet                     (doc §6.4)
-  youtube  title + channel + category + description + transcript snippet   (doc §7)
+parts = ordered TextPart(text, max_tokens) list. This file stays pure (no model):
+it only says what goes in which order and how many tokens a long part may take
+while later parts still need room. The cutting is done with the model's own
+tokenizer in fit_to_window, and the text it returns is what is stored in
+embedding_index for auditing, exactly as embedded.
+Same parts as the doc, short hints first, long text last (A16):
+  gmail    subject + keywords (own + thread, §5.3) + sender domain + filenames
+           + body (up to 300 tokens) + attachments (fill the rest)        (doc §5.2)
+  chrome   title + headings + domain + page text (fills the rest)         (doc §6.4)
+  youtube  title + channel + category + description (up to 200) + transcript
 
-Why this order: all-MiniLM-L6-v2 reads only the first 256 tokens and silently
-drops the rest. In the doc's order a long body pushed the hints after it
-(thread keywords, sender, channel, category) out of that window. Order does
-not otherwise matter: the model averages over all tokens (mean pooling).
-The long parts are also capped (~5 chars per token on English prose), so the
-stored text stays close to what the model actually saw.
+Why this order: the model reads only its window (512 tokens for arctic-embed-xs)
+and silently drops the rest. In the doc's order a long body pushed the hints after
+it (thread keywords, sender, channel, category) out of that window. Order does
+not otherwise matter: the model pools over all tokens.
 
 auto_keywords (memory_items.auto_keywords; RSE matches queries against them):
 the most frequent non-stopword words of the FULL text (not the cut one), ties
@@ -30,12 +34,10 @@ from __future__ import annotations
 
 from collections import Counter
 import re
-from typing import Any
+from typing import Any, NamedTuple
 from urllib.parse import urlparse
 
 from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS
-
-from enp.text_cleaner import truncate
 
 TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9_+-]{2,}")
 NON_WORD_RE = re.compile(r"[^a-z0-9]+")
@@ -51,14 +53,25 @@ KEYWORD_LIMIT = 8
 GMAIL_OWN_KEYWORD_LIMIT = 6
 THREAD_KEYWORD_LIMIT = 4
 
-# Character caps that keep a normal embeddable_text inside MiniLM's 256 tokens.
-# Dense text (code, IDs) can still overflow; then only the end of the long part
-# is lost, because the hints come first.
-GMAIL_BODY_CHARS = 800
-CHROME_SNIPPET_CHARS = 500
-YOUTUBE_DESCRIPTION_CHARS = 600
-YOUTUBE_TRANSCRIPT_CHARS = 400
-FALLBACK_BODY_CHARS = 800
+
+class TextPart(NamedTuple):
+    """One piece of an item's embeddable text, in order.
+
+    max_tokens None = keep whole (a short hint). A number = this long part may
+    use at most that many tokens while later parts still need room; unused room
+    flows back to it (embedding_generator.fit_to_window).
+    """
+
+    text: str
+    max_tokens: int | None
+
+# Token shares (A16), counted with the model's tokenizer in fit_to_window. A cap
+# applies only while later parts need room; room left over flows back.
+GMAIL_BODY_MAX_TOKENS = 300
+# All attachments of a mail share this pool, split evenly, so each attachment's
+# start gets in (A4). 210 = 510-token window - GMAIL_BODY_MAX_TOKENS.
+GMAIL_ATTACHMENTS_POOL_TOKENS = 210
+YOUTUBE_DESCRIPTION_MAX_TOKENS = 200
 
 YOUTUBE_CATEGORY_HINTS = {
     1: "film animation",
@@ -180,8 +193,23 @@ def youtube_category_hint(category_id: int | str | None) -> str:
         return ""
 
 
-def build_embeddable_text(item: dict[str, Any], cleaned_text: str, headings: list[str] | None = None) -> tuple[str, list[str]]:
-    """Return (embeddable_text, auto_keywords) for one item, by source."""
+def _attachment_parts(item: dict[str, Any]) -> list[TextPart]:
+    """One part per attachment that has text, each with an even share of the pool."""
+    texts = [str(entry.get("text") or "") for entry in item.get("attachment_texts") or []]
+    texts = [text for text in texts if text.strip()]
+    if not texts:
+        return []
+    share = max(1, GMAIL_ATTACHMENTS_POOL_TOKENS // len(texts))
+    return [TextPart(text, share) for text in texts]
+
+
+def build_embeddable_text(
+    item: dict[str, Any], cleaned_text: str, headings: list[str] | None = None
+) -> tuple[list[TextPart], list[str]]:
+    """Return (ordered parts of the embeddable text, auto_keywords) for one item, by source.
+
+    The parts still have to go through embedding_generator.fit_to_window.
+    """
     source = (item.get("source") or item.get("source_type") or "").lower()
     headings = headings or []
 
@@ -194,40 +222,39 @@ def build_embeddable_text(item: dict[str, Any], cleaned_text: str, headings: lis
             item.get("message_history"),
             attachment_filenames=attachment_filenames,
         )
-        attachments_hint = " ".join(attachment_filenames)
-        embeddable = _join_parts([
-            subject,
-            " ".join(keywords),
-            sender_domain_hint(item.get("sender", "")),
-            attachments_hint,
-            truncate(cleaned_text, GMAIL_BODY_CHARS),
-        ])
-        return embeddable, keywords
+        parts = [
+            TextPart(subject, None),
+            TextPart(" ".join(keywords), None),
+            TextPart(sender_domain_hint(item.get("sender", "")), None),
+            TextPart(" ".join(attachment_filenames), None),
+            TextPart(cleaned_text, GMAIL_BODY_MAX_TOKENS),
+            *_attachment_parts(item),
+        ]
+        return parts, keywords
 
     if source == "chrome":
         title = item.get("title", "")
         heading_text = " ".join(headings)
-        embeddable = _join_parts([
-            title,
-            heading_text,
-            domain_hint(item.get("domain") or item.get("canonical_url") or item.get("url") or ""),
-            truncate(cleaned_text, CHROME_SNIPPET_CHARS),
-        ])
-        return embeddable, extract_keywords(_join_parts([title, heading_text, cleaned_text]))
+        parts = [
+            TextPart(title, None),
+            TextPart(heading_text, None),
+            TextPart(domain_hint(item.get("domain") or item.get("canonical_url") or item.get("url") or ""), None),
+            TextPart(cleaned_text, None),
+        ]
+        return parts, extract_keywords(_join_parts([title, heading_text, cleaned_text]))
 
     if source == "youtube":
         title = item.get("title", "")
         description = item.get("description", "")
         transcript = item.get("transcript_text") or ""
-        embeddable = _join_parts([
-            title,
-            item.get("channel_name", ""),
-            youtube_category_hint(item.get("youtube_category_id")),
-            truncate(description, YOUTUBE_DESCRIPTION_CHARS),
-            truncate(transcript, YOUTUBE_TRANSCRIPT_CHARS),
-        ])
-        return embeddable, extract_keywords(_join_parts([title, description, transcript]))
+        parts = [
+            TextPart(title, None),
+            TextPart(item.get("channel_name", ""), None),
+            TextPart(youtube_category_hint(item.get("youtube_category_id")), None),
+            TextPart(description, YOUTUBE_DESCRIPTION_MAX_TOKENS),
+            TextPart(transcript, None),
+        ]
+        return parts, extract_keywords(_join_parts([title, description, transcript]))
 
     title = item.get("title", "")
-    fallback = _join_parts([title, truncate(cleaned_text, FALLBACK_BODY_CHARS)])
-    return fallback, extract_keywords(_join_parts([title, cleaned_text]))
+    return [TextPart(title, None), TextPart(cleaned_text, None)], extract_keywords(_join_parts([title, cleaned_text]))

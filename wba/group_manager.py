@@ -59,7 +59,7 @@ logger = logging.getLogger(__name__)
 
 MIN_CONFIRMED_FOR_KNN = 5
 AUTO_SUGGEST_THRESHOLD = 0.70
-KNN_ONLY_THRESHOLD = 0.60  # Re-tune after the A40 embedding model is active.
+KNN_ONLY_THRESHOLD = 0.65  # Design start value for arctic-embed-xs (A32/A40; was 0.60 on MiniLM). Not yet measured (Stage 9).
 KNN_TOP_K = 3
 RULE_WEIGHT = 0.5
 KNN_WEIGHT = 0.5

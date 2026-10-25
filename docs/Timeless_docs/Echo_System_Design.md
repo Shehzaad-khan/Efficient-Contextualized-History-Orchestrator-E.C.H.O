@@ -275,9 +275,10 @@ sequenceDiagram
 - **Model (A40.1, decided 2026-10-21, built Thu–Sun).** `Snowflake/snowflake-arctic-embed-xs`: 384-d, 512-token window
   (`max_seq_length` 512), CLS pooling, ends in a Normalize layer, Apache-2.0. It is MiniLM-L6 retrained for retrieval.
   `ste/faiss_manager.py` `EMBEDDING_VERSION = "snowflake-arctic-embed-xs-v1"`; `VECTOR_DIMENSION` stays 384, so the FAISS
-  dimension does not change. The model is loaded by its repo id. Code today: the earlier model `all-MiniLM-L6-v2`
-  (`enp/embedding_generator.py` `MODEL_NAME`, `EMBEDDING_VERSION = "all-MiniLM-L6-v2-v1"`; `max_seq_length` 256, trained on
-  128 tokens). The switch lands before Thursday's full re-embed (B5); after it, a model switch costs another full re-embed.
+  dimension does not change. The model is loaded by its repo id (`enp/embedding_generator.py` `MODEL_REPO_ID`). Built 2026-10-25. The earlier model
+  was `all-MiniLM-L6-v2` (`max_seq_length` 256, trained on 128 tokens). A saved index of another `embedding_version` is now
+  refused at load (`ValueError` with the rebuild steps), so the backend and ENP do not start on the old MiniLM index until the
+  full re-embed (B5) has replaced it. After B5, a model switch costs another full re-embed.
 - **Query vs document path.** Questions get the model's query prefix, read from its shipped config (`model.prompts["query"]`
   = "Represent this sentence for searching relevant passages: "), never hard-coded: a new `generate_query_embeddings(texts)`
   used by `rse/search_coordinator.py` and `rse/time_anchor.py`. Items, centroid seeds and group KNN use the document path
@@ -1435,7 +1436,7 @@ query latency and tokens per round (A25), embed speed of arctic-xs on the real d
 | Gmail | Inline image skip | < ~10 KB (exact TBD) | none | A22.2 |
 | ENP | Batch / poll | 10 items / 10 s | `DEFAULT_BATCH_SIZE = 10`, `DEFAULT_POLL_INTERVAL = 10` | §8.1 |
 | ENP | Embedding batch | 32 | `embedding_generator.py` : `DEFAULT_BATCH_SIZE = 32` | — |
-| ENP | Embedding model / window | `Snowflake/snowflake-arctic-embed-xs`, 384-d, 512 tokens (510 content), query prefix from its config | `embedding_generator.py` : `MODEL_NAME = "all-MiniLM-L6-v2"` (256 tokens); `faiss_manager.py` : `EMBEDDING_VERSION = "all-MiniLM-L6-v2-v1"`, `VECTOR_DIMENSION = 384` | A40.1 |
+| ENP | Embedding model / window | `Snowflake/snowflake-arctic-embed-xs`, 384-d, 512 tokens (510 content), query prefix from its config | `embedding_generator.py` : `MODEL_REPO_ID = "Snowflake/snowflake-arctic-embed-xs"` (window read from the model: 512); `faiss_manager.py` : `EMBEDDING_VERSION = "snowflake-arctic-embed-xs-v1"`, `VECTOR_DIMENSION = 384` | A40.1 |
 | ENP | Embed text budget | hints whole; Gmail body ≤ 300 tokens then attachments; YouTube description ≤ 200 tokens then transcript; Chrome / fallback text fills the rest; window read from the model | `topic_extractor.py` : `GMAIL_BODY_CHARS = 800`, `CHROME_SNIPPET_CHARS = 500`, `YOUTUBE_DESCRIPTION_CHARS = 600`, `YOUTUBE_TRANSCRIPT_CHARS = 400`, `FALLBACK_BODY_CHARS = 800` (to be replaced by `GMAIL_BODY_MAX_TOKENS = 300`, `YOUTUBE_DESCRIPTION_MAX_TOKENS = 200`) | A16 (replaces the char caps of A4, A13, A24.1) |
 | ENP | Keywords | 8 / own Gmail 6 / thread 4 | `KEYWORD_LIMIT`, `GMAIL_OWN_KEYWORD_LIMIT`, `THREAD_KEYWORD_LIMIT` | §8.2 |
 | Classifier | Centroid (recomputed) | score > 0.55, lead > 0.08 (v2.1 value; not re-tuned by A40) | `CENTROID_MIN_SCORE = 0.55`, `CENTROID_MIN_MARGIN = 0.08` | §9.3 |

@@ -10,7 +10,7 @@ Caller: enrichment_pipeline.classify_item -> classify_system_group(item, embeddi
                            YouTube Shorts + categoryId, Chrome .edu/.ac.in and
                            WORK_DOMAINS / ENTERTAINMENT_DOMAINS     -> 'structural', 1.0
   2. stage2_domain_lookup  Chrome only: DOMAIN_CATEGORY_MAP          -> 'domain', 0.95
-  3. stage3_centroid       cosine of the item's MiniLM vector (its embeddable_text)
+  3. stage3_centroid       cosine of the item's embedding vector (its embeddable_text)
                            to 5 category centroids; needs best > 0.55 AND a
                            0.08 lead over the runner-up            -> 'centroid', cosine
   4. stage4_llm_fallback   source + title + first 300 chars of the clean text go to

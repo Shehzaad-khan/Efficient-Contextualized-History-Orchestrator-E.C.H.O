@@ -102,7 +102,7 @@ The frontend runs without the backend too — it flips into a clearly-badged **d
 
 ## Tech Stack
 
-**Backend:** Python 3.10+ · FastAPI · SQLAlchemy · LangGraph / LangChain · sentence-transformers (all-MiniLM-L6-v2, 384-dim) · cross-encoder (ms-marco-MiniLM-L-6-v2) · pypdf / pdfplumber / python-docx
+**Backend:** Python 3.10+ · FastAPI · SQLAlchemy · LangGraph / LangChain · sentence-transformers (snowflake-arctic-embed-xs, 384-dim) · cross-encoder (ms-marco-MiniLM-L-6-v2) · pypdf / pdfplumber / python-docx
 
 **Storage:** PostgreSQL 16 (local Windows service) · FAISS (local) · Redis (local, in WSL Ubuntu) — fully local since decision A31; Neon and Upstash are no longer used
 
