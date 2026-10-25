@@ -489,7 +489,7 @@ Still open — decide each:
       measured, adding unrelated text lowered the right-question match by 0.03 on average, up to 0.24 (bge-small).
     - ~1 h. Must land before B5. CLAUDE.md §3 bullet: "embeddable text = hints first, long parts last (A16)".
     - A4 (800-char split), A13 (snippet 800) and A24.1 (Chrome 500 → 800) lines should point to A16.
-  - **Built 2026-10-25 (working tree, not committed):** `enp/embedding_generator.py` `fit_to_window(parts)` (window read from the model: 512 - 2 special = 510;
+  - **Built 2026-10-25 (commit c719cdc on branch `b5-arctic-embed-reembed`):** `enp/embedding_generator.py` `fit_to_window(parts)` (window read from the model: 512 - 2 special = 510;
     cuts on whitespace with the tokenizer's offsets; a 40,000-character pre-trim keeps a multi-MB attachment fast and gives the same output as full
     tokenization, checked on 25 random long inputs). `enp/topic_extractor.py` `build_embeddable_text` now returns `(list[TextPart], keywords)`;
     constants `GMAIL_BODY_MAX_TOKENS = 300`, `GMAIL_ATTACHMENTS_POOL_TOKENS = 210` (split evenly over the attachments, so each attachment's start gets in),
@@ -864,6 +864,33 @@ Still open — decide each:
   fields added in `rse/state.py`. Prompt/pill times are local (created_at is UTC). Done too: `retrieval_engine.py`
   defaults + return of the two new fields, `no_results_found` node shape (graph_nodes.py). Left: backend
   `QueryResponse.answer_sources` / `answer_markdown`, and the frontend pill UI + moment strip (Step 2).
+- **Backend half built 2026-10-25 (working tree, not committed):** `QueryResponse` in `backend/retrieval.py` now
+  returns `answer_markdown` and `answer_sources` (types in `frontend/src/lib/types.ts`: `AnswerSource`,
+  `SessionSummary`). New `GET /retrieval/sessions?limit=50` -> `[{session_id, title, last_active, turns}]` from
+  `message_store` (title = first question cut at 60 chars; limit 1-200, 422 outside). Checked on the real DB through
+  FastAPI's TestClient with real LLM calls: a query returned both fields (markers in `answer_markdown`, none in
+  `final_answer`; 3 sources, each with a link and role `direct`); a second turn on the same `session_id` gave
+  `turns` = 2; the list is newest first; no key and a wrong key give 401. My two test chats were deleted from
+  `message_store` afterwards. The Gmail link already uses `#all/<thread_id>` (`rse/llm_synthesizer.py:166`), so that
+  note is done. **Open question (his call): `/retrieval/sessions` needs `X-API-Key` like the other session routes,
+  and the frontend has no key (it must not ship one in the browser bundle).** Either open it like `/query` (it only
+  shows the user's own questions on a local port) or keep the key and give the UI a different route; until you pick,
+  the chat list UI cannot be wired.
+- **Pills, moment strip and New chat built 2026-10-25 (working tree, not committed):** `frontend/src/components/AnswerBody.tsx`
+  draws `answer_markdown` as chat text (paragraphs, bullet / numbered lists, **bold**; built as React elements, no HTML
+  injection) with a pill for each ⟦n⟧: source icon (Mail / Globe / Play), the anchor (sender, site, channel) and the date;
+  a click opens the original in a new tab; hover or keyboard focus shows a peek card (source, title, exact date and time);
+  a dashed outline plus the word "related" marks related context (the backend sends only `direct` today). Under the text,
+  the moment strip places each cited memory on a time ribbon, hovering a pill lights its dot and the reverse, and it is
+  hidden when everything cited is from one day. `RecallPage.tsx` uses it when the reply has sources (else the plain text as
+  before) and has a "New chat" button (drops the session id and clears the screen). Checked: `tsc` clean; in Chrome against
+  the live backend, real answers showed bold text, bullets, pills with the right icons and a working peek card (the two
+  test answers cited only 1 Sep items, so the strip correctly stayed hidden); the strip itself on synthetic sources
+  rendered to HTML in Node: 3 sources over 3 days -> 3 dots at 1.0 %, 31.8 %, 99.0 % (31.8 % hand-checked from the
+  times), same-day sources -> no strip, a `<script>` title is escaped, an unknown marker is dropped, a source with no link
+  is a focusable span, null and invalid dates do not crash. NOT built: "What was I doing around then?" in the peek card
+  (needs the ±5 min neighbourhood in `answer_sources`), the touch "first tap = peek, second tap = open", the past-chats list
+  and resume (the key question above), remembering the open chat across a reload, a visual check of the strip in a browser.
 
 ### A28. Live "what Echo is doing" progress in the UI — [x] DECIDED 2026-10-18 (his go: "really good one")
 - With up to 5 search rounds a query can take several seconds. Stream the steps ("Searching Gmail for 'offer
@@ -871,6 +898,19 @@ Still open — decide each:
   then stream the reply text itself into the chat bubble (A27). Backend: a streaming variant of `/query`
   (LangGraph `stream` events); frontend: a step indicator above the typing bubble. Keep the plain POST as
   fallback.
+- **Built 2026-10-25 (working tree, not committed): the progress lines.** `rse/retrieval_engine.py` `run_query_stream`
+  (shares its setup and finish code with `run_query`; uses `graph.stream(stream_mode="updates")`), route
+  `POST /retrieval/query/stream` in `backend/retrieval.py` (server-sent events: `session`, then one `step` per finished
+  graph node with a fixed label and an optional count, then `done` with the same body as `/query`, or `error`); the plain
+  `POST /retrieval/query` is unchanged and is the fallback (`askEchoStreaming` in `frontend/src/lib/api.ts` uses it when
+  the stream route is missing). The Recall page lists the finished steps under "searching your memory". Labels are
+  fixed texts and counts, never the question or a title. Checked on the real DB with real LLM calls: 19 checks (event
+  order, labels, counts, no question words in any step, `done` equals the `/query` shape, two turns in one session saved
+  once each, a graph failure gives a plain `done` and saves no turn, empty / 2001-char / bad-session-id inputs give
+  422); the real frontend reader (`api.ts` bundled and run in Node) against the live backend (10 steps arriving over
+  4 s, same session on the second turn); and in Chrome (steps appear live). NOT built: streaming the reply text token
+  by token (needs `llm_synthesizer` to stream; the answer arrives whole in `done`), and the step lines are about the
+  fixed graph, not the "Searching Gmail for 'offer letter'…" wording, which belongs to the A26 tool loop (not wired).
 
 ### A29. Effort score is unfair across sources — [x] decided 2026-10-21 (found 2026-10-18, rse/reranker.py review) — DISCUSS AT THE END
 - `final_score = 0.8 × cross-encoder + 0.2 × effort`; effort = average of the signals an item has.
@@ -1168,6 +1208,34 @@ Still open — decide each:
   FAISS vectors (`remove` by memory_id), Redis keys. ~2 h. Panel answer: "user-controlled; default forever because
   recalling old things is the product". Storage estimate (assumption, not measured): ~100 items/day ≈ 180 MB/yr
   text + ~55 MB/yr vectors.
+- **Built 2026-10-25 (working tree, not committed):** `ste/retention.py` (`purge_expired_items`), run once at startup
+  by `backend/main.py` (`_run_retention`, never raises); setting `retention` = `forever` | `1y` | `6m` in
+  `ste/settings_store.py` (an unknown value counts as `forever`) and `POST /settings` (`backend/items.py`, other
+  values give 422); `FAISSManager.remove_many` (new); Settings page picker (`SettingsPage.tsx`, `api.ts`).
+  Age = `memory_items.created_at`; 1 year = 365 days, 6 months = 183. Deletes Postgres first (all 11 child tables
+  are ON DELETE CASCADE, checked in `pg_constraint`), then the FAISS vectors + `save_index`, then Redis
+  (`echo:attachment:<id>:*`, `echo:enp:retry:<id>`). Two guards: default `forever`, and the job refuses to run when
+  EVERY item is past the cutoff (clock set ahead, or nothing new for the whole window).
+  Checked on a scratch copy (`echo_db_retention`, restored from the rehearsal DB, temp index copy; real `echo_db` and
+  `data_faiss/` untouched): 111 items; forever and 1y delete 0; clock 2030 refused; 6m deleted exactly the 63 older
+  than 2026-04-25, leaving 48; 0 rows left for the deleted ids in all 11 child tables (4 gmail_attachments rows went
+  with them); FAISS memory and disk ids both equal the 48 DB ids; survivors' vectors unchanged, still unit length,
+  self-search score 1.0; second run deletes 0; `remove_many` with `[]`, an unknown id and every id all behave;
+  Redis down does not raise. NOT checked: the Redis key deletion against a live Redis (none was running); the Settings
+  picker in a browser (only `tsc` passes); the job racing ENP on the same item (rare: only items past the cutoff).
+  The change applies at the NEXT backend start, not on save (the page says so).
+- **Branch review of c719cdc, 2026-10-25 (Opus 5 reviewer, ~4,250 fuzzed window cases, 0 over 512 tokens): window math and
+  the query/document paths correct.** Fixed in the working tree the same day, each tested (20 checks, all pass): (1) the prompt guard
+  tested key presence and could never fail (a prompt-less MiniLM passed it); it now checks the values: query prompt
+  non-empty, document prompt empty; (2) the "identity of last resort" text in `prepare_item_for_embedding` skipped
+  `fit_to_window` (a 31k-char url was stored whole; not shown to occur in real data); (3) `centroids.npz` had no model
+  stamp, so a file from another 384-d model would load silently; it now stores `_embedding_version` + `_dimension`, an
+  unstamped / other-model / wrong-shape / corrupt file is ignored, and `centroids_need_recompute()` returns True for it.
+  **Side effect: the current real `centroids.npz` (written before the stamp) is ignored at the next backend start and
+  `misc` is recomputed from its 66 confirmed items.** Docs fixed: `Echo_System_Design.md` (stale char-cap row, 0.35 vs
+  0.55, the claim that the backend does not start on an old index: it does start, ENP stops, search falls to keyword-only),
+  `build_lld.py`, `cls_m2_retrieval.mmd`, `approved_content.md`. Left as is: `Research Paper/Draft 1` `main.tex:214` (his
+  paper text names MiniLM) and dead `text_cleaner.truncate()` (no callers; cleanup only).
 
 ### A38. Spam filtering for Gmail (PANEL, Phase 3 Review 1) — [x] decided 2026-10-21 (added 2026-10-21, from the Review 2 deck/LLD)
 - Panel: "add a model that filters out spam emails before they are captured". Our Review 2 answer: Gmail's own
@@ -1495,16 +1563,16 @@ The `[x] decided` marks above mean the owner's decision is recorded. They do not
 
 | ID | Current implementation check |
 |----|-------------------------------|
-| A16 | **Built and applied by B5 2026-10-25 (working tree, not committed):** `embedding_generator.fit_to_window` + `topic_extractor` ordered `TextPart`s (see the A16 entry). Closed once B5 has re-embedded with it. |
+| A16 | **Built and applied by B5 2026-10-25 (commit c719cdc):** `embedding_generator.fit_to_window` + `topic_extractor` ordered `TextPart`s (see the A16 entry). Closed once B5 has re-embedded with it. |
 | A17 | The 29 hand-added domains are present, but the decided review of the real top 50–100 Stage-4 domains in the restored local data remains open. |
 | A18 | `SEED_TEXTS` are still the short word bags and `CENTROID_MIN_SCORE` remains 0.55; the richer seeds and seed-specific measured threshold are not built. |
 | A23 | Tier-2 attachment content still starts at the beginning of extracted text; query-matched top passages are not selected. This plan conflicts with current AGENTS hard constraint 3 (no dynamic context compression), so hold pending scope reconciliation. |
 | A24 | A24.3 full-text keyword indexing is built, but A24.2 query-matched cleaned-text windows are absent; the synthesizer still uses the leading snippet. This plan conflicts with current AGENTS hard constraint 3 (no dynamic context compression), so hold pending scope reconciliation. |
 | A26 | The agent/tool loop is not wired; `rse/README.md` still lists it under “Not yet wired.” The approved loop changes current AGENTS hard constraint 5 (exactly two LLM calls per query), so hold pending scope reconciliation. |
-| A27 | The backend response model omits `answer_markdown` and `answer_sources`; the pill/moment-strip UI and chat-session list/resume flow are not wired. |
-| A28 | No live-progress streaming route or frontend stream is present. |
-| A37 | No retention setting or age-based hard-delete job is present. |
-| A40 | **Model switch built 2026-10-25 (working tree, not committed):** arctic-xs, query/document paths, `EMBEDDING_VERSION = "snowflake-arctic-embed-xs-v1"`, refuse-to-load on a version mismatch. Still open: the threshold retune (Stage 9, needs an evaluation question set) and B5.  **2026-10-25 his choice C (no question set yet): the design's start values were set, not measured:** `MIN_TOP_SIMILARITY` 0.35 -> 0.55 (`rse/config.py`), `KNN_ONLY_THRESHOLD` 0.60 -> 0.65 (`wba/group_manager.py`); recomputed-centroid 0.55 / 0.08 left as designed; the seed-centroid threshold needs A18, not built. Sanity check on the real index (105 title questions, 10 made-up unrelated ones): right answers scored 0.641-0.84 (median 0.777), unrelated up to 0.607 (median 0.518); 0.35 blocked 0 of 10 unrelated, 0.55 blocked 8 of 10. The sample suggests ~0.62 would separate it, but it is small and the right-answer questions are title-based (optimistic): measure on a real question set (Stage 9). |
+| A27 | **Backend, pills, moment strip and New chat built 2026-10-25 (working tree, not committed)**; see the A27 entry. Still open: the past-chats list / resume UI (waits on the key question in the A27 entry) and the touch "first tap = peek" behaviour. |
+| A28 | **Built 2026-10-25 (working tree, not committed):** see the A28 entry. The progress lines are built; streaming the reply text itself is not (see the entry). |
+| A37 | **Built 2026-10-25 (working tree, not committed):** see the A37 entry. Closed. |
+| A40 | **Model switch built 2026-10-25 (commit c719cdc):** arctic-xs, query/document paths, `EMBEDDING_VERSION = "snowflake-arctic-embed-xs-v1"`, refuse-to-load on a version mismatch. Still open: the threshold retune (Stage 9, needs an evaluation question set) and B5.  **2026-10-25 his choice C (no question set yet): the design's start values were set, not measured:** `MIN_TOP_SIMILARITY` 0.35 -> 0.55 (`rse/config.py`), `KNN_ONLY_THRESHOLD` 0.60 -> 0.65 (`wba/group_manager.py`); recomputed-centroid 0.55 / 0.08 left as designed; the seed-centroid threshold needs A18, not built. Sanity check on the real index (105 title questions, 10 made-up unrelated ones): right answers scored 0.641-0.84 (median 0.777), unrelated up to 0.607 (median 0.518); 0.35 blocked 0 of 10 unrelated, 0.55 blocked 8 of 10. The sample suggests ~0.62 would separate it, but it is small and the right-answer questions are title-based (optimistic): measure on a real question set (Stage 9). **Deferred by him 2026-10-25: the recompute of these values (Stage 9 measuring, and the A18 seed threshold) waits until after Sun 25 Oct. He retests everything on live data Mon 26 + Tue 27 Oct, and the values are recomputed from that data before the demo. Until then the option C start values stay. Open item.** |
 | A42 | Group suggestions still require manual acceptance; no confident auto-accept path or threshold is present. The approved auto-accept path conflicts with current AGENTS hard constraint 4 (explicit human acceptance), so hold pending scope reconciliation. |
 
 ## B. Live database actions — your explicit go + backup first (B1–B3 ran on Neon; B5 runs on local `echo_db`)
@@ -1811,11 +1879,25 @@ The `[x] decided` marks above mean the owner's decision is recorded. They do not
 ### D1. Dispose the DB pool on shutdown — [x] 2026-10-22 (`postgresql_manager.dispose_engine()`, called in the `backend/main.py` lifespan after ENP stops; idempotent, engine is re-created on next use; the RSE psycopg2 pool in `rse/search_coordinator.py` is NOT closed — not part of this item)
 - Backend shutdown never calls `engine.dispose()`; pooled connections wait for Neon's idle timeout.
 
-### D2. Full attachment support — [ ]
+### D2. Full attachment support — [~] 2026-10-25 OCR for images and scanned PDFs built; old `.doc` and the A4 merge still open
 - **Works today:** PDF (pypdf → pdfplumber), DOCX (python-docx), `.txt` / `.md` / `.csv`.
 - **To build:**
-  - [ ] OCR for images (PNG/JPG/…): install the Tesseract binary, enable `pytesseract` in `requirements.txt`.
-  - [ ] Scanned PDFs (no text layer): OCR each page.
+  - [x] OCR for images (PNG/JPG/…): **built and checked with the real program 2026-10-25 (working tree, not committed)**.
+        `pytesseract==0.3.13` in `.venv` and `requirements.txt`; `_ocr_ready()` in `enp/attachment_processor.py` checks the
+        Python package AND the Tesseract program once per process (finds it from `TESSERACT_CMD`, the PATH, the default
+        Windows folders, then `~\tools\tesseract\tesseract.exe`). Tesseract 5.4.0 (UB-Mannheim build, English + osd) was
+        installed WITHOUT administrator rights: `winget install` waited on a Windows permission prompt (UAC) and was then
+        killed for low memory, so the setup exe winget had already downloaded was unpacked with 7-Zip into
+        `C:\Users\mdshe\tools\tesseract` (the installer was never run; `tesseract --version` and `--list-langs` work).
+        Real OCR checked: a rendered PNG (`HELLO OCR 12345`), a scanned 1-page PDF, a scanned 2-page A4 invoice at 10 pt
+        (invoice number, amount `1,250.00` and an email address all read exactly) and a blank scanned page (returns None).
+        The backend must be restarted once so it notices the program (the check is cached). Only English is installed.
+        The 4 real attachments are 0-byte JPEGs, so they give no text either way.
+  - [x] Scanned PDFs (no text layer): **built and checked 2026-10-25**. A PDF with no text layer is rendered with
+        `pypdfium2` at 200 dpi and read page by page, at most `OCR_PDF_MAX_PAGES` = 10 pages, stopping at the char cap,
+        60 s per page. 20 checks pass (17 with a stand-in OCR call: page order, A4 render size 1654 x 2339, the 10-page
+        limit, the char cap, no readable text, an OCR crash, a 0-byte PDF, garbage bytes, a 0-byte JPEG, garbage as PNG,
+        a text PDF still read by pypdf; plus the 3 real-program checks above).
   - [ ] Old `.doc` files (python-docx cannot read them).
   - [x] PPTX, XLSX, EML built 2026-10-24 (cloud session) in `enp/attachment_processor.py`; HTML was already there.
         (ODT/RTF were built first, then REMOVED the same day on his word: A22 says skip them. `.rtf` / `text/rtf` is now

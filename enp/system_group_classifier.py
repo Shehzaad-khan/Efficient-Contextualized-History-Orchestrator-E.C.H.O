@@ -45,7 +45,7 @@ from urllib.parse import urlparse
 
 import numpy as np
 
-from ste.faiss_manager import cosine, get_manager
+from ste.faiss_manager import EMBEDDING_VERSION, VECTOR_DIMENSION, cosine, get_manager
 
 logger = logging.getLogger(__name__)
 
@@ -335,6 +335,31 @@ def _centroids_path() -> Path:
     return get_manager().index_path.parent / "centroids.npz"
 
 
+# Two extra arrays stored beside the category vectors. A centroid from another
+# embedding model is a plain 384-d vector too (MiniLM and arctic are both 384-d),
+# so only this stamp tells the two apart. Their names start with "_" and are not
+# in SEED_TEXTS, so the loader never mistakes them for categories.
+_VERSION_KEY = "_embedding_version"
+_DIMENSION_KEY = "_dimension"
+
+
+def _centroids_match_model(path: Path) -> bool:
+    """True when centroids.npz was written for the current embedding model.
+
+    A file with no stamp (written before the stamp existed) or another version or
+    dimension counts as a mismatch: Stage 3 would compare this model's vectors with
+    another model's centroids and give meaningless scores, without any error.
+    """
+    try:
+        with np.load(path) as stored:
+            if _VERSION_KEY not in stored.files or _DIMENSION_KEY not in stored.files:
+                return False
+            return str(stored[_VERSION_KEY]) == EMBEDDING_VERSION and int(stored[_DIMENSION_KEY]) == VECTOR_DIMENSION
+    except Exception as exc:
+        logger.warning("Could not read centroids.npz at %s: %s", path, exc)
+        return False
+
+
 def _load_persisted_centroids() -> bool:
     """Load centroids saved by a previous recompute_centroids() run.
     Returns True when at least one category was loaded."""
@@ -348,10 +373,16 @@ def _load_persisted_centroids() -> bool:
     except OSError:
         logger.warning("Could not inspect persisted centroid age at %s; using seeds", path)
         return False
+    if not _centroids_match_model(path):
+        logger.warning(
+            "Ignoring centroids.npz: not written for embedding version %s; using seeds before recompute",
+            EMBEDDING_VERSION,
+        )
+        return False
     try:
         with np.load(path) as stored:
             for category in stored.files:
-                if category in SEED_TEXTS:
+                if category in SEED_TEXTS and stored[category].shape == (VECTOR_DIMENSION,):
                     CENTROIDS[category] = stored[category]
                     _persisted_categories.add(category)
     except Exception as exc:
@@ -685,6 +716,9 @@ def centroids_need_recompute() -> bool:
     if age_seconds > _CENTROID_MAX_AGE_SECONDS:
         logger.info("Persisted centroids are older than 30 days; recomputing at ENP start")
         return True
+    if not _centroids_match_model(path):
+        logger.info("Persisted centroids are not for embedding version %s; recomputing at ENP start", EMBEDDING_VERSION)
+        return True
     return False
 
 
@@ -696,7 +730,11 @@ def _save_centroids(categories: set[str]) -> None:
     fd, temp_name = tempfile.mkstemp(dir=path.parent, prefix="centroids.", suffix=".tmp.npz")
     os.close(fd)
     try:
-        np.savez(temp_name, **{category: CENTROIDS[category] for category in sorted(categories)})
+        np.savez(
+            temp_name,
+            **{category: CENTROIDS[category] for category in sorted(categories)},
+            **{_VERSION_KEY: np.array(EMBEDDING_VERSION), _DIMENSION_KEY: np.array(VECTOR_DIMENSION)},
+        )
         os.replace(temp_name, path)
     except BaseException:
         Path(temp_name).unlink(missing_ok=True)

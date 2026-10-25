@@ -31,7 +31,7 @@ Template slide 16 ("Any other information") is deliberately dropped **[OWNER]**.
 ## Facts that must be right (verified against code)
 - Exactly 2 LLM calls per query (parse_intent + synthesize).
 - Retrieval graph has 14 nodes (`rse/retrieval_engine.py`).
-- RRF k = 60; final score = 0.8 × cross-encoder + 0.2 × effort (`rse/config.py`); MIN_TOP_SIMILARITY 0.35; MAX_WIDEN_ATTEMPTS 3.
+- RRF k = 60; final score = 0.8 × cross-encoder + 0.2 × effort (`rse/config.py`); MIN_TOP_SIMILARITY 0.55; MAX_WIDEN_ATTEMPTS 3.
 - Quality gate: 5 checks → strong / weak / empty (`rse/graph_nodes.py` node_evaluate_quality); weak/empty after 3 widenings → no_results_found (`rse/graph_routing.py`).
 - Sessions: 5-minute gap; focus = 1 / distinct sources; fragmentation = sessions per day / avg session minutes (`wba/wellbeing_analytics.py`).
 - Groups: need ≥ 6 confirmed items; score = 0.5·rule + 0.5·knn; knn = mean cosine of top 3 members; suggest if score > 0.70 or rule score > 0; suggestions are 'pending' until the user accepts (`wba/group_manager.py`).

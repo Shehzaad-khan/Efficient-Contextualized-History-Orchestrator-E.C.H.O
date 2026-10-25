@@ -60,7 +60,7 @@ from enp.system_group_classifier import (
     recompute_centroids,
 )
 from enp.text_cleaner import clean_item_text
-from enp.topic_extractor import build_embeddable_text, sender_domain_hint
+from enp.topic_extractor import TextPart, build_embeddable_text, sender_domain_hint
 from ste.faiss_manager import EMBEDDING_VERSION, VECTOR_DIMENSION, FAISSManager, get_manager
 from ste.storage_engine import SYSTEM_GROUP_IDS
 from ste.redis_manager import (
@@ -490,18 +490,25 @@ def prepare_item_for_embedding(
         # without HTML, a video whose metadata never arrived) still get indexed.
         # Failing them is terminal and would hide them from retrieval and the
         # timeline for good.
-        embeddable_text = " ".join(
-            str(part).strip()
-            for part in (
-                item.get("title", ""),
-                item.get("domain", ""),
-                item.get("subject", ""),
-                item.get("channel_name", ""),
-                item.get("video_id", ""),
-                item.get("url", ""),
+        # Through fit_to_window like every other text: a very long url must not
+        # make the stored text longer than what the model reads.
+        embeddable_text = fit_to_window([
+            TextPart(
+                " ".join(
+                    str(part).strip()
+                    for part in (
+                        item.get("title", ""),
+                        item.get("domain", ""),
+                        item.get("subject", ""),
+                        item.get("channel_name", ""),
+                        item.get("video_id", ""),
+                        item.get("url", ""),
+                    )
+                    if part and str(part).strip()
+                ),
+                None,
             )
-            if part and str(part).strip()
-        )
+        ])
         logger.debug("memory_id=%s embedded from identity fields only", item["memory_id"])
     if not embeddable_text.strip():
         raise ValueError(f"No embeddable text constructed for memory_id={item['memory_id']}")

@@ -277,8 +277,12 @@ sequenceDiagram
   `ste/faiss_manager.py` `EMBEDDING_VERSION = "snowflake-arctic-embed-xs-v1"`; `VECTOR_DIMENSION` stays 384, so the FAISS
   dimension does not change. The model is loaded by its repo id (`enp/embedding_generator.py` `MODEL_REPO_ID`). Built 2026-10-25. The earlier model
   was `all-MiniLM-L6-v2` (`max_seq_length` 256, trained on 128 tokens). A saved index of another `embedding_version` is now
-  refused at load (`ValueError` with the rebuild steps), so the backend and ENP do not start on the old MiniLM index until the
-  full re-embed (B5) has replaced it. After B5, a model switch costs another full re-embed.
+  refused at load (`ValueError` with the rebuild steps). What that does in practice: the API still starts, but ENP stops at its
+  first `get_manager()` call (no enrichment), and the three read paths (`rse/search_coordinator.py` `faiss_semantic_search`,
+  `rse/time_anchor.py`, `wba/group_manager.py`) catch the error, log it, and carry on without the vector part, so search drops
+  to keyword-only instead of failing. The refusal is loud only in `logs/echo.log`. `centroids.npz` is stamped with the
+  embedding version and dimension and ignored (then recomputed) when the stamp is missing or differs. After B5, a model
+  switch costs another full re-embed.
 - **Query vs document path.** Questions get the model's query prefix, read from its shipped config (`model.prompts["query"]`
   = "Represent this sentence for searching relevant passages: "), never hard-coded: a new `generate_query_embeddings(texts)`
   used by `rse/search_coordinator.py` and `rse/time_anchor.py`. Items, centroid seeds and group KNN use the document path
@@ -1437,7 +1441,7 @@ query latency and tokens per round (A25), embed speed of arctic-xs on the real d
 | ENP | Batch / poll | 10 items / 10 s | `DEFAULT_BATCH_SIZE = 10`, `DEFAULT_POLL_INTERVAL = 10` | §8.1 |
 | ENP | Embedding batch | 32 | `embedding_generator.py` : `DEFAULT_BATCH_SIZE = 32` | — |
 | ENP | Embedding model / window | `Snowflake/snowflake-arctic-embed-xs`, 384-d, 512 tokens (510 content), query prefix from its config | `embedding_generator.py` : `MODEL_REPO_ID = "Snowflake/snowflake-arctic-embed-xs"` (window read from the model: 512); `faiss_manager.py` : `EMBEDDING_VERSION = "snowflake-arctic-embed-xs-v1"`, `VECTOR_DIMENSION = 384` | A40.1 |
-| ENP | Embed text budget | hints whole; Gmail body ≤ 300 tokens then attachments; YouTube description ≤ 200 tokens then transcript; Chrome / fallback text fills the rest; window read from the model | `topic_extractor.py` : `GMAIL_BODY_CHARS = 800`, `CHROME_SNIPPET_CHARS = 500`, `YOUTUBE_DESCRIPTION_CHARS = 600`, `YOUTUBE_TRANSCRIPT_CHARS = 400`, `FALLBACK_BODY_CHARS = 800` (to be replaced by `GMAIL_BODY_MAX_TOKENS = 300`, `YOUTUBE_DESCRIPTION_MAX_TOKENS = 200`) | A16 (replaces the char caps of A4, A13, A24.1) |
+| ENP | Embed text budget | hints whole; Gmail body ≤ 300 tokens then attachments; YouTube description ≤ 200 tokens then transcript; Chrome / fallback text fills the rest; window read from the model | `topic_extractor.py` : `GMAIL_BODY_MAX_TOKENS = 300`, `GMAIL_ATTACHMENTS_POOL_TOKENS = 210`, `YOUTUBE_DESCRIPTION_MAX_TOKENS = 200` (the five character caps are gone); `embedding_generator.fit_to_window` | A16 (replaces the char caps of A4, A13, A24.1) |
 | ENP | Keywords | 8 / own Gmail 6 / thread 4 | `KEYWORD_LIMIT`, `GMAIL_OWN_KEYWORD_LIMIT`, `THREAD_KEYWORD_LIMIT` | §8.2 |
 | Classifier | Centroid (recomputed) | score > 0.55, lead > 0.08 (v2.1 value; not re-tuned by A40) | `CENTROID_MIN_SCORE = 0.55`, `CENTROID_MIN_MARGIN = 0.08` | §9.3 |
 | Classifier | Centroid (seed) | lowest score / lead with zero wrong, re-measured Thursday on arctic-xs; lead 0.08 is the start value, the MiniLM score guess 0.25 must move up (start value, tuned Thursday) | none | A18, A40 |
@@ -1455,7 +1459,7 @@ query latency and tokens per round (A25), embed speed of arctic-xs on the real d
 | RSE | Effort ceilings | 600 s / 5 revisits / 10 interactions | `reranker.py` : `_DWELL_CEILING_SECONDS`, `_REVISIT_CEILING`, `_INTERACTION_CEILING` | §10.5 |
 | RSE | Gmail zero-dwell effort | median of Gmail items in the list | 0 | A29 |
 | RSE | CE model / input | `ms-marco-MiniLM-L-6-v2`; title + best-matching 500-char window of cleaned text | `CROSS_ENCODER_MODEL`; `RERANK_DOC_CHAR_LIMIT = 512` (title + first 512 chars) | A40.2, A40.3 |
-| RSE | Quality gate (also anchor FAISS fallback) | best cosine ≥ 0.55 (start value, tuned Thursday; just above the wrong-item 95th percentile 0.53 for arctic-xs); ≥ 2 candidates. It can only trigger widening, never prove "nothing there" | `MIN_TOP_SIMILARITY = 0.35` (MiniLM), `MIN_RESULT_COUNT` | §10.3, A40 |
+| RSE | Quality gate (also anchor FAISS fallback) | best cosine ≥ 0.55 (start value, tuned Thursday; just above the wrong-item 95th percentile 0.53 for arctic-xs); ≥ 2 candidates. It can only trigger widening, never prove "nothing there" | `MIN_TOP_SIMILARITY = 0.55` (`rse/config.py`, start value, not measured), `MIN_RESULT_COUNT` | §10.3, A40 |
 | RSE | Neighbourhood | top 3, ± 5 min, 5 each | `NEIGHBOR_TOP_ITEMS`, `NEIGHBOR_WINDOW_MINUTES`, `NEIGHBORS_PER_ITEM` | §10.3 |
 | RSE | Anchor candidates | 5 | `ANCHOR_CANDIDATE_LIMIT` | §10.3 |
 | RSE | Results to answer / snippet | 10 / best-matching 500 chars of cleaned text | `SYNTHESIS_TOP_RESULTS = 10`, `SNIPPET_CHAR_LIMIT = 500` (first 500 of raw) | A24.2 |

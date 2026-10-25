@@ -6,6 +6,8 @@ FastAPI router that exposes the RSE (Retrieval & Synthesis Engine) as HTTP endpo
 
 Endpoints:
     POST /retrieval/query          — main query endpoint (no API key: the local UI calls it)
+    POST /retrieval/query/stream   — same query as server-sent events with live steps (no API key)
+    GET  /retrieval/sessions       — past chats, newest first    (X-API-Key required)
     GET  /retrieval/session/{id}   — session diagnostic          (X-API-Key required)
     DELETE /retrieval/session/{id} — clear session history       (X-API-Key required)
 
@@ -19,13 +21,16 @@ Logging: run_query already logs each query's timing and counts. This file only
 logs failures and session-route results — never the query text or the answer.
 """
 
+import json
 import logging
 import os
 import re
 import secrets
+from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Security
+from fastapi import APIRouter, Depends, HTTPException, Query, Security
+from fastapi.responses import StreamingResponse
 from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, Field
 
@@ -53,6 +58,33 @@ def _require_api_key(api_key: Optional[str] = Security(_api_key_header)) -> None
         raise HTTPException(status_code=401, detail="Unauthorized")
 
 
+# LangChain stores each message as {"type": "human"|"ai", "data": {"content": ...}}.
+_LIST_SESSIONS_SQL = """
+SELECT
+    session_id,
+    (ARRAY_AGG(message->'data'->>'content' ORDER BY id)
+        FILTER (WHERE message->>'type' = 'human'))[1] AS first_question,
+    MAX(created_at) AS last_active,
+    COUNT(*) FILTER (WHERE message->>'type' = 'human') AS turns
+FROM message_store
+GROUP BY session_id
+ORDER BY MAX(created_at) DESC
+LIMIT %s
+"""
+
+_SESSION_TITLE_MAX_CHARS = 60
+
+
+def _session_title(first_question: Optional[str]) -> str:
+    """The first question on one line, cut at a word boundary with an ellipsis."""
+    text = " ".join((first_question or "").split())
+    if not text:
+        return "Untitled chat"
+    if len(text) <= _SESSION_TITLE_MAX_CHARS:
+        return text
+    return text[: _SESSION_TITLE_MAX_CHARS].rsplit(" ", 1)[0] + "…"
+
+
 def _check_session_id(session_id: str) -> None:
     if not _SESSION_ID_RE.match(session_id):
         raise HTTPException(status_code=400, detail="Invalid session_id")
@@ -75,6 +107,19 @@ class QueryResponse(BaseModel):
     no_results: bool
     result_count: int
     parsed_intent: Optional[dict] = None
+    # A27: the answer with validated ⟦n⟧ markers, and the cited items they point
+    # at (n, memory_id, source_type, anchor, date_label, created_at_local, title,
+    # link, role). `final_answer` stays the readable text for clients that draw
+    # no pills. Defaults keep the fields present when a graph path sets neither.
+    answer_markdown: str = ""
+    answer_sources: list[dict] = Field(default_factory=list)
+
+
+class SessionSummary(BaseModel):
+    session_id: str
+    title: str
+    last_active: datetime
+    turns: int
 
 
 @router.post("/query", response_model=QueryResponse)
@@ -105,6 +150,78 @@ def query(request: QueryRequest):
         # is rarer (e.g. a bad response shape). Only the type is logged.
         logger.exception("retrieval /query failed — %s", type(exc).__name__)
         raise HTTPException(status_code=500, detail="Internal server error")
+
+
+def _sse(event: str, payload: dict) -> str:
+    """One server-sent event. json.dumps puts the payload on a single line."""
+    return f"event: {event}\ndata: {json.dumps(payload, default=str)}\n\n"
+
+
+@router.post("/query/stream")
+def query_stream(request: QueryRequest):
+    """
+    The same query as POST /query, but as a stream of server-sent events (A28).
+
+    Events: `session` (the session id, first), `step` (label + optional count after
+    each graph node), `done` (the full QueryResponse, last), or `error` instead of
+    `done` when something broke. POST /query stays as the plain fallback.
+    A sync generator: Starlette runs it in the threadpool, so the blocking graph
+    never runs on the event loop.
+    """
+    from rse.retrieval_engine import run_query_stream
+
+    def events():
+        try:
+            for event in run_query_stream(user_query=request.query, session_id=request.session_id):
+                if event["event"] == "done":
+                    payload = QueryResponse(**event["result"]).model_dump(mode="json")
+                else:
+                    payload = {key: value for key, value in event.items() if key != "event"}
+                yield _sse(event["event"], payload)
+        except Exception as exc:
+            # Same rule as /query: only the type is logged; the browser gets no detail.
+            logger.exception("retrieval /query/stream failed — %s", type(exc).__name__)
+            yield _sse("error", {"detail": "Internal server error"})
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@router.get("/sessions", response_model=list[SessionSummary], dependencies=[Depends(_require_api_key)])
+def list_sessions(limit: int = Query(50, ge=1, le=200)):
+    """
+    The past chats, most recently active first (A27 chat list).
+
+    One entry per session_id in message_store: the title is the first question
+    (cut short), `turns` counts the questions. No new table; message_store's
+    created_at gives the times. Old sessions disappear with the 30-day cleanup.
+    """
+    try:
+        conn = get_connection()
+        try:
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute(_LIST_SESSIONS_SQL, (limit,))
+                    rows = cur.fetchall()
+        finally:
+            conn.close()
+    except Exception as exc:
+        logger.exception("list_sessions failed — %s", type(exc).__name__)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+    logger.info("Listed %d chat sessions", len(rows))
+    return [
+        SessionSummary(
+            session_id=session_id,
+            title=_session_title(first_question),
+            last_active=last_active,
+            turns=turns,
+        )
+        for session_id, first_question, last_active, turns in rows
+    ]
 
 
 @router.get("/session/{session_id}", dependencies=[Depends(_require_api_key)])

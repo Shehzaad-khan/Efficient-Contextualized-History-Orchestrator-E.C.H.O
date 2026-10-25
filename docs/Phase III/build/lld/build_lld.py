@@ -491,8 +491,8 @@ def module_memory(d: TemplateDocument) -> None:
         "`enp/echo_faiss.index` with a metadata file, and each vector has a row in `embedding_index` so the "
         "index can be rebuilt from PostgreSQL.",
     ], [
-        ["int", "dimension", "public", "384", "Vector length (all-MiniLM-L6-v2)"],
-        ["str", "embedding_version", "public", "all-MiniLM-L6-v2-v1", "Model version recorded with the index"],
+        ["int", "dimension", "public", "384", "Vector length (snowflake-arctic-embed-xs)"],
+        ["str", "embedding_version", "public", "snowflake-arctic-embed-xs-v1", "Model version recorded with the index"],
         ["Path", "index_path", "public", "enp/echo_faiss.index", "Index file (overridable by environment)"],
         ["list[str]", "memory_ids", "public", "[]", "Memory id stored at each vector offset"],
         ["dict[str, int]", "memory_id_to_offset", "public", "{}", "Reverse lookup: memory id → offset"],
@@ -832,7 +832,7 @@ def module_retrieval(d: TemplateDocument) -> None:
         "ends in `no_results_found`, so the engine says so honestly instead of guessing. Constants are defined in "
         "`rse/config.py`.",
     ], [
-        ["float", "MIN_TOP_SIMILARITY", "public, constant", "0.35", "Best cosine below this → weak"],
+        ["float", "MIN_TOP_SIMILARITY", "public, constant", "0.55", "Best cosine below this → weak"],
         ["int", "MIN_RESULT_COUNT", "public, constant", "2", "Fewer candidates → weak"],
         ["int", "MAX_WIDEN_ATTEMPTS", "public, constant", "3", "Widenings before giving up"],
     ], [

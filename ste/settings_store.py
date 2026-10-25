@@ -58,7 +58,12 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "youtube_enabled": True,
     "excluded_domains": [],   # exact match or subdomain, lowercase hostnames
     "excluded_senders": [],   # matched as substring of the From address, lowercase
+    "retention": "forever",   # A37: how long items are kept; see RETENTION_CHOICES
 }
+
+# The values `retention` may take. Anything else falls back to "forever", so a
+# typo or a corrupt value can never start deleting data.
+RETENTION_CHOICES = ("forever", "1y", "6m")
 
 _BOOL_KEYS = ("gmail_enabled", "chrome_enabled", "youtube_enabled")
 _LIST_KEYS = ("excluded_domains", "excluded_senders")
@@ -85,6 +90,8 @@ def _normalize(raw: dict[str, Any]) -> dict[str, Any]:
         values = raw.get(key)
         if isinstance(values, list):
             settings[key] = sorted({str(v).strip().lower() for v in values if str(v).strip()})
+    if raw.get("retention") in RETENTION_CHOICES:
+        settings["retention"] = raw["retention"]
     return settings
 
 
@@ -134,12 +141,13 @@ def _current_settings(use_cache: bool) -> dict[str, Any]:
         # First load, or changed from outside this process (e.g. another backend).
         logger.info(
             "Capture settings loaded (gmail=%s, chrome=%s, youtube=%s, "
-            "excluded_domains=%d, excluded_senders=%d)",
+            "excluded_domains=%d, excluded_senders=%d, retention=%s)",
             settings["gmail_enabled"],
             settings["chrome_enabled"],
             settings["youtube_enabled"],
             len(settings["excluded_domains"]),
             len(settings["excluded_senders"]),
+            settings["retention"],
         )
     return settings
 

@@ -42,6 +42,7 @@ lxml_html_clean>=0.4.0
 pypdf==4.3.1
 pdfplumber==0.11.4
 python-docx==1.1.2
-# OCR for image attachments is optional — requires the Tesseract binary:
-# pytesseract==0.3.13
-# Pillow==10.4.0
+# OCR for image attachments and scanned PDFs needs the Tesseract program as well
+# (Windows: winget install UB-Mannheim.TesseractOCR). Without it OCR stays off and
+# nothing breaks. Pillow and pypdfium2 come with pdfplumber.
+pytesseract==0.3.13

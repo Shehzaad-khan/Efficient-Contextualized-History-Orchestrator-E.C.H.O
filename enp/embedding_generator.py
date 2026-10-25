@@ -9,9 +9,11 @@ Callers:
 
 Two paths, one model. snowflake-arctic-embed-xs is trained for asymmetric search: a
 question is embedded with the prompt "Represent this sentence for searching relevant
-passages: " in front, a document with no prompt. The prompts come from the model's own
-config (model.prompts), not from a string here. Stored items and centroid seeds always
-take the document path; only text typed as a question takes the query path.
+passages: " in front, a document with no prompt. The query prompt comes from the model's
+own config (model.prompts), not from a string here; the empty "document" prompt is
+sentence-transformers' default for a model that defines none (get_model() checks both
+values). Stored items and centroid seeds always take the document path; only text
+typed as a question takes the query path.
 
 One shared SentenceTransformer per process, loaded on first use (~1-3 s).
 
@@ -63,7 +65,8 @@ from ste.faiss_manager import VECTOR_DIMENSION
 MODEL_REPO_ID = "Snowflake/snowflake-arctic-embed-xs"
 DEFAULT_BATCH_SIZE = 32
 HF_OFFLINE_ENV = "HF_HUB_OFFLINE"
-# Names of the two prompts in the model's config (model.prompts).
+# Names of the two entries of model.prompts (the query one is defined by the model's
+# config, the document one is empty by sentence-transformers' default).
 DOCUMENT_PROMPT_NAME = "document"
 QUERY_PROMPT_NAME = "query"
 UNIT_NORM_TOLERANCE = 0.001
@@ -150,12 +153,17 @@ def get_model():
                     HF_OFFLINE_ENV,
                 )
             raise
-        missing_prompts = [
-            name for name in (DOCUMENT_PROMPT_NAME, QUERY_PROMPT_NAME) if name not in loaded.prompts
-        ]
-        if missing_prompts:
-            # A model without its query prompt would embed questions as documents: no error, worse search.
-            raise RuntimeError(f"{MODEL_REPO_ID} has no prompt named {missing_prompts}; found {sorted(loaded.prompts)}")
+        # Check the VALUES: sentence-transformers gives every model both keys, with "" for
+        # a prompt the model does not define, so a key-presence test can never fail.
+        # An empty query prompt would embed questions as documents (no error, worse search).
+        # A non-empty document prompt would be missing from the 510-token budget in
+        # fit_to_window, which is computed on the bare text.
+        if not loaded.prompts.get(QUERY_PROMPT_NAME):
+            raise RuntimeError(f"{MODEL_REPO_ID} has no {QUERY_PROMPT_NAME!r} prompt; found {loaded.prompts}")
+        if loaded.prompts.get(DOCUMENT_PROMPT_NAME):
+            raise RuntimeError(
+                f"{MODEL_REPO_ID} has a {DOCUMENT_PROMPT_NAME!r} prompt; fit_to_window does not count its tokens"
+            )
         logger.info(
             "Embedding model %s loaded on %s in %.0f ms",
             MODEL_REPO_ID,

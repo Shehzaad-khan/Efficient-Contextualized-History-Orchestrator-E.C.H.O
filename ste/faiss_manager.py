@@ -324,6 +324,30 @@ class FAISSManager:
                 return None
             return self._buffer[offset].copy()
 
+    def remove_many(self, memory_ids: list[str]) -> int:
+        """Drop these items' vectors from memory; returns how many were indexed.
+
+        Unknown ids are ignored. The surviving rows keep their order, the index is
+        rebuilt on its next read, and nothing is written to disk: call save_index()
+        afterwards. The embedding_index rows are not touched here (retention
+        deletes them with the memory_items row, by CASCADE).
+        """
+        doomed = {str(memory_id) for memory_id in memory_ids}
+        with self._lock:
+            keep = [offset for offset, memory_id in enumerate(self._memory_ids) if memory_id not in doomed]
+            removed = self._count - len(keep)
+            if removed == 0:
+                return 0
+            kept_vectors = self._buffer[np.array(keep, dtype=np.intp)].copy()
+            self._buffer = np.empty((max(len(keep), INITIAL_CAPACITY), self.dimension), dtype=np.float32)
+            self._buffer[: len(keep)] = kept_vectors
+            self._memory_ids = [self._memory_ids[offset] for offset in keep]
+            self._count = len(keep)
+            self._rebuild_mappings()
+            self._index_stale = True
+        logger.info("FAISS removed %d vectors (%d left)", removed, len(keep))
+        return removed
+
     def save_index(self, path: str | Path | None = None) -> Path:
         """Write the index and its metadata atomically (temp file + os.replace each).
 

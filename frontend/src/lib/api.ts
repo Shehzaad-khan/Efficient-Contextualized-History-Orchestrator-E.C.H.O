@@ -20,6 +20,7 @@ import type {
   HeatmapCell,
   MemoryItem,
   QueryResponse,
+  QueryStep,
   RegretAnalytics,
   UserGroup,
   WeeklyInsight,
@@ -125,6 +126,91 @@ export function askEcho(query: string, sessionId: string | null): Promise<QueryR
   )
 }
 
+/** The streaming route is missing or refused before sending anything: use the plain POST instead. */
+class StreamUnavailableError extends Error {}
+
+/** One server-sent event ("event: x" + "data: {json}" lines) split into its parts. */
+function parseSseEvent(block: string): { event: string; data: unknown } | null {
+  let event = 'message'
+  const dataLines: string[] = []
+  for (const line of block.split('\n')) {
+    if (line.startsWith('event: ')) event = line.slice(7)
+    else if (line.startsWith('data: ')) dataLines.push(line.slice(6))
+  }
+  return dataLines.length ? { event, data: JSON.parse(dataLines.join('\n')) } : null
+}
+
+async function streamQuery(
+  query: string,
+  sessionId: string | null,
+  onStep: (step: QueryStep) => void,
+  timeoutMs: number,
+): Promise<QueryResponse> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const response = await fetch(`${API_BASE}/retrieval/query/stream`, {
+      method: 'POST',
+      signal: controller.signal,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, session_id: sessionId }),
+    })
+    if (!response.ok || !response.body) throw new StreamUnavailableError(`${response.status} ${response.statusText}`)
+
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      let boundary = buffer.indexOf('\n\n')
+      while (boundary !== -1) {
+        const parsed = parseSseEvent(buffer.slice(0, boundary))
+        buffer = buffer.slice(boundary + 2)
+        boundary = buffer.indexOf('\n\n')
+        if (!parsed) continue
+        if (parsed.event === 'step') onStep(parsed.data as QueryStep)
+        else if (parsed.event === 'done') {
+          setDemoMode(false)
+          return parsed.data as QueryResponse
+        } else if (parsed.event === 'error') throw new Error('query failed')
+      }
+    }
+    throw new Error('stream ended without an answer')
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/**
+ * askEcho with live progress: onStep is called as each search step finishes.
+ * Falls back to the plain POST when the streaming route is unavailable, and to
+ * demo data (like every call here) when the backend is down.
+ */
+export function askEchoStreaming(
+  query: string,
+  sessionId: string | null,
+  onStep: (step: QueryStep) => void,
+): Promise<QueryResponse> {
+  const timeoutMs = 90000 // same budget as askEcho: a cold query loads two models
+  return withFallback(
+    async () => {
+      try {
+        return await streamQuery(query, sessionId, onStep, timeoutMs)
+      } catch (error) {
+        if (!(error instanceof StreamUnavailableError)) throw error
+        return request<QueryResponse>(
+          '/retrieval/query',
+          { method: 'POST', body: JSON.stringify({ query, session_id: sessionId }) },
+          timeoutMs,
+        )
+      }
+    },
+    () => demoQueryReply(query),
+  )
+}
+
 // ── Wellbeing (WBA) ───────────────────────────────────────────────────────────
 
 export function fetchDaily(): Promise<DailySummary> {
@@ -219,12 +305,16 @@ export function setReminderSettings(enabled: boolean): Promise<{ reminders_enabl
 
 // ── Capture settings (backend /settings — Redis-backed) ──────────────────────
 
+// How long items are kept (A37). The backend deletes older items at its next start.
+export type RetentionChoice = 'forever' | '1y' | '6m'
+
 export interface CaptureSettings {
   gmail_enabled: boolean
   chrome_enabled: boolean
   youtube_enabled: boolean
   excluded_domains: string[]
   excluded_senders: string[]
+  retention: RetentionChoice
 }
 
 const DEMO_CAPTURE_SETTINGS: CaptureSettings = {
@@ -233,6 +323,7 @@ const DEMO_CAPTURE_SETTINGS: CaptureSettings = {
   youtube_enabled: true,
   excluded_domains: [],
   excluded_senders: [],
+  retention: 'forever',
 }
 
 export function fetchCaptureSettings(): Promise<CaptureSettings> {
