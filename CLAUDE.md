@@ -11,7 +11,7 @@ this project is both a working capstone AND his understanding of every line in i
 E.C.H.O (Efficient Contextualized History Orchestrator) — a local-first, single-user
 personal memory system. It captures Gmail / Chrome / YouTube activity through intent
 gates, enriches it in the background, and answers natural-language multi-turn queries
-through a LangGraph retrieval graph with exactly 2 LLM calls per query. A wellbeing
+through a LangGraph retrieval graph with usually 2 LLM calls per query, at most 6 (A26). A wellbeing
 module reflects time patterns without judging. See `README.md` for the module map.
 
 **Source of truth:** `docs/Timeless_docs/Echo_System_Design.md` (architecture + database

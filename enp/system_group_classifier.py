@@ -22,7 +22,8 @@ Caller: enrichment_pipeline.classify_item -> classify_system_group(item, embeddi
                            -> 'misc', 'fallback', 0.40
 
 Centroids (CENTROIDS):
-  - initialize_centroids (ENP start): embed the 5 SEED_TEXTS, then override them
+  - initialize_centroids (ENP start): embed the SEED_TEXTS sentences (8 per category)
+    and average them into 5 centroids, then override them
     with data/.../centroids.npz when a recompute has saved one.
   - recompute_centroids (ENP start when centroids.npz is missing or > 30 days
     old): per category, average the per-source means of stored FAISS vectors
@@ -268,16 +269,68 @@ DOMAIN_CATEGORY_MAP = {
     "paytm.com": "personal",
 }
 
-SEED_TEXTS = {
-    "work": "meeting deadline client project deliverable sprint report",
-    "study": "lecture tutorial concept algorithm textbook exam university",
-    "entertainment": "funny comedy music gaming meme trailer reaction vlog viral",
-    "personal": "family friend birthday vacation message dinner wedding travel",
-    "misc": "general information article news update random browse read",
+# Seed examples (A18): 8 short sentences per category, written like the titles and
+# snippets that reach Stage 3 (Stage 1/2 already take the obvious domains and labels).
+# Each seed centroid is the mean of its sentences' embeddings (initialize_centroids).
+# One 7-9-word bag of words per category scored real items only 0.10-0.55.
+SEED_TEXTS: Dict[str, list[str]] = {
+    "work": [
+        "Sprint planning meeting moved to Thursday, please update the project board",
+        "Client review of the deliverable: feedback on the Q3 project report",
+        "Pull request review: fix the failing API integration test before the release deadline",
+        "Weekly status update on the product roadmap and team deadlines",
+        "Invoice and contract details for the freelance project with the client",
+        "Internship offer letter and onboarding schedule from the company HR team",
+        "Production deployment checklist and incident postmortem for the backend service",
+        "Job application status: interview scheduled with the engineering manager",
+    ],
+    "study": [
+        "Lecture 5: dynamic programming and graph algorithms explained step by step",
+        "Semester exam timetable and syllabus for the data structures course",
+        "Tutorial: how gradient descent works in machine learning with worked examples",
+        "Lab assignment submission deadline for operating systems and database management",
+        "Research paper on transformer neural networks: abstract, method and results",
+        "University notice: internal marks, attendance and registration for the next semester",
+        "Chapter summary and practice problems from the computer networks textbook",
+        "Online course certificate: learn Python programming, quizzes and coding exercises",
+    ],
+    "entertainment": [
+        "Official trailer of the new movie, released in theatres this Friday",
+        "Funny cricket match highlights and best moments of the IPL season",
+        "Stand-up comedy special: hilarious jokes and audience reactions",
+        "Top 10 gaming moments of the week: gameplay, walkthrough and live stream",
+        "New song with lyrics, official music video and reaction",
+        "Web series episode review, plot explained and ending breakdown",
+        "Viral meme compilation and funny reels that went trending this week",
+        "Daily vlog: travelling around with friends, food challenge and a fun day out",
+    ],
+    "personal": [
+        "Happy birthday! Family dinner plans and gift ideas for this weekend",
+        "Train ticket booking confirmation for the trip home during the holidays",
+        "Order confirmation: your package from the online shop is out for delivery",
+        "Bank account statement, UPI payment receipt and monthly expenses",
+        "Wedding invitation from a cousin: ceremony date, venue and travel arrangements",
+        "Doctor appointment reminder and health insurance details for the family",
+        "Hey, are you free to catch up this evening? Let's meet with friends for dinner",
+        "Flight and hotel booking for the vacation, packing list and itinerary",
+    ],
+    "misc": [
+        "Breaking news: government announces new policy, analysts react to the update",
+        "Newsletter: this week's top stories, articles and links worth reading",
+        "Your verification code and account security alert for your login",
+        "Terms of service and privacy policy update for our users",
+        "Weather forecast, traffic and local news for today",
+        "Encyclopedia article: history, geography and general facts about the topic",
+        "Limited time offer: discount coupon and sale on selected products",
+        "How to fix a common problem: quick tips, search results and general information",
+    ],
 }
 
-# Stage 3 thresholds (doc §9.3). Measured 2026-10-17: against the SEED centroids,
-# realistic items score only 0.10-0.55, so Stage 3 fired on 1 of 20 (decision A18).
+# Stage 3 thresholds (doc §9.3). Measured 2026-10-17: against the old one-line SEED
+# centroids, realistic items scored only 0.10-0.55, so Stage 3 fired on 1 of 20 (decision A18).
+# TODO(A18 part 2): this 0.55 / 0.08 pair is still used for seed centroids. A separate,
+# lower seed threshold, measured on the restored local rows, is not built yet; see
+# docs/review/ste_open_items.md A18.
 CENTROID_MIN_SCORE = 0.55
 CENTROID_MIN_MARGIN = 0.08
 
@@ -400,8 +453,11 @@ def initialize_centroids(generate_embedding) -> None:
     """
     if CENTROIDS:
         return
-    for category, text in SEED_TEXTS.items():
-        CENTROIDS[category] = generate_embedding(text)
+    for category, sentences in SEED_TEXTS.items():
+        CENTROIDS[category] = np.mean(
+            np.asarray([generate_embedding(sentence) for sentence in sentences], dtype=np.float32),
+            axis=0,
+        )
     if not _load_persisted_centroids():
         logger.info("Using seed centroids only (no centroids.npz yet)")
 

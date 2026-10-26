@@ -4,6 +4,7 @@
  */
 import type {
   DailySummary,
+  GroupRule,
   HeatmapCell,
   MemoryItem,
   QueryResponse,
@@ -68,6 +69,22 @@ export const demoGroups: UserGroup[] = [
   { group_id: 'g2', group_name: 'Placement Prep', description: 'Interview practice, OS revision, company research', member_count: 14, auto_assignment_active: true },
   { group_id: 'g3', group_name: 'Health Research', description: null, member_count: 4, auto_assignment_active: false },
 ]
+
+/** Demo rules by group id. Dates are relative to now so "no matches in 30 days" stays demonstrable. */
+const daysAgo = (days: number): string => hoursAgo(days * 24)
+
+export const demoRules: Record<string, GroupRule[]> = {
+  g1: [
+    { rule_id: 'r1', group_id: 'g1', rule_type: 'domain', rule_value: 'github.com', is_active: true, created_at: daysAgo(40), match_count: 17 },
+    { rule_id: 'r2', group_id: 'g1', rule_type: 'keyword', rule_value: 'langgraph', is_active: true, created_at: daysAgo(12), match_count: 6 },
+    { rule_id: 'r3', group_id: 'g1', rule_type: 'sender', rule_value: 'guide@college.edu', is_active: false, created_at: daysAgo(25), match_count: 3 },
+  ],
+  g2: [
+    { rule_id: 'r4', group_id: 'g2', rule_type: 'channel', rule_value: 'gate smashers', is_active: true, created_at: daysAgo(45), match_count: 0 },
+    { rule_id: 'r5', group_id: 'g2', rule_type: 'keyword', rule_value: 'interview', is_active: true, created_at: daysAgo(9), match_count: 8 },
+  ],
+  g3: [],
+}
 
 export const demoRegret: RegretAnalytics = {
   rate: { regret_rate_percent: 12.4, regretted_seconds: 1960, total_seconds: 15780 },

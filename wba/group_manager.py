@@ -10,15 +10,22 @@ USER groups answer "what personal goal does this serve?" and live here.
             items before auto-assignment activates for a group.
   Phase 2 — Auto-assignment: hybrid score = 0.5·rule_score + 0.5·knn_score;
             suggestions are created for any rule match or when KNN alone
-            reaches KNN_ONLY_THRESHOLD (currently 0.60).
+            reaches KNN_ONLY_THRESHOLD (currently 0.65).
             knn_score = mean cosine of the 3 most similar confirmed members.
-  Phase 3 — Weekly batch review: user accepts/rejects pending suggestions.
+            The one exception (A42): a rule match AND knn_score >= KNN_ONLY_THRESHOLD
+            is added at once as 'auto_accepted' and waits in the weekly review.
+  Phase 3 — Weekly batch review: user accepts/rejects pending suggestions and
+            keeps/removes the auto-accepted ones.
   Phase 4 — KNN improves each cycle as the confirmed set grows and cleans.
 
-HUMAN-IN-THE-LOOP (non-negotiable, DB design principle 3): every row in
-memory_user_groups is written through group_suggestions with an explicit
-'accepted' decision — including manual seeding, which records an
-auto-audit-trail suggestion in the same transaction. No other write path.
+HUMAN-IN-THE-LOOP (DB design principle 3): every row in memory_user_groups is
+written through group_suggestions — with an explicit 'accepted' decision, or
+(A42, confident path only) 'auto_accepted' and reviewed = FALSE so the weekly
+review can undo it. Manual seeding records an auto-audit-trail 'accepted'
+suggestion in the same transaction. No other write path.
+Only 'accepted' members count as confirmed: they alone are KNN examples and
+count toward MIN_CONFIRMED_FOR_KNN, so one wrong auto-add can never teach the
+next (A42.3). Keep in the review turns an auto-accepted item into 'accepted'.
 An item gets at most ONE suggestion per group: once suggested (pending,
 accepted or rejected) it is never suggested to that group again, so a
 rejection is final until the user assigns it by hand.
@@ -59,7 +66,10 @@ logger = logging.getLogger(__name__)
 
 MIN_CONFIRMED_FOR_KNN = 5
 AUTO_SUGGEST_THRESHOLD = 0.70
-KNN_ONLY_THRESHOLD = 0.65  # Design start value for arctic-embed-xs (A32/A40; was 0.60 on MiniLM). Not yet measured (Stage 9).
+# One bar for two jobs: KNN alone may suggest (A32), and a rule match plus KNN at or above it
+# is auto-accepted (A42.1). Design start value for arctic-embed-xs (A40; was 0.60 on MiniLM).
+# NOT yet measured on the real data: re-measure on the local rows, then set it here.
+KNN_ONLY_THRESHOLD = 0.65
 KNN_TOP_K = 3
 RULE_WEIGHT = 0.5
 KNN_WEIGHT = 0.5
@@ -72,6 +82,16 @@ VALID_RULE_TYPES = {"keyword", "domain", "channel", "sender", "time_window"}
 _ADDRESS_PATTERN = re.compile(r"[\w.+'-]+@[\w-]+(?:\.[\w-]+)+")
 
 _auto_assign_lock = threading.Lock()
+
+# SQL condition on `mug` (a memory_user_groups row): the member was confirmed by the user,
+# i.e. not one still marked 'auto_accepted' (A42.3). Members with no suggestion row count as confirmed.
+_CONFIRMED_MEMBER_SQL = """
+    NOT EXISTS (
+        SELECT 1 FROM group_suggestions gs
+        WHERE gs.memory_id = mug.memory_id AND gs.group_id = mug.group_id
+          AND gs.decision = 'auto_accepted'
+    )
+"""
 
 
 # ── Small helpers ─────────────────────────────────────────────────────────────
@@ -109,26 +129,37 @@ def create_group(group_name: str, description: Optional[str] = None) -> dict[str
     name = (group_name or "").strip()
     if not name:
         raise ValueError("group_name must not be empty")
-    row = postgresql_manager.fetchone(
-        """
-        INSERT INTO user_groups (group_name, description)
-        VALUES (:group_name, :description)
-        RETURNING group_id, group_name, description, is_active, created_at
-        """,
-        {"group_name": name, "description": description},
-    )
+    # A transaction, not fetchone: fetchone never commits, so an INSERT .. RETURNING through it is rolled back.
+    with postgresql_manager.transaction() as connection:
+        row = dict(
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO user_groups (group_name, description)
+                    VALUES (:group_name, :description)
+                    RETURNING group_id, group_name, description, is_active, created_at
+                    """
+                ),
+                {"group_name": name, "description": description},
+            ).mappings().one()
+        )
     # Group names are the user's own labels — logged by id only.
     logger.info("User group created: %s", row["group_id"])
     return {**row, "group_id": str(row["group_id"])}
 
 
 def list_groups(include_inactive: bool = False) -> list[dict[str, Any]]:
-    """Groups with member counts (deleted items excluded) and auto-assignment readiness."""
+    """Groups with member counts (deleted items excluded) and auto-assignment readiness.
+
+    member_count counts every member; confirmed_count only those the user confirmed (A42.3),
+    and auto-assignment starts at MIN_CONFIRMED_FOR_KNN confirmed members.
+    """
     rows = postgresql_manager.fetchall(
         """
         SELECT ug.group_id, ug.group_name, ug.description, ug.is_active,
                ug.created_at, ug.updated_at,
-               COUNT(m.memory_id) AS member_count
+               COUNT(m.memory_id) AS member_count,
+               COUNT(m.memory_id) FILTER (WHERE """ + _CONFIRMED_MEMBER_SQL + """) AS confirmed_count
         FROM user_groups ug
         LEFT JOIN memory_user_groups mug ON mug.group_id = ug.group_id
         LEFT JOIN memory_items m ON m.memory_id = mug.memory_id AND m.is_deleted = FALSE
@@ -140,7 +171,7 @@ def list_groups(include_inactive: bool = False) -> list[dict[str, Any]]:
     )
     for row in rows:
         row["group_id"] = str(row["group_id"])
-        row["auto_assignment_active"] = row["member_count"] >= MIN_CONFIRMED_FOR_KNN
+        row["auto_assignment_active"] = row["confirmed_count"] >= MIN_CONFIRMED_FOR_KNN
     return rows
 
 
@@ -178,14 +209,20 @@ def add_rule(group_id: str, rule_type: str, rule_value: str) -> dict[str, Any]:
     if rule_type == "time_window":
         _parse_time_window(value)  # raises ValueError when malformed
 
-    row = postgresql_manager.fetchone(
-        """
-        INSERT INTO group_rules (group_id, rule_type, rule_value)
-        VALUES (:group_id, :rule_type, :rule_value)
-        RETURNING rule_id, group_id, rule_type, rule_value, is_active, created_at, match_count
-        """,
-        {"group_id": group_id, "rule_type": rule_type, "rule_value": value},
-    )
+    # A transaction, not fetchone (see create_group): fetchone would roll the INSERT back.
+    with postgresql_manager.transaction() as connection:
+        row = dict(
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO group_rules (group_id, rule_type, rule_value)
+                    VALUES (:group_id, :rule_type, :rule_value)
+                    RETURNING rule_id, group_id, rule_type, rule_value, is_active, created_at, match_count
+                    """
+                ),
+                {"group_id": group_id, "rule_type": rule_type, "rule_value": value},
+            ).mappings().one()
+        )
     logger.info("Group rule added: rule_id=%s group_id=%s type=%s", row["rule_id"], group_id, rule_type)
     return {**row, "rule_id": str(row["rule_id"]), "group_id": str(row["group_id"])}
 
@@ -317,7 +354,7 @@ class _GroupContext:
 
 
 def _load_group_context(group_id: str, manager: Any) -> _GroupContext:
-    """Active rules and the vectors of the group's confirmed, non-deleted members."""
+    """Active rules and the vectors of the group's confirmed, non-deleted members (A42.3)."""
     member_ids = [
         str(row["memory_id"])
         for row in postgresql_manager.fetchall(
@@ -326,6 +363,7 @@ def _load_group_context(group_id: str, manager: Any) -> _GroupContext:
             FROM memory_user_groups mug
             JOIN memory_items m ON m.memory_id = mug.memory_id
             WHERE mug.group_id = :group_id AND m.is_deleted = FALSE
+              AND """ + _CONFIRMED_MEMBER_SQL + """
             """,
             {"group_id": group_id},
         )
@@ -418,18 +456,68 @@ def _insert_suggestion(item_id: str, group_id: str, scores: dict[str, Any]) -> b
     return bool(inserted)
 
 
+def _insert_auto_accepted(item_id: str, group_id: str, scores: dict[str, Any]) -> bool:
+    """The A42 confident path: suggestion row 'auto_accepted' + membership, in one transaction.
+
+    reviewed stays FALSE, so the item shows in the weekly review, where Remove undoes it.
+    Same guards as _insert_suggestion (one suggestion per pair, never an existing member).
+    Returns True when the item was added.
+    """
+    with postgresql_manager.transaction() as connection:
+        inserted = connection.execute(
+            text(
+                """
+                INSERT INTO group_suggestions
+                    (memory_id, group_id, rule_score, knn_score, decision, reviewed, decided_at)
+                SELECT :memory_id, :group_id, :rule_score, :knn_score, 'auto_accepted', FALSE, NOW()
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM group_suggestions
+                    WHERE memory_id = :memory_id AND group_id = :group_id
+                ) AND NOT EXISTS (
+                    SELECT 1 FROM memory_user_groups
+                    WHERE memory_id = :memory_id AND group_id = :group_id
+                )
+                """
+            ),
+            {
+                "memory_id": item_id,
+                "group_id": group_id,
+                "rule_score": scores["rule_score"],
+                "knn_score": scores["knn_score"],
+            },
+        ).rowcount
+        if inserted:
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO memory_user_groups (memory_id, group_id)
+                    VALUES (:memory_id, :group_id)
+                    ON CONFLICT DO NOTHING
+                    """
+                ),
+                {"memory_id": item_id, "group_id": group_id},
+            )
+            connection.execute(
+                text("UPDATE group_rules SET match_count = match_count + 1 WHERE rule_id = :rule_id"),
+                [{"rule_id": rule_id} for rule_id in scores["matched_rule_ids"]],
+            )
+    return bool(inserted)
+
+
 def run_auto_assignment(limit: int = AUTO_ASSIGN_BATCH_LIMIT) -> dict[str, Any]:
     """
-    Phase 2 — score recent preprocessed items against every KNN-ready group
-    and INSERT pending suggestions when any rule matches or the KNN-only
-    threshold fires. Suggestions await the weekly review; nothing is auto-accepted.
+    Phase 2 — score recent preprocessed items against every KNN-ready group.
+    A rule match AND knn_score >= KNN_ONLY_THRESHOLD is added at once as
+    'auto_accepted' (A42); otherwise any rule match, or KNN alone at the
+    threshold, INSERTs a pending suggestion that waits for the user.
+    Both kinds show in the weekly review.
 
-    Returns {"scored", "suggested"}; {"scored": 0, "suggested": 0,
-    "skipped": "already running"} when another run is in progress.
+    Returns {"scored", "suggested", "auto_accepted"}; {"scored": 0, "suggested": 0,
+    "auto_accepted": 0, "skipped": "already running"} when another run is in progress.
     """
     if not _auto_assign_lock.acquire(blocking=False):
         logger.info("Auto-assignment already running; this call skipped")
-        return {"scored": 0, "suggested": 0, "skipped": "already running"}
+        return {"scored": 0, "suggested": 0, "auto_accepted": 0, "skipped": "already running"}
     try:
         return _run_auto_assignment(limit)
     finally:
@@ -440,7 +528,7 @@ def _run_auto_assignment(limit: int) -> dict[str, Any]:
     started = clock.perf_counter()
     groups = [g for g in list_groups() if g["auto_assignment_active"]]
     if not groups:
-        return {"scored": 0, "suggested": 0}
+        return {"scored": 0, "suggested": 0, "auto_accepted": 0}
 
     try:
         manager = get_manager()
@@ -468,6 +556,7 @@ def _run_auto_assignment(limit: int) -> dict[str, Any]:
 
     scored = 0
     suggested = 0
+    auto_accepted = 0
     for item in items:
         item_id = str(item["memory_id"])
         item_vector = manager.get_vector(item_id) if manager is not None else None
@@ -476,7 +565,11 @@ def _run_auto_assignment(limit: int) -> dict[str, Any]:
                 continue
             scores = score_item_for_group(item, context, item_vector)
             scored += 1
-            if (
+            if scores["matched_rule_ids"] and scores["knn_score"] >= KNN_ONLY_THRESHOLD:
+                # A42.1: the rule you wrote AND the similarity to items you confirmed agree.
+                if _insert_auto_accepted(item_id, context.group_id, scores):
+                    auto_accepted += 1
+            elif (
                 scores["final_score"] > AUTO_SUGGEST_THRESHOLD
                 or scores["rule_score"] > 0
                 or scores["knn_score"] >= KNN_ONLY_THRESHOLD
@@ -484,13 +577,17 @@ def _run_auto_assignment(limit: int) -> dict[str, Any]:
                 if _insert_suggestion(item_id, context.group_id, scores):
                     suggested += 1
 
-    logger.info("Auto-assignment: %d groups, %d items, scored=%d suggested=%d in %d ms",
-                len(contexts), len(items), scored, suggested, (clock.perf_counter() - started) * 1000)
-    return {"scored": scored, "suggested": suggested}
+    logger.info("Auto-assignment: %d groups, %d items, scored=%d suggested=%d auto_accepted=%d in %d ms",
+                len(contexts), len(items), scored, suggested, auto_accepted, (clock.perf_counter() - started) * 1000)
+    return {"scored": scored, "suggested": suggested, "auto_accepted": auto_accepted}
 
 
 def review_queue(group_id: Optional[str] = None) -> list[dict[str, Any]]:
-    """Phase 3 — unreviewed suggestions of active groups, for the weekly review screen."""
+    """Phase 3 — unreviewed suggestions of active groups, for the weekly review screen.
+
+    Includes the auto-accepted ones (decision 'auto_accepted'): they are already members
+    and wait here for Keep or Remove (A42.2).
+    """
     rows = postgresql_manager.fetchall(
         """
         SELECT gs.suggestion_id, gs.memory_id, gs.group_id,
@@ -567,7 +664,8 @@ def manual_assign(memory_id: str, group_id: str) -> dict[str, Any]:
     action IS the human approval, so the suggestion row is created already
     accepted/reviewed in the same transaction as the membership insert —
     the audit trail stays complete and the only-via-suggestions rule holds.
-    Assigning an item that is already a member changes nothing.
+    Assigning an item that is already a member changes nothing, except that it confirms
+    a member the confident path (A42) added automatically.
 
     Raises ValueError when the item or the active group does not exist.
     """
@@ -606,21 +704,38 @@ def manual_assign(memory_id: str, group_id: str) -> dict[str, Any]:
                 ),
                 {"memory_id": memory_id, "group_id": group_id},
             )
+        else:
+            # Already a member through the confident path (A42): assigning it by hand confirms it.
+            connection.execute(
+                text(
+                    """
+                    UPDATE group_suggestions
+                    SET decision = 'accepted', reviewed = TRUE, decided_at = NOW()
+                    WHERE memory_id = :memory_id AND group_id = :group_id AND decision = 'auto_accepted'
+                    """
+                ),
+                {"memory_id": memory_id, "group_id": group_id},
+            )
 
-    member_count = postgresql_manager.scalar(
+    counts = postgresql_manager.fetchone(
         """
-        SELECT COUNT(*) FROM memory_user_groups mug
+        SELECT COUNT(*) AS member_count,
+               COUNT(*) FILTER (WHERE """ + _CONFIRMED_MEMBER_SQL + """) AS confirmed_count
+        FROM memory_user_groups mug
         JOIN memory_items m ON m.memory_id = mug.memory_id AND m.is_deleted = FALSE
         WHERE mug.group_id = :group_id
         """,
         {"group_id": group_id},
     )
+    member_count = counts["member_count"]
+    confirmed_count = int(counts["confirmed_count"] or 0)
     logger.info("Manual assign memory_id=%s group_id=%s added=%s", memory_id, group_id, bool(added))
     return {
         "memory_id": memory_id,
         "group_id": group_id,
         "member_count": int(member_count or 0),
-        "auto_assignment_active": int(member_count or 0) >= MIN_CONFIRMED_FOR_KNN,
+        "confirmed_count": confirmed_count,
+        "auto_assignment_active": confirmed_count >= MIN_CONFIRMED_FOR_KNN,
     }
 
 

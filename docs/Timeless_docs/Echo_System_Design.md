@@ -26,7 +26,7 @@ Numbering: §1–§21 keep the section numbers of architecture v2.1, because cod
 ("DB design Table 14"), and adds Table 17. Appendix A lists every change from the earlier design.
 
 Open items at a glance (details in §24): no design decision is open. A1–A45 and E1 are decided; the last four
-(A16, A40, A42, A43) were closed on 21 Oct 2026. Still open are build-or-drop items D3 and D5 (D4 was built on 23 Oct 2026), not design questions.
+(A16, A40, A42, A43) were closed on 21 Oct 2026. D3 and D5 were built on 25 Oct 2026, D4 on 23 Oct 2026.
 
 ---
 
@@ -731,7 +731,9 @@ threshold **and** leads the runner-up by the margin. Result: `'centroid'`.
   (A40) unrelated pairs score ~0.35 higher, so the score part must move up and is re-measured Thursday; the 0.08 lead is the
   portable part (start value, tuned Thursday). The recomputed-centroid 0.55 / 0.08 is the v2.1 value; no decision re-tunes it
   for arctic-xs.
-- **Seeds (A18, built Thu–Sun):** 5–10 real example sentences per category, centroid = their mean. Today: one 7–9-word phrase per category (`SEED_TEXTS`).
+- **Seeds (A18, built 2026-10-25):** 8 example sentences per category (`SEED_TEXTS`), centroid = the mean of their embeddings.
+  The seed-specific threshold above is not built yet: until it is measured on the local data and wired in, seeds still use
+  0.55 / 0.08, so Stage 3 fires rarely on seeds.
 - **Recompute (A20 + A36, built Thu–Sun):** per category, from items classified `structural`, `user_override` or `llm`
   (at least 10, `_MIN_CONFIRMED_FOR_RECOMPUTE`). Balanced: average each source's vectors first, then average the per-source
   means, so Gmail promotions do not define "misc" alone. Triggered at ENP start when `centroids.npz` is missing or > 30 days old.
@@ -1020,7 +1022,7 @@ time to today, so past days changed after the fact.
    or any rule matched — so KNN alone can never suggest (its maximum is 0.5). Decided (A32, built Thu–Sun): suggest when any
    rule matches, **or** (no rule match) `knn_score ≥` the **KNN bar** (start value 0.65 with arctic-xs, tuned Thursday; was
    ~0.60 on MiniLM). An item gets at most one suggestion per group, ever.
-   - **Auto-accept the confident ones (A42, decided 2026-10-21, built Thu–Sun).** A suggestion is auto-accepted only when a rule
+   - **Auto-accept the confident ones (A42, decided 2026-10-21, built 2026-10-25).** A suggestion is auto-accepted only when a rule
      matches **and** `knn_score ≥` the same KNN bar (one shared constant with A32). Two independent signals must agree; either
      one alone stays `pending`. The confident path writes `group_suggestions` (`decision = 'auto_accepted'`, `reviewed = FALSE`,
      `decided_at = NOW()`) and `memory_user_groups` in one transaction (Part II, D6). It fires only for KNN-ready groups, so a new
@@ -1085,7 +1087,7 @@ Values stored lowercase; five rule types (`VALID_RULE_TYPES`):
 | time_window | `YYYY-MM-DD,YYYY-MM-DD`, inclusive, on the item's local created date | `2026-01-01,2026-03-31` |
 
 When 5 or more accepted items share a pattern (`RULE_SUGGESTION_MIN_MATCHES = 5`), the UI offers a rule; the user approves it.
-`match_count` counts matches. `PATCH /wellbeing/groups/{group_id}/rules/{rule_id}` pauses or resumes a rule (D5, built 2026-10-22). Still open: a toggle in the UI, and dead rules are not surfaced.
+`match_count` counts matches. `PATCH /wellbeing/groups/{group_id}/rules/{rule_id}` pauses or resumes a rule (D5, route 2026-10-22). The rules screen (`/groups/:groupId/rules`, built 2026-10-25) has a switch per rule, and marks an active rule with no matches in 30+ days.
 
 ### 11.5 Session Computation
 
@@ -1111,8 +1113,10 @@ page, YouTube per video, Shorts per session.
 
 Reminders (optional, rate-limited): only when a habit exists (≥ 3 times in 30 days), the current session is ≥ 15 minutes,
 at most 1 per source type and 2 in total per day, 2 h cooldown, and the user has not disabled them. Content is always the user's
-own earlier note. Open build item (D3): `GET /wellbeing/regret/reminder` works but no client calls it, and only "Disable" has a
-route ("Snooze for today" has none) — build or drop from scope, undecided.
+own earlier note. Built 2026-10-25 (D3): the dashboard checks `GET /wellbeing/regret/reminder` every 2 minutes while a
+stored session is still running and at least 15 minutes long, and shows the note in a small card with "Got it", "Snooze for today"
+(`POST /wellbeing/regret/reminders/snooze`, ends today's reminders) and "Turn off reminders". It appears only while a dashboard
+tab is open; the extension does not show reminders on the page itself.
 
 ### 11.7 LLM-Generated Insights
 
@@ -1264,7 +1268,7 @@ The full database design is Part II. §15.1 and §15.2 of v2.1 moved there (D5 r
 | 2 | Rule engine | active `group_rules` of each group matched against the item |
 | 3 | KNN check (group has ≥ 5 confirmed items, A39) | cosine to confirmed members (`decision = 'accepted'` only, A42.3) via FAISS `get_vector`; mean of the top 3 = `knn_score` |
 | 4 | Scoring | `rule_score` = matched / active rules; `knn_score` |
-| 5 | Threshold | Confident — rule match **and** `knn_score ≥` KNN bar (A42, built Thu–Sun) → one transaction: `INSERT group_suggestions (decision = 'auto_accepted', reviewed = FALSE, decided_at = NOW())` + `INSERT memory_user_groups`. Otherwise any rule match, or (no rule match) `knn_score ≥` KNN bar (A32) → `INSERT group_suggestions (decision = 'pending', reviewed = FALSE)`, nothing written to `memory_user_groups`. KNN bar: start value 0.65, tuned Thursday |
+| 5 | Threshold | Confident — rule match **and** `knn_score ≥` KNN bar (A42, built 2026-10-25) → one transaction: `INSERT group_suggestions (decision = 'auto_accepted', reviewed = FALSE, decided_at = NOW())` + `INSERT memory_user_groups`. Otherwise any rule match, or (no rule match) `knn_score ≥` KNN bar (A32) → `INSERT group_suggestions (decision = 'pending', reviewed = FALSE)`, nothing written to `memory_user_groups`. KNN bar: start value 0.65, tuned Thursday |
 | 6 | Review screen (weekly) | `SELECT … FROM group_suggestions WHERE reviewed = FALSE` — `pending` rows and `auto_accepted` rows (labelled "added automatically") |
 | 7 | User accepts / Keep | Pattern B: `decision = 'accepted', reviewed = TRUE, decided_at = NOW()` + `INSERT memory_user_groups … ON CONFLICT DO NOTHING`, one transaction |
 | 8 | User rejects / Remove | `decision = 'rejected', reviewed = TRUE` + `DELETE` the membership (the undo for an auto-add); the item is never suggested to that group again |
@@ -1511,7 +1515,7 @@ query latency and tokens per round (A25), embed speed of arctic-xs on the real d
 Known gaps (recorded, not yet fixed): C4 — recall does not see new vectors until a restart; C5 — Chrome dwell after the first
 send is lost; C10 — YouTube auto-seek may save videos at 0 s (unverified); C13 — no LLM timeout; C25 — SQLAlchemy errors can
 print bound values into logs (fix: `hide_parameters=True`); C26 — capture settings logged in full (excluded senders);
-D3 — reminders never shown. (C28 and D1 are built.)
+(C28, D1 and D3 are built.)
 
 ## 24. Pending Decisions and Decided-but-Unbuilt Items
 
@@ -1520,7 +1524,7 @@ Still open, as build-or-drop items rather than design questions:
 
 | Id | Topic | Where it matters |
 |---|---|---|
-| D3 / D5 | Build or drop: regret reminders UI, rule pause toggle in the UI (route done). D4 (automatic session building) is built, 2026-10-23 | §11.4–§11.6 |
+| D3 / D5 | Built 2026-10-25: regret reminder card in the dashboard (with a snooze route), rules screen with a pause switch. D4 (automatic session building) is built, 2026-10-23 | §11.4–§11.6 |
 
 **Decided, no build:** A40.2 (keep the cross-encoder model), A41 (Gmail open tracking kept), A43 (user groups stay unlinked).
 
@@ -1781,7 +1785,7 @@ Before first real use, rows built with the old UTC-day logic are cleared (D4 not
 | `group_id` | UUID | NOT NULL, FK CASCADE | |
 | `rule_type` | VARCHAR(30) | NOT NULL | keyword, domain, channel, sender, time_window (checked in code, `VALID_RULE_TYPES`) |
 | `rule_value` | TEXT | NOT NULL | Lowercase |
-| `is_active` | BOOLEAN | TRUE | Pause without losing history (PATCH route built; no UI toggle yet, D5) |
+| `is_active` | BOOLEAN | TRUE | Pause without losing history (PATCH route + rules-screen switch, D5) |
 | `created_at` | TIMESTAMP | `NOW()` | |
 | `match_count` | INTEGER | 0 | Rule usefulness |
 
@@ -1795,11 +1799,11 @@ Before first real use, rows built with the old UTC-day logic are cleared (D4 not
 | `rule_score` | FLOAT | NULL | Share of active rules matched |
 | `knn_score` | FLOAT | NULL | Mean cosine of the 3 most similar confirmed members |
 | `suggested_at` | TIMESTAMP | `NOW()` | |
-| `decision` | VARCHAR(20) | `'pending'` | pending, accepted, rejected, auto_accepted (A42, built Thu–Sun). No CHECK. **Must default to `'pending'`**; `setup_db.py` verifies it. Only the confident path writes `'auto_accepted'`, explicitly |
+| `decision` | VARCHAR(20) | `'pending'` | pending, accepted, rejected, auto_accepted (A42, built 2026-10-25). No CHECK. **Must default to `'pending'`**; `setup_db.py` verifies it. Only the confident path writes `'auto_accepted'`, explicitly |
 | `reviewed` | BOOLEAN | FALSE | FALSE = listed in the weekly review queue (pending and auto_accepted rows); set TRUE by Keep / accept or Remove / reject |
 | `decided_at` | TIMESTAMP | NULL | Set on accept / reject, and at insert for an auto-accepted row |
 
-A42 (decided 2026-10-21, built Thu–Sun): a rule match AND `knn_score ≥` the KNN bar writes this row with
+A42 (decided 2026-10-21, built 2026-10-25): a rule match AND `knn_score ≥` the KNN bar writes this row with
 `decision = 'auto_accepted'`, `reviewed = FALSE`, together with the membership (Pattern B2). Keep turns it into `accepted`;
 Remove turns it into `rejected` and deletes the membership. No schema change (`decision` is VARCHAR(20) with no CHECK).
 
@@ -1920,7 +1924,7 @@ erDiagram
 suggestion) → `INSERT memory_user_groups … ON CONFLICT DO NOTHING` → COMMIT. Reject / Remove is the same transaction shape with
 `decision = 'rejected'` and `DELETE` of the membership.
 
-**Pattern B2 — confident auto-accept (A42, built Thu–Sun, `wba/group_manager.py`).** One transaction:
+**Pattern B2 — confident auto-accept (A42, built 2026-10-25, `wba/group_manager.py`).** One transaction:
 `INSERT group_suggestions (decision = 'auto_accepted', reviewed = FALSE, decided_at = NOW())` → `INSERT memory_user_groups` →
 COMMIT. The row then waits in the weekly review, where Keep or Remove runs Pattern B.
 
@@ -2080,8 +2084,8 @@ the project history; "—" where no date was recorded.
 | B5 | Thursday, after schema changes and the A40.1 / A16 code switch | Full re-embed with arctic-xs into a fresh FAISS index |
 | D1 | built 2026-10-22 | Dispose the DB pool on shutdown |
 | D2 | decided via A4/A22 | Full attachment support |
-| D3 | open (build or drop) | Show regret reminders; snooze route |
+| D3 | built 2026-10-25 | Regret reminder card in the dashboard; snooze route |
 | D4 | built 2026-10-23 | Sessions are built on demand (`ensure_sessions_for_day`) |
-| D5 | partly done (route built 2026-10-22) | UI toggle to pause/resume a group rule; surface dead rules |
+| D5 | built 2026-10-25 (route 2026-10-22) | Rules screen: pause/resume switch per rule; quiet rules marked |
 | E1 | decided 2026-10-21 — in this build | Echo as an MCP server: `search_memories`, `get_memory`, `recent_activity` over stdio (§10.11); wellbeing tools optional |
 | E2 | stretch, from Mon 26 Oct | Import personal history (Takeout, Chrome `History`) and an export button; separate branch |

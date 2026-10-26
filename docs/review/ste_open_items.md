@@ -556,6 +556,25 @@ Still open — decide each:
      category (Stage-1 'structural' labels): pick the lowest score/lead threshold with ZERO wrong (start guess
      0.25 / 0.08). A category with recomputed centroids (A36) goes back to the doc's 0.55 / 0.08. Thursday, after
      the restore (~30 min, local DB read under the standing permission).
+- **Build status 2026-10-25 — part 1 DONE, part 2 STILL TO DO (needs the local DB; run it in the local session):**
+  - **Part 1 built (cloud session, working tree, not committed):** `SEED_TEXTS` in `enp/system_group_classifier.py` is now
+    8 example sentences per category (was one 7–9-word bag), and `initialize_centroids` embeds each sentence and takes
+    the mean as the seed centroid. Not run or measured: the cloud session has no PostgreSQL and no embedding model.
+  - **Part 2 NOT built — the seed-specific Stage-3 threshold. To do in the local session:**
+    1. Read local `echo_db` (standing permission, read-only, no backup needed): pick rows with `classified_by =
+       'structural'` (a known correct category), per source (gmail / chrome / youtube).
+    2. Get each row's stored arctic-embed-xs vector (`get_manager().get_vector()`), score it by `cosine` against the
+       NEW seed centroids only (build them with `initialize_centroids`, ignore `centroids.npz`).
+    3. Sweep score x lead (start guess 0.25 / 0.08; arctic-xs scores unrelated pairs ~0.35 higher than MiniLM, so expect
+       the score part to land higher, the 0.08 lead is the portable part). Pick the **lowest pair with ZERO wrong**
+       answers. Report fires / correct per source, and the best-centroid accuracy without a threshold.
+    4. Add the result as its own constants (e.g. `SEED_MIN_SCORE` / `SEED_MIN_MARGIN`) in `enp/system_group_classifier.py`
+       and change `stage3_centroid` so a category still on its seed uses them, while a category in
+       `_persisted_categories` (recomputed, A36) keeps `CENTROID_MIN_SCORE` 0.55 / `CENTROID_MIN_MARGIN` 0.08.
+       Today `stage3_centroid` still applies 0.55 / 0.08 to the seeds too, so the richer seeds alone may not make
+       Stage 3 fire much more often until this is done. A `TODO(A18 part 2)` marks the constant in code.
+    5. Write the measured numbers here, in design doc §9.3, and remove the TODO comment. This is the same Thursday
+       re-tune as in A40 (and the "Thursday task" line in the A32 area).
 
 ### A19. Stage 4 LLM: one call per item, and the doc contradicts itself on privacy — [x] decided 2026-10-21
 - Doc §9.4: "Items are batched (every few minutes) to minimise API calls — not one call per item." Code: one
@@ -1532,6 +1551,29 @@ Still open — decide each:
     - Docs that stay yours to change: DB design doc (lines 331, 336-337) and architecture doc §15.3 step 5.
     - Threshold check on Thursday's data (arctic-xs start ~0.65).
 
+- **Built 2026-10-25 (all four parts; tested on a throwaway PostgreSQL 16 with fake vectors, NOT on the live `echo_db`):**
+  - `wba/group_manager.py`: in `_run_auto_assignment`, a rule match AND `knn_score >= KNN_ONLY_THRESHOLD` calls the new
+    `_insert_auto_accepted` (one transaction: `group_suggestions` with `decision='auto_accepted'`, `reviewed=FALSE`,
+    `decided_at=NOW()` + `memory_user_groups` + rule `match_count`). Anything else that was a suggestion before is still
+    `pending`. `KNN_ONLY_THRESHOLD` is the one shared bar (A32 + A42.1). The run now returns `auto_accepted` too.
+  - A42.3: `_CONFIRMED_MEMBER_SQL` leaves out members still marked `auto_accepted`. It is used by `_load_group_context`
+    (KNN examples), `list_groups` (new `confirmed_count`; `auto_assignment_active` = `confirmed_count >= 5`) and
+    `manual_assign`. `member_count` still counts every member. Keep (accept) makes an item confirmed; Remove (reject)
+    deletes the membership (existing path). `manual_assign` on an auto-added item confirms it.
+  - Frontend (`PatternsPage.tsx`): "added automatically" tag on `auto_accepted` rows, new panel wording (A42.4), "N more to
+    auto-sort" counts confirmed members.
+  - `AGENTS.md` constraint 4 and the `decision` default line now carry the A42 exception (they said strict-only before and
+    would have made an agent refuse this build); `setup_db.py` comments updated, no schema change.
+  - Checked: rule+KNN item auto-added and listed in the review; rule-only and KNN-only items stay `pending`; a group
+    with fewer than 5 confirmed members never auto-adds; auto-added items are not KNN examples and do not count toward
+    readiness; Keep raises both; Remove removes the member; a second run adds nothing twice.
+  - **Still to do locally:** re-measure the KNN bar on the real rows (A40 start 0.65; also the "Thursday re-tune" in A32/A40),
+    then set `KNN_ONLY_THRESHOLD`. Until then auto-adds use 0.65 on unmeasured data.
+  - **Found while testing (fixed, same file):** `create_group` and `add_rule` ran `INSERT ... RETURNING` through
+    `postgresql_manager.fetchone`, which never commits under SQLAlchemy 2.x, so the group or rule was reported as created
+    but rolled back. Both now use `transaction()`. If creating a group or rule in the app ever seemed to vanish after a
+    reload, this was why. Not checked on the live DB.
+
 ### A43. User groups as fine-grained children of system groups? — [x] decided 2026-10-21 (his ask, 2026-10-21)
 - His view: user groups should be finer grains of the 5 system groups (work, study, entertainment, personal, misc).
 - Today: NOT like that. `user_groups` has no link to `system_groups` (`scripts/setup_db.py:224`); group_manager
@@ -1583,16 +1625,16 @@ The `[x] decided` marks above mean the owner's decision is recorded. They do not
 | ID | Current implementation check |
 |----|-------------------------------|
 | A16 | **Built and applied by B5 2026-10-25 (commit c719cdc):** `embedding_generator.fit_to_window` + `topic_extractor` ordered `TextPart`s (see the A16 entry). Closed once B5 has re-embedded with it. |
-| A17 | **Closed 2026-10-25 (his decision):** the 29 hand-added domains stay; the review of real top domains is dropped (the test account has hardly any browsing). |
-| A18 | `SEED_TEXTS` are still the short word bags and `CENTROID_MIN_SCORE` remains 0.55; the richer seeds and seed-specific measured threshold are not built. |
-| A23 | Tier-2 attachment content still starts at the beginning of extracted text; query-matched top passages are not selected. This plan conflicts with current AGENTS hard constraint 3 (no dynamic context compression), so hold pending scope reconciliation. **Update 2026-10-25 (his word): `AGENTS.md` is stale, the A23 decision wins. Not blocked; build waits on a talk with him (effort estimate given in chat).** |
-| A24 | A24.3 full-text keyword indexing is built, but A24.2 query-matched cleaned-text windows are absent; the synthesizer still uses the leading snippet. **Update 2026-10-25 (his word): `AGENTS.md` is stale, the A24 decision wins. Not blocked; build waits on a talk with him.** |
-| A26 | The agent/tool loop is not wired; `rse/README.md` still lists it under “Not yet wired.” The approved loop changes current AGENTS hard constraint 5 (exactly two LLM calls per query), so hold pending scope reconciliation. **Update 2026-10-25 (his word): `AGENTS.md` is stale, the A26 decision wins. Not blocked; build waits on a talk with him.** |
-| A27 | **Backend, pills, moment strip and New chat built 2026-10-25 (working tree, not committed)**; see the A27 entry. **2026-10-25 his decisions: laptop only, so the touch "first tap = peek" is dropped; the key question is settled, `GET /retrieval/sessions` no longer needs `X-API-Key` (route changed and checked, see the A27 entry).** **Past-chats screen built 2026-10-25 (see the A27 entry), so A27 is complete.** |
-| A28 | **Built 2026-10-25 (working tree, not committed):** see the A28 entry. The progress lines are built. **Closed as it is 2026-10-25 (his decision): streaming the reply text word by word is not built and is future work.** |
+| A17 | The 29 hand-added domains are present, but the decided review of the real top 50–100 Stage-4 domains in the restored local data remains open. |
+| A18 | **Part 1 built 2026-10-25 (working tree, not committed):** `SEED_TEXTS` are now 8 example sentences per category, averaged in `initialize_centroids`. **Part 2 still open:** the seed-specific Stage-3 threshold must be measured on the local `echo_db` (lowest score/lead with zero wrong) and wired into `stage3_centroid`; `CENTROID_MIN_SCORE` is still 0.55 for seeds. Steps are in the A18 entry. |
+| A23 | Tier-2 attachment content still starts at the beginning of extracted text; query-matched top passages are not selected. Not blocked any more: the `AGENTS.md` compression ban was removed 2026-10-25 (the owner lifted it on 2026-10-21). |
+| A24 | A24.3 full-text keyword indexing is built, but A24.2 query-matched cleaned-text windows are absent; the synthesizer still uses the leading snippet. Not blocked any more (see A23). |
+| A26 | The agent/tool loop is not wired; `rse/README.md` still lists it under “Not yet wired.” Not blocked any more: `AGENTS.md` constraint 5 now reads "usually 2, max 6" (2026-10-25). |
+| A27 | **Backend, pills, moment strip and New chat built 2026-10-25 (working tree, not committed)**; see the A27 entry. Still open: the past-chats list / resume UI (waits on the key question in the A27 entry) and the touch "first tap = peek" behaviour. |
+| A28 | **Built 2026-10-25 (working tree, not committed):** see the A28 entry. The progress lines are built; streaming the reply text itself is not (see the entry). |
 | A37 | **Built 2026-10-25 (working tree, not committed):** see the A37 entry. Closed. |
 | A40 | **Model switch built 2026-10-25 (commit c719cdc):** arctic-xs, query/document paths, `EMBEDDING_VERSION = "snowflake-arctic-embed-xs-v1"`, refuse-to-load on a version mismatch. Still open: the threshold retune (Stage 9, needs an evaluation question set) and B5.  **2026-10-25 his choice C (no question set yet): the design's start values were set, not measured:** `MIN_TOP_SIMILARITY` 0.35 -> 0.55 (`rse/config.py`), `KNN_ONLY_THRESHOLD` 0.60 -> 0.65 (`wba/group_manager.py`); recomputed-centroid 0.55 / 0.08 left as designed; the seed-centroid threshold needs A18, not built. Sanity check on the real index (105 title questions, 10 made-up unrelated ones): right answers scored 0.641-0.84 (median 0.777), unrelated up to 0.607 (median 0.518); 0.35 blocked 0 of 10 unrelated, 0.55 blocked 8 of 10. The sample suggests ~0.62 would separate it, but it is small and the right-answer questions are title-based (optimistic): measure on a real question set (Stage 9). **Deferred by him 2026-10-25: the recompute of these values (Stage 9 measuring, and the A18 seed threshold) waits until after Sun 25 Oct. He retests everything on live data Mon 26 + Tue 27 Oct, and the values are recomputed from that data before the demo. Until then the option C start values stay. Open item.** |
-| A42 | Group suggestions still require manual acceptance; no confident auto-accept path or threshold is present. The approved auto-accept path conflicts with current AGENTS hard constraint 4 (explicit human acceptance), so hold pending scope reconciliation. **Update 2026-10-25 (his word): `AGENTS.md` is stale, the A42 decision wins. Not blocked; build waits on a talk with him.** |
+| A42 | **Built 2026-10-25:** the confident path, accepted-only KNN examples and readiness count, and the review label are in. **Still open:** the KNN bar `KNN_ONLY_THRESHOLD` (0.65) is a start value and must be re-measured on the local data (shared with A32); see the A42 entry. |
 
 ## B. Live database actions — your explicit go + backup first (B1–B3 ran on Neon; B5 runs on local `echo_db`)
 
@@ -1945,19 +1987,45 @@ The `[x] decided` marks above mean the owner's decision is recorded. They do not
   days once when first asked; or a background task in backend/main.py (C7). Before first use, clear any rows
   built with the old UTC-day logic (`DELETE FROM sessions`, his go).
 
-### D5. No route to pause/resume a group rule — [~] 2026-10-22 route built; UI toggle + dead rules open (found 2026-10-18, wba/group_manager.py review)
+### D5. No route to pause/resume a group rule — [x] 2026-10-25 route + rules screen built (found 2026-10-18, wba/group_manager.py review)
 - `group_manager.set_rule_active` exists (DB Table 14: is_active pauses a rule, keeps match history) but no
   backend route or UI calls it. Also not surfaced: rules with match_count = 0 after 30 days ("dead rules").
 - Build: `PATCH /wellbeing/rules/{rule_id}` {active} + a toggle in the group rules list; or drop from scope.
 - **Built 2026-10-22:** `PATCH /wellbeing/groups/{group_id}/rules/{rule_id}` body `{"active": bool}`; 404 when the rule is not in that group. `set_rule_active(group_id, rule_id, active)` now also checks the group (its only caller is this route). Route is registered (router routes listed). SQL NOT run against Postgres. Left: the toggle in the UI; surfacing dead rules (match_count = 0 after 30 days).
+- **UI built 2026-10-25:** a rules screen at `/groups/:groupId/rules` (`frontend/src/pages/GroupRulesPage.tsx`), reached from the
+  "rules →" link on each goal group in Patterns. It lists the group's rules, paused ones included
+  (`GET /wellbeing/groups/{id}/rules?include_inactive=true`), with a switch per rule that calls the PATCH route. The switch
+  changes at once and goes back, with a short message, if the save fails (`setRuleActive` in `lib/api.ts` does not fall back to
+  demo data, so a failed save never looks saved). Dead rules: an active rule with `match_count = 0` and older than 30 days shows
+  "no matches in 30+ days" (worked out in the page from `created_at`; no backend change). Pausing matches the backend: the matcher
+  loads active rules only. Checked in a browser with demo data and with a mocked backend (toggle, failed save, revert);
+  NOT yet tried against the live backend and database. Not built: adding a rule from the UI (the POST route exists) and showing
+  the step-9 rule suggestions.
 
-### D3. Regret reminders are never shown — [ ] (found 2026-10-18, wba/regret_system.py review)
+### D3. Regret reminders are never shown — [x] 2026-10-25 built in the dashboard (found 2026-10-18, wba/regret_system.py review)
 - `GET /wellbeing/regret/reminder` works (rate limits, cooldown, user's own note) but NO client calls it: the
   extension and frontend only use the enable/disable setting. Nothing reports `session_minutes` either.
 - The payload offers "Got it / Snooze for today / Disable permanently"; only Disable has a backend route
   (`POST /regret/reminders/settings`). Snooze-for-today needs a route (e.g. set the per-type day key).
 - Build: extension polls the route during a long Chrome/YouTube session and shows a non-blocking notice; or
   drop reminders from the final scope and say so (§11.6 marks them optional).
+- **Built 2026-10-25, in the dashboard (not the extension):**
+  - Backend: `POST /wellbeing/regret/reminders/snooze` (`snooze_reminders_today` in `wba/regret_system.py`) fills today's total
+    counter to its cap, the key `maybe_get_reminder` already checks, so nothing else changed. It stops all types for the day,
+    because the per-type cap is 1 and the reminder just shown already used it. 503 when Redis is down. Checked against a real
+    Redis: after a snooze both a new type and the same type return nothing.
+  - Frontend: `components/RegretReminderNotice.tsx`, mounted once in `AppShell`. While the dashboard is open it checks every 2
+    minutes: is today's latest stored session still going (last activity within the 20-minute gap) and at least 15 minutes
+    long? If so it takes the source type of the newest item and asks `GET /wellbeing/regret/reminder`; the backend still applies
+    every other rule (habit, cooldown, limits, disabled). A returned reminder shows as a card in the corner with the user's own
+    note: "Got it", "Snooze for today", "Turn off reminders" (the last also switches the Settings toggle off). It never blocks or
+    takes focus, and shows nothing in demo mode (a reminder is always the user's own note, never a made-up one).
+  - **Limit, on purpose:** it only appears while an Echo dashboard tab is open. The extension was not changed, so a reminder
+    does not pop up on the YouTube/Chrome page itself. That would need a notification or an in-page banner from the extension
+    (`background.js` / `postToBackend`, with the pause flag respected).
+  - The session length comes from stored sessions (dwell sums), not a live timer, so it can trail real time by a few minutes.
+  - Checked in a browser with a mocked backend (card appears, snooze sends the call and closes it); NOT yet tried against the live
+    backend and database with a real regret habit.
 
 ---
 
