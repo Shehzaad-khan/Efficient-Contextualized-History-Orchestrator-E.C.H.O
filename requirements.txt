@@ -21,6 +21,8 @@ langchain-google-genai>=2.0.0
 langchain-anthropic>=0.3.0
 # 1.7+ adds OpenAIDecisions (Decisions API) and pulls openai>=2.45
 langchain-openai>=1.7.2
+# E1 — Echo as an MCP server (mcp_server/). v2 of the SDK: MCPServer replaced FastMCP
+mcp>=2.3,<3
 # Authentication & Security
 passlib[bcrypt]==1.7.4
 pyjwt==2.13.0

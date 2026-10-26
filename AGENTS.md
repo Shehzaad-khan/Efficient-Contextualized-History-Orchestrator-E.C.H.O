@@ -45,7 +45,7 @@ Instructions for any AI agent (Antigravity, Cursor, Claude Code, etc.) working o
    - An item needs the user's explicit accept (`decision='accepted'`), **except the confident path** (owner's decision A42, 2026-10-21): a rule match AND a KNN score >= the shared KNN bar (`KNN_ONLY_THRESHOLD`) is written `decision='auto_accepted'`, `reviewed=FALSE` in one transaction with the membership. It stays in the weekly review, where Remove undoes it. Anything less certain stays `pending`.
    - Only items the user confirmed (`decision='accepted'`) are used as KNN examples and count toward the 5 confirmed members a group needs before auto-sorting starts. An `auto_accepted` item becomes confirmed only when the user keeps it (or assigns it by hand).
 5. **LLM calls per retrieval query: usually 2, max 6** (owner's decision A26, 2026-10-18):
-   - Luna calls a `search_memories` tool for up to 5 rounds; after round 5 the next call must answer. The cap is enforced in code, never only in the prompt.
+   - Luna calls a `search_memories` tool for up to 5 searches; the 6th call has no tool and must answer. The cap is enforced in code (`rse/agent_nodes.py`, built 2026-10-26), never only in the prompt.
    - The search itself (FTS + FAISS, RRF, cross-encoder, neighbourhood) is deterministic Python.
 6. **Privacy boundaries:**
    - The LLM receives only query text, bounded text excerpts, and aggregated numbers (owner's decision 2026-10-26, A23/A24: first 8,000 chars of each of the top 3 results, 2,000 of the others, up to 40,000 chars per attachment) — never database rows or the whole store.
@@ -75,8 +75,8 @@ Instructions for any AI agent (Antigravity, Cursor, Claude Code, etc.) working o
 ## 4. Current State & Known Items
 
 Every feature in the architecture doc is implemented and wired:
-- Tier-2 attachment extraction + real `fetch_attachment` LangGraph node.
-- `fetch_api` node (live Gmail polling for "today / just received" queries).
+- Tier-2 attachment extraction + `fetch_attachment` (run when the search tool's `read_attachment` argument is set).
+- The A26 agent loop: graph `agent ⇄ search → finish` (`rse/agent_nodes.py`, `rse/search_tool.py`); the `fetch_api` live poll was dropped (A45).
 - Capture settings (Redis) enforced across all three connectors.
 - `DELETE /items/{id}`, `GET /export`, and `GET|POST /settings` API routes.
 - Extension popup (search, recent 5 items, pause toggle).
@@ -86,6 +86,7 @@ Every feature in the architecture doc is implemented and wired:
 `rsr/` — the orphaned duplicate of `rse/` — was **deleted on 2026-08-31**. It was mounted nowhere and its internal imports (`retrival.*`) had always been broken, so `import rsr` never succeeded. `rse/` is and always was the live retrieval engine. Its only non-duplicate content was a retrieval-quality evaluation harness; recover it from history if needed: `git checkout 16bde99 -- rsr/quality_evaluator.py rsr/query_quality_eval_set.py` (its `_calculate_diversity` metric measures a prohibited feature — drop that part).
 
 ### Known Open Items
+- **A26 (agent loop) and E1 (MCP server, `mcp_server/`) are built;** their first runs against the live OpenAI service and Claude Desktop are still to do (see CLAUDE.md §4).
 - **OCR for images and scanned PDFs is built** (`pytesseract` in `requirements.txt`) but needs the Tesseract system binary; without it OCR stays off.
 - **Scheduling:** Weekly auto-assign is manual / OS-scheduler; monthly centroid recomputation runs at ENP startup when its file is missing or older than 30 days. There is no in-app cron.
 - **Frontend settings toggle:** "Memory indexing" in Settings is localStorage-only (ENP worker has no runtime switch); the three capture toggles ARE backend-wired.

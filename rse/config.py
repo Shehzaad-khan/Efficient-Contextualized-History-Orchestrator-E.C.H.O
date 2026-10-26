@@ -117,5 +117,23 @@ SYNTHESIS_FULL_EXCERPT_RESULTS = 3     # best-ranked results that get the long e
 SYNTHESIS_EXCERPT_CHARS_TOP = 8000     # leading chars of text for those (~2k tokens each)
 SYNTHESIS_EXCERPT_CHARS_REST = 2000    # leading chars for the other results (~500 tokens each)
 
+# ── Agent loop (A26, built 2026-10-26) ────────────────────────────────────────
+# Luna calls the search_memories tool; the cap is enforced in rse/graph_nodes.py, not only in the
+# prompt. Calls 1..MAX_SEARCHES carry the tool, so the next call (call MAX_SEARCHES + 1 = 6) has none and
+# must answer: usually 2 LLM calls per query, at most 6 (hard constraint 5).
+MAX_SEARCHES = 5
+# Parallel tool calls are allowed, but one round runs at most this many searches (latency bound).
+MAX_SEARCHES_PER_ROUND = 3
+# A new chat's first question forces a search so Luna cannot answer from nothing. Follow-ups stay on
+# "auto" ("shorten that" needs no search). Set False if the provider rejects a forced tool choice.
+FORCE_FIRST_SEARCH = True
+
 # ── Conversation memory ───────────────────────────────────────────────────────
 CONVERSATION_HISTORY_DAYS = 30  # cleanup deletes message_store rows older than this
+# History the agent reads (one shared reader since A26; the parser and the synthesizer used to have 10 / 6
+# messages cut to 500 chars each). The agent needs earlier questions to turn "and videos about that?" into a
+# standalone search, and the later part of earlier answers for "when was that deadline?". Worst case
+# 6 x 1,000 + 6 x 3,000 chars, about 6k tokens.
+HISTORY_MESSAGES = 12          # the last 6 question-and-answer pairs
+HISTORY_CHARS_QUESTION = 1000  # per user message
+HISTORY_CHARS_ANSWER = 3000    # per Echo answer

@@ -2,8 +2,9 @@
 resolve_time_anchor node — deterministic time-anchor resolution.
 
 Answers queries like "OS material after the interview email":
-parse_intent extracts time_anchor_query="interview email" and
-time_relation="after"; this node finds the anchor item, reads its created_at,
+Luna's search_memories call carries anchor_item="interview email" and
+anchor_relation="after" (query_parser.py turns them into time_anchor_query and
+time_relation); this node finds the anchor item, reads its created_at,
 and exposes it as T_anchor. postgres_keyword_search then injects
 created_at > T_anchor (or <) as a hard SQL constraint, and merge_and_rrf
 applies the same constraint to semantic-only hits.

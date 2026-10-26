@@ -9,11 +9,11 @@ Working file — committed to the repo from 2026-10-22 so Claude web can read it
 3. Section B needs a backup before any statement runs: a Neon snapshot or branch for Neon (B1–B3, done), a `pg_dump -Fc` of `echo_db` into `C:\Users\mdshe\echo_backups\` for the local database (B5).
 4. Section D is built after the whole review is finished.
 
-**Audit snapshot — 2026-10-26 (top-level IDs; supersedes the 2026-10-25 one):** 86 entries = **84 complete/resolved + 2 not fully complete**. Counting rule: A1–A45 are owner-decision entries, counted complete when the decision is recorded; their implementation follow-ups are audited separately below. B4 is informational/no action. Breakdown: A 45/45 decisions recorded; B 5/5 resolved (B5 ran 2026-10-25); C 29/29 resolved; D 5 complete (D1, D2, D3, D4, D5; D3 and D5 built 2026-10-25, D2 closed 2026-10-26 with old `.doc` dropped), D6 open; E1 partial (decision made, implementation absent). E2 (import personal history + export button) was removed from scope on 2026-10-25: the presentation uses the test account only. The two not-fully-complete top-level IDs are D6 (four frontend gaps, found 2026-10-26, nothing built) and E1 (partial: decision made, implementation absent). D6 was added 2026-10-26, so the total went from 85 to 86. This top-level count is not a claim that all decided features are implemented. The 2026-10-25 build work (A16/A40 + B5, A27, A28, A37, OCR, D3, D5, A42, A18 part 1, review fixes) is committed and merged to `main` (PRs #12, #13, #14); the two branches were checked after the PR #14 merge and nothing was lost.
+**Audit snapshot — 2026-10-26 (top-level IDs; supersedes the 2026-10-25 one):** 86 entries = **85 complete/resolved + 1 not fully complete** (E1 built later on 2026-10-26). Counting rule: A1–A45 are owner-decision entries, counted complete when the decision is recorded; their implementation follow-ups are audited separately below. B4 is informational/no action. Breakdown: A 45/45 decisions recorded; B 5/5 resolved (B5 ran 2026-10-25); C 29/29 resolved; D 5 complete (D1, D2, D3, D4, D5; D3 and D5 built 2026-10-25, D2 closed 2026-10-26 with old `.doc` dropped), D6 open; E1 built 2026-10-26. E2 (import personal history + export button) was removed from scope on 2026-10-25: the presentation uses the test account only. The one not-fully-complete top-level ID is D6 (four frontend gaps, found 2026-10-26, nothing built); E1 was the other until it was built on 2026-10-26. D6 was added 2026-10-26, so the total went from 85 to 86. A26 was built later on 2026-10-26; the top-level count is unchanged because A entries count as complete when the decision is recorded (its build status is in the A26 entry). This top-level count is not a claim that all decided features are implemented. The 2026-10-25 build work (A16/A40 + B5, A27, A28, A37, OCR, D3, D5, A42, A18 part 1, review fixes) is committed and merged to `main` (PRs #12, #13, #14); the two branches were checked after the PR #14 merge and nothing was lost.
 
 **Decision 2026-10-25 (his): the presentation runs on the TEST ACCOUNT only.** There is no time to move to his personal account. So E2 (import personal history + export button) is out of scope, and the Mon 26 / Tue 27 Oct retest and the threshold recompute (A18, A40) use the test account's data.
 
-**Implementation follow-ups inside decided A entries (not additional top-level IDs):** 4 decision IDs still have an implementation step open or partial. Three wait on the Mon 26 / Tue 27 Oct retest on the test account's live data: A18 part 2 (seed-centroid threshold), A40 (threshold retune) and A42 (the KNN bar is built, its value must be re-measured). One is decided but not built: A26 (tool loop; build waits on a talk with him). `AGENTS.md` was brought in line with `CLAUDE.md` on 2026-10-25, so none of them is blocked by it. A16 closed with B5; A17 closed by his decision (no further build); A23 and A24 closed 2026-10-26 in a simplified form (leading text, bigger fixed caps, no passage selection); A27 complete (past-chats screen built, touch "peek" dropped); A28 closed as it is (progress lines only); A37 closed; A42's build is done (only the bar value is open). Their status is checked after A45 below.
+**Implementation follow-ups inside decided A entries (not additional top-level IDs):** 3 decision IDs still have an implementation step open or partial. They wait on the Mon 26 / Tue 27 Oct retest on the test account's live data: A18 part 2 (seed-centroid threshold), A40 (threshold retune) and A42 (the KNN bar is built, its value must be re-measured). A26 (tool loop) was built 2026-10-26; its first live run against OpenAI is still to be done by him. `AGENTS.md` was brought in line with `CLAUDE.md` on 2026-10-25, so none of them is blocked by it. A16 closed with B5; A17 closed by his decision (no further build); A23 and A24 closed 2026-10-26 in a simplified form (leading text, bigger fixed caps, no passage selection); A27 complete (past-chats screen built, touch "peek" dropped); A28 closed as it is (progress lines only); A37 closed; A42's build is done (only the bar value is open). Their status is checked after A45 below.
 
 Original inventory: 45 decisions · 5 live-DB entries · 29 cross-file fixes · 5 build items · 2 later items = **86, minus E2 (removed 2026-10-25) = 85**. C29 (delete pending-answers file) was added 2026-10-22; A44 retry + A45 fresh Gmail poll were added 2026-10-21 as stretch (A45 closed with no build on 2026-10-24); A42 auto-accept + A43 user-group nesting, A41 Gmail open tracking, A40 model choice, E2 personal-data import, and A37–A39 (retention, spam, timings) were added 2026-10-21; A5/A6 were added 2026-10-15; A7–A24 were added 2026-10-17; A25–A28 were added 2026-10-18; E1 MCP was added 2026-10-18.
 
@@ -817,7 +817,7 @@ Still open — decide each:
   scratchpad `freeze_before_upgrade.txt`.
 - Cost: assume ~1,000 reasoning tokens per call → ~$0.004 per 2-call query. Measure real tokens + latency.
 
-### A26. Agentic retrieval: Luna calls a `search_memories` tool, up to 5 rounds — [x] DECIDED 2026-10-18 (build in Step 2)
+### A26. Agentic retrieval: Luna calls a `search_memories` tool, up to 5 rounds — [x] DECIDED 2026-10-18; [x] BUILT 2026-10-26 (first live run still to do)
 - Replaces the one-way parse → search → synthesize flow. LangGraph agent node ⇄ tool node; round counter in
   `EchoState`.
 - Tool `search_memories(query, sources?[gmail|chrome|youtube], time_phrase?, sender_or_domain?)` runs the
@@ -847,6 +847,43 @@ Still open — decide each:
   are kept ~30 days — verify at build.
 - Open sub-question: a `read_more(n)` tool (longer capped excerpt / attachment text of one item) touches the
   privacy rule; ties to A23/A24. Decide at build time.
+- **Built 2026-10-26 (owner approved the plan; decisions below were made in the 2026-10-26 discussion):**
+  - **Graph:** `agent ⇄ search → finish` (`rse/agent_nodes.py`, `rse/retrieval_engine.py`). One search is `rse/search_tool.py` `run_search`, the
+    same stages as before in the same order (anchor → keyword ∥ semantic → RRF → quality → widen_scope → cross-encoder → neighbourhood →
+    optional attachment text), no LLM call inside. Common case 2 LLM calls (Luna asks for one search, then answers); at most 6.
+  - **Cap in code:** `MAX_SEARCHES = 5`, `MAX_SEARCHES_PER_ROUND = 3` (my number: parallel calls are allowed up to 3 per step); calls 1-5 carry the
+    tool, call 6 has none, a tool call on a call without the tool is ignored; every tool call still gets a reply (extra ones "not run").
+  - **First question of a new chat forces a search** (`tool_choice="required"`, `FORCE_FIRST_SEARCH` in `rse/config.py`); follow-ups use auto.
+  - **Tool arguments:** `query`, `alternative_phrasings` (≤ 2), `sources`, `since` (YYYY-MM-DD, copied from a calendar in the first message),
+    `anchor_item` / `anchor_relation`, `read_attachment`. **Not built, by decision:** `time_phrase` and `sender_or_domain` (no resolver or sender
+    filter exists; the sender goes into `query`, it is already searchable text), `read_more` (A23/A24 already give 8,000 chars per top result), the
+    live Gmail poll (A45). `fetch_recent_items` stays in `rse/search_coordinator.py` (E1's `recent_activity` tool was dropped).
+  - **`parse_intent` is gone, its checking is not:** `rse/query_parser.py` now holds `intent_from_tool_args` (repairs unknown sources, broken dates,
+    the string "false", duplicate variants, half an anchor, empty query) and `fallback_intent`. Removed: `node_parse_intent`, `node_check_attachments`,
+    `node_fetch_api`, the separate `synthesize` node.
+  - **Numbering:** global across the searches of one question ([n] = `found_items[n-1]`); an item seen before comes back as "(already shown above)".
+  - **Luna is told when Echo widened a search** (what was loosened), because `widen_scope` runs inside the tool without an LLM call.
+  - **History the agent reads (his decision):** 12 messages, 1,000 chars per question, 3,000 per answer (`HISTORY_MESSAGES`, `HISTORY_CHARS_QUESTION`,
+    `HISTORY_CHARS_ANSWER`); was 10 / 6 messages at 500 chars in two places.
+  - **Failures:** agent call fails on the first call → one search on the raw question and a deterministic list; later → list of what was found;
+    a search that raises → tool result "this search failed" (no error text). No fallback switch (his decision): git is the rollback.
+  - **Conversation chaining (`previous_response_id`, `store=true`) DEFERRED** (his decision, 2026-10-26): item numbers restart each question, so a
+    remembered turn would hold a different "[2]" than this turn's list and a pill could point at the wrong item; the fix is to store the found-items
+    list per chat and continue numbering across turns. The message_store history path is what runs.
+  - **Tests (`python -m pytest tests`, 22 pass, no database/index/key needed):** the real graph with a scripted Luna and a fake search. They show: 2 calls
+    for a simple question; first question forces a search, a follow-up does not; never more than 6 calls / 5 searches (and a model that ignores the cap
+    is stopped); per-step cap and a reply for every tool call; stable numbering across searches; unknown citation dropped; empty query reported back;
+    nothing-found answer flagged; agent failure first / later; a raising search is not a crash and leaks no error text; one progress line per step;
+    first message has date, calendar, history, question; history limits; excerpt 8,000 / 2,000 by rank; widening noted to Luna; tool schema valid;
+    argument repair; stage order, automatic widening and give-up inside one search. Three deliberate breakages (cap removed, citations unchecked,
+    numbering reset) each failed the matching test.
+  - **Checked with the real `langchain-openai` 1.7.2 client against a local fake Responses endpoint:** request 1 = `/v1/responses`, reasoning medium, no
+    temperature, `tool_choice=required`, the tool as a function; request 2 = the reasoning item + `function_call` + `function_call_output` with the same
+    call id; tool call parsed back; 2 calls. **Not checked against the live OpenAI service.**
+  - **Known risk:** round 2 refers to Luna's reasoning item by id, which needs the stored response. The code does not set `store` (API default stores
+    for ~30 days, to verify); an account with zero data retention would need `store=false` and encrypted reasoning content.
+  - **His first live run:** `python -m rse.retrieval_engine "find my TechCorp interview email"`; the log must show `llm_calls=2 searches=1` and the
+    answer must cite. If the API rejects the forced first tool choice, set `FORCE_FIRST_SEARCH = False`.
 
 ### A27. Answer style = chat (chatbot reply), NOT a fixed structured format — [x] DECIDED 2026-10-18
 - **His call:** no fixed JSON response type. Echo answers like a chatbot: a natural, conversational reply in
@@ -1641,7 +1678,7 @@ Still open — decide each:
 
 ### Build-status cross-check for decided A entries — 2026-10-24 (rows updated 2026-10-26)
 
-The `[x] decided` marks above mean the owner's decision is recorded. They do not mean the feature was built. Static review of the current workspace found 11 decision IDs with implementation work (A7's prior open row was stale; A7.1–A7.4 are built as recorded above). Rows were refreshed on 2026-10-26: the ones still open are A18 (part 2), A26, A40 and A42 (bar value only); the rest are closed:
+The `[x] decided` marks above mean the owner's decision is recorded. They do not mean the feature was built. Static review of the current workspace found 11 decision IDs with implementation work (A7's prior open row was stale; A7.1–A7.4 are built as recorded above). Rows were refreshed on 2026-10-26: the ones still open are A18 (part 2), A40 and A42 (bar value only); A26 was built later that day; the rest are closed:
 
 | ID | Current implementation check |
 |----|-------------------------------|
@@ -1650,7 +1687,7 @@ The `[x] decided` marks above mean the owner's decision is recorded. They do not
 | A18 | **Part 1 built 2026-10-25 (commit dbaebee):** `SEED_TEXTS` are now 8 example sentences per category, averaged in `initialize_centroids`. **Part 2 still open:** the seed-specific Stage-3 threshold must be measured on the local `echo_db` (lowest score/lead with zero wrong) and wired into `stage3_centroid`; `CENTROID_MIN_SCORE` is still 0.55 for seeds. Steps are in the A18 entry. |
 | A23 | **Closed 2026-10-26 (simplified by his decision):** no passage selection; leading attachment text, 40,000 chars per file and 80,000 total. See the A23 entry. |
 | A24 | **Closed 2026-10-26 (simplified by his decision):** A24.3 full-text indexing was already built; A24.2 became leading excerpts, 8,000 chars for the top 3 results and 2,000 for the rest. See the A24 entry. |
-| A26 | The agent/tool loop is not wired; `rse/README.md` still lists it under “Not yet wired.” Not blocked any more: `AGENTS.md` constraint 5 now reads "usually 2, max 6" (2026-10-25). |
+| A26 | **Built 2026-10-26** (see the "Built 2026-10-26" block in the A26 entry): graph `agent ⇄ search → finish`, 22 offline tests, request/response checked with the real OpenAI client against a local fake endpoint. Not yet run against the live service. |
 | A27 | **Built 2026-10-25, complete:** backend (`answer_markdown` / `answer_sources`), memory pills, moment strip, New chat, and the past-chats screen (`PastChats.tsx`, `GET /retrieval/sessions`, `GET /retrieval/sessions/{id}`). His decisions 2026-10-25: laptop only, so the touch "first tap = peek" is dropped; `GET /retrieval/sessions` needs no `X-API-Key`. See the A27 entry. |
 | A28 | **Built 2026-10-25 and closed as it is (his decision):** the progress lines are built (`run_query_stream`); streaming the reply text word by word is not built and is future work. See the A28 entry. |
 | A37 | **Built 2026-10-25 (commit b354647):** see the A37 entry. Closed. |
@@ -2077,7 +2114,7 @@ Found while reviewing what the screens can actually do. Each one was checked on 
 
 ## E. Later — after the review AND Step 2 are complete
 
-### E1. Echo as an MCP server (Claude Desktop or any MCP client) — [~] decision complete 2026-10-21; build still open (checked 2026-10-24)
+### E1. Echo as an MCP server (Claude Desktop or any MCP client) — [x] decided 2026-10-21; [x] BUILT 2026-10-26 (first run against Claude Desktop still to do)
 - **Decision (his, 2026-10-21): build it this week** (moved from "later" into the Thu 22 – Sun 25 build).
   Scope for the build: tools `search_memories` (same contract as A26), `get_memory`, `recent_activity`; stdio
   transport; Claude Desktop config snippet + an MCP README with the privacy note below. The wellbeing tool set
@@ -2096,3 +2133,29 @@ Found while reviewing what the screens can actually do. Each one was checked on 
 - Likely stack: official MCP Python SDK, stdio transport for Claude Desktop, reusing `rse/` and `wba/`
   functions directly (no HTTP hop). Decide when we get here.
 - **Status check 2026-10-24:** no MCP server entry point/config/README was found in the workspace, and `mcp` is not in `requirements.txt`. The decision is complete; the implementation is not.
+- **Built 2026-10-26 (scope cut by his decision the same day):**
+  - **Tools:** `search_memories` (the same arguments and the same `run_search` as Luna's tool; up to 10 numbered items with their `memory_id`;
+    every result starts with today's date so the client can work out `since`) and `get_memory` (one item by `memory_id`: details, link, first
+    8,000 characters, attachment names; `read_attachment` adds attachment text, up to 40,000 characters). **Dropped by decision:**
+    `recent_activity` (search with `since` = today covers a question with a topic; a question with no topic, like "what did I do today",
+    is weak under a topic search) and the optional wellbeing tools. No tool writes.
+  - **No Luna call:** the client's model (Claude, in Claude Desktop) reasons and writes the answer; what goes to the cloud is the tool results,
+    to Anthropic instead of OpenAI. Same bounded excerpts as the app. The README says so.
+  - **Files:** `mcp_server/server.py` (registers the tools with the official SDK; `mcp>=2.3,<3`, v2 where `FastMCP` became `MCPServer`; stdio),
+    `mcp_server/tools.py` (the logic), `mcp_server/README.md` (install, Windows config snippet, privacy, troubleshooting), `mcp>=2.3,<3` in
+    `requirements.txt`. Small shared changes in `rse/llm_synthesizer.py` (`format_result_body`, `format_memory_detail`, `quality_words`, optional
+    `memory_id` line) and `rse/search_tool.py` (`argument_description`); Luna's result text is unchanged.
+  - **Design points:** the server sets the working directory itself (the client config has none); logs to stderr only (the backend's `logs/echo.log`
+    is not shared); the models load in a thread started by the server's lifespan so the start-up handshake is immediate; before each search the
+    FAISS index is reloaded if the backend saved a newer file (retry once on a half-written pair, else keep the old copy); `memory_id` is validated
+    as a UUID before any query; errors are short text with no connection details.
+  - **Tests (`tests/test_mcp_server.py`, 16; all 38 tests pass offline):** tool logic (numbered items with ids and today's date, excerpt limits
+    8,000 / 2,000, bad arguments, a failing search leaks nothing, widening and attachment text reported, no matches), `get_memory` (detail,
+    attachment names and link, text only on request, ids that are not ids never reach the database, unknown id, no attachment query for pages),
+    index reload (once per change; a failed reload keeps the old index), the protocol with the SDK's own client (two read-only tools, Luna's
+    argument descriptions, a search through the protocol, an unknown source refused) and a real child process over stdio pipes. Deliberate
+    breakages (id check removed, ids hidden, reload on every search, a stray `print` in the warm-up) each failed the matching test or, for the
+    print, did not break the protocol.
+  - **His first run (not done here: no database or Claude Desktop in the cloud container):** `pip install "mcp>=2.3,<3"`, add the snippet from
+    `mcp_server/README.md` to `%APPDATA%\Claude\claude_desktop_config.json`, quit and restart Claude Desktop, ask it to search Echo for the
+    TechCorp interview email, then to open the first result. Logs: `%APPDATA%\Claude\logs\mcp-server-echo.log`.

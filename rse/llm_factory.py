@@ -10,8 +10,7 @@ temperature is sent (reasoning models do not take one). Any other provider,
 or OpenAI with reasoning_effort unset, gets the configured temperature.
 Provider-specific extras for other vendors can be added here later the same way.
 
-Callers: rse/query_parser.py and enp/system_group_classifier.py (Stage 4)
-(parser_model); rse/llm_synthesizer.py and wba/insight_generator.py
+Callers: enp/system_group_classifier.py (Stage 4) (parser_model); rse/llm_synthesizer.py (the A26 agent) and wba/insight_generator.py
 (synthesizer_model).
 
 Every model gets LLM_CONFIG["max_retries"] and ["timeout"] (C13).

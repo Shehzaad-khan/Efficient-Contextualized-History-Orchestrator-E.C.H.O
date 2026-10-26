@@ -1,26 +1,25 @@
 """
-All LangGraph node implementations for the hybrid RSE pipeline.
+The search-stage nodes of the RSE (A26 agent loop).
 
-This module is the single import point for the graph assembly in
-retrieval_engine.py. Node inventory:
+Since A26 these are not LangGraph nodes any more: rse/search_tool.py run_search calls them in order
+for each search Luna asks for, and the graph itself is only agent ⇄ search → finish
+(rse/agent_nodes.py, rse/retrieval_engine.py). The functions are unchanged and keep their node_ names
+and log lines. Inventory:
 
-  parse_intent            LLM Call 1 — query_parser.py (query expansion + anchor fields)
   resolve_time_anchor     deterministic anchor lookup — time_anchor.py
   postgres_keyword_search FTS/ILIKE branch — search_coordinator.py   (parallel A)
   faiss_semantic_search   multi-variant vector branch — search_coordinator.py (parallel B)
   merge_and_rrf           Reciprocal Rank Fusion — fusion.py
   evaluate_quality        deterministic 5-check gate (no LLM)
-  widen_scope             self-correcting loop, 3 attempts max
+  widen_scope             self-correcting loop, 3 attempts max (no LLM)
   rerank_cross_encoder    local cross-encoder + effort score — reranker.py
   extend_neighborhood     thread/session context — neighborhood.py
-  check_attachments       routing point for on-demand attachment fetch
   fetch_attachment        on-demand Tier-2 extraction — enp/attachment_processor.py
-  fetch_api               live Gmail poll + today's items ("just received")
-  synthesize              LLM Call 2 — llm_synthesizer.py
-  no_results_found        friendly no-results chat message
+  no_results_found        friendly no-results chat message (used by rse/agent_nodes.py)
 
-Total LLM calls per query: exactly 2 (parse_intent + synthesize), regardless
-of widen_scope loop iterations.
+Removed with A26: parse_intent (the agent's first call now supplies the search arguments), the
+check_attachments routing point (the read_attachment argument decides), fetch_api (A45 dropped the
+live poll; fetch_recent_items stays for E1) and synthesize (the agent's last reply is the answer).
 Logs carry node names, counts, flags and dates only — never query text or titles.
 """
 import logging
@@ -29,7 +28,6 @@ from typing import Any
 
 from rse.config import MIN_RESULT_COUNT, MIN_TOP_SIMILARITY
 from rse.state import EchoState
-from rse.query_parser import parse_intent
 from rse.search_coordinator import (
     faiss_semantic_search,
     filter_time_of,
@@ -40,13 +38,12 @@ from rse.fusion import merge_and_rrf
 from rse.time_anchor import resolve_time_anchor
 from rse.reranker import rerank_cross_encoder
 from rse.neighborhood import extend_neighborhood
-from rse.llm_synthesizer import synthesize
 
 logger = logging.getLogger(__name__)
 
 _ALL_SOURCES: list[str] = ["gmail", "chrome", "youtube"]
 
-# When parse_intent falls back (LLM unavailable), query_clean is the verbatim
+# When the agent call fails, the fallback search's query_clean is the verbatim
 # user question — so "trim to the first keyword" must skip question/filler
 # words or the whole widen loop ends up searching for "What".
 _TRIM_STOPWORDS = frozenset({
@@ -71,12 +68,6 @@ def _core_keyword(query_clean: str) -> str:
 def _is_all_sources(sources: Any) -> bool:
     """True when the intent covers every source (order-independent)."""
     return not sources or "all" in sources or set(sources) == set(_ALL_SOURCES)
-
-
-def node_parse_intent(state: EchoState) -> dict[str, Any]:
-    """Node 1 — parse_intent (LLM Call 1). See query_parser.parse_intent."""
-    logger.info("NODE: parse_intent")
-    return parse_intent(state)
 
 
 def node_resolve_time_anchor(state: EchoState) -> dict[str, Any]:
@@ -243,26 +234,15 @@ def node_extend_neighborhood(state: EchoState) -> dict[str, Any]:
     return extend_neighborhood(state)
 
 
-def node_check_attachments(state: EchoState) -> dict[str, Any]:
-    """
-    Node 8 — check_attachments.
-
-    Pure pass-through routing point; route_after_check_attachments in
-    graph_routing.py inspects the top-3 ranked results for attachments.
-    """
-    logger.info("NODE: check_attachments")
-    return {}
-
-
 def node_fetch_attachment(state: EchoState) -> dict[str, Any]:
     """
-    Node 9 — fetch_attachment.
+    fetch_attachment — run when Luna set read_attachment on the search.
 
     On-demand Tier-2 extraction (architecture §8.3): for the highest-ranked
-    Gmail result carrying attachments, fetch the binary from the Gmail API,
-    extract text (PDF/DOCX/TXT/OCR), and cache it in Redis for 1 hour. The
-    routing gate (route_after_check_attachments) has already confirmed both
-    the intent flag and a top-3 result with attachments.
+    Gmail result in the top 3 that carries attachments, fetch the binary from
+    the Gmail API, extract text (PDF/DOCX/TXT/OCR), and cache it in Redis for
+    1 hour. Returns the text and the memory_id it belongs to, so the result
+    text can name the item's number.
     """
     logger.info("NODE: fetch_attachment")
     from enp.attachment_processor import fetch_attachment_text_for_memory
@@ -278,57 +258,18 @@ def node_fetch_attachment(state: EchoState) -> dict[str, Any]:
                     "NODE: fetch_attachment — extracted %d chars for %s",
                     len(content), result["memory_id"],
                 )
-                return {"attachment_content": content}
+                return {"attachment_content": content, "attachment_item_id": str(result["memory_id"])}
 
     logger.info("NODE: fetch_attachment — no extractable attachment in top 3")
-    return {"attachment_content": None}
-
-
-def node_fetch_api(state: EchoState) -> dict[str, Any]:
-    """
-    Node 9b — fetch_api (architecture §10.3 Node 6 routing target).
-
-    Triggered when parse_intent set fetch_api=True ("latest", "today", "just
-    received"). Polls Gmail live so anything that arrived since the last
-    background poll is ingested, then loads today's freshest items into
-    api_results for the synthesizer. Chrome/YouTube have no pollable API —
-    their events are pushed by the extension — so the fresh-item query is
-    the live component for those sources.
-    """
-    logger.info("NODE: fetch_api")
-    from rse.search_coordinator import fetch_recent_items
-
-    sources = state.get("parsed_intent", {}).get("sources") or _ALL_SOURCES
-
-    if "gmail" in sources:
-        try:
-            from ingestion.gmail.router import poll_once
-
-            result = poll_once()
-            logger.info("NODE: fetch_api — gmail poll status=%s processed=%s",
-                        result.get("status"), result.get("processed"))
-        except Exception as exc:
-            # Live poll is best-effort; today's already-ingested items still flow.
-            logger.error("NODE: fetch_api — gmail poll failed: %s: %s", type(exc).__name__, exc)
-
-    api_results = fetch_recent_items(sources, limit=10)
-    logger.info("NODE: fetch_api — %d fresh items loaded", len(api_results))
-    return {"api_results": api_results}
-
-
-def node_synthesize(state: EchoState) -> dict[str, Any]:
-    """Node 10 — synthesize (LLM Call 2). See llm_synthesizer.synthesize."""
-    logger.info("NODE: synthesize")
-    return synthesize(state)
+    return {"attachment_content": None, "attachment_item_id": None}
 
 
 def node_no_results_found(state: EchoState) -> dict[str, Any]:
     """
-    Node 11 — no_results_found.
+    no_results_found — the canned reply when the searches found nothing and Luna wrote no answer.
 
-    Reached when every widen_scope attempt still found nothing usable. Returns
-    a friendly chat message (A27 style) in the same output shape as synthesize:
-    final_answer, answer_markdown, answer_sources (empty), no_results=True.
+    Returns a friendly chat message (A27 style): final_answer, answer_markdown,
+    answer_sources (empty), no_results=True.
     By now the intent has been widened (filters and anchor dropped), so the
     message speaks about the original question, not the widened filters.
     """
