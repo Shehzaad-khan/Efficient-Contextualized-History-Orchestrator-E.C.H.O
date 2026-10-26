@@ -1,0 +1,12 @@
+# Everything needed to run the checks on your own machine and in CI:
+#   pip install -r requirements-dev.txt
+#   pytest --cov            tests + coverage
+#   bandit -r backend enp ingestion mcp_server rse ste wba scripts -lll
+#   ruff check .
+-r requirements-ci.txt
+
+pytest>=8.0
+pytest-cov>=5.0
+bandit>=1.7
+ruff>=0.5
+pip-audit>=2.7

@@ -159,6 +159,12 @@ history if Review 2 needs it:
 `git checkout 16bde99 -- rsr/quality_evaluator.py rsr/query_quality_eval_set.py`
 (note its `_calculate_diversity` metric measures a prohibited feature — drop that part).
 
+Tests and CI (2026-10-26): `pytest --cov` runs 563 tests (unit / integration / system, `tests/`) at about 94 % line coverage with no live
+service. `.github/workflows/ci.yml` runs compile, ruff, bandit (fails on HIGH), pytest (coverage gate 80 %) and the frontend type check
+and build on every push. Numbers, the replay of old commits and three findings (requirements.txt cannot be installed as written,
+package-lock.json lacks rollup's Linux binary, two `# nosec B613` comments): `docs/review/ci_cd_guide.md`. Keep the tests green; do not
+skip or delete a test to make a change pass.
+
 Known open items:
 - **A26 and E1 are built, with their first live run still to be done by the owner.** E1 is `mcp_server/` (tools `search_memories` and `get_memory`,
   stdio; setup in `mcp_server/README.md`; run it from Claude Desktop). A26: (`python -m rse.retrieval_engine "find my TechCorp interview email"`: expect `llm_calls=2 searches=1` in the log;
@@ -210,6 +216,7 @@ Known open items:
 ```bash
 python -m compileall -q backend enp ingestion rse ste wba scripts   # must be silent
 cd frontend && npm run build                                        # tsc strict + vite, 0 errors
+pytest                                                              # all green (pip install -r requirements-dev.txt first)
 ```
 
 Then state: what changed, what the owner must test against the live DB, and any new

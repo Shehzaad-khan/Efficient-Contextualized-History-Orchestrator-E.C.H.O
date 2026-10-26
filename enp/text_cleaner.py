@@ -76,7 +76,7 @@ LINE_BREAK_TAG_RE = re.compile(
 )
 # Zero-width and other invisible characters (email preheader padding, soft
 # hyphens). Same set as gmail_api._INVISIBLE_RE.
-INVISIBLE_RE = re.compile("[­͏​-‏⁠﻿]")
+INVISIBLE_RE = re.compile("[­͏​-‏⁠﻿]")  # nosec B613
 # Any whitespace except a newline: spaces, tabs, non-breaking spaces (&nbsp;).
 INLINE_SPACE_RE = re.compile(r"[^\S\n]+")
 MULTINEWLINE_RE = re.compile(r"\n{3,}")

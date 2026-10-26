@@ -54,3 +54,14 @@ docs/Research Paper/**/*.log
 # Analysis of the owner's own writing style (personal working notes for the paper drafts)
 docs/Research Paper/**/STYLE_PROFILE.md
 docs/Research Paper/**/VOCAB_MAP.md
+
+# Test and CI output (pytest, coverage, bandit)
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+junit.xml
+bandit-report.json
+bandit-report.txt
+.ruff_cache/

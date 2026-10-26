@@ -1,0 +1,60 @@
+# Dependencies the CI pipeline installs (.github/workflows/ci.yml).
+#
+# This is requirements.txt WITHOUT the machine-learning stack (torch, torchvision, sentence-transformers,
+# about 2 GB). The tests replace the embedding model and the cross-encoder with small fakes
+# (tests/conftest.py), so CI installs in about a minute instead of ten. Everything else is identical,
+# including every pinned version, with TWO exceptions (below). When you change requirements.txt, change this
+# file the same way.
+#
+# Why two pins differ: requirements.txt cannot be installed as written. `mcp>=2.3` (the E1 MCP server) needs
+# pydantic>=2.12 and uvicorn>=0.31.1, but requirements.txt pins pydantic==2.8.2 and uvicorn==0.30.6, so
+# `pip install -r requirements.txt` stops with "ResolutionImpossible". Here those two are loosened to the
+# smallest range that works. Suggested fix for requirements.txt itself: the same two lines.
+#
+fastapi==0.115.0
+uvicorn[standard]>=0.31.1
+httpx==0.27.2
+redis==5.0.8
+python-dotenv==1.0.1
+pydantic>=2.12
+email-validator==2.3.0
+psycopg2-binary==2.9.9
+SQLAlchemy==2.0.49
+google-auth==2.40.3
+google-auth-oauthlib==1.2.0
+google-auth-httplib2==0.2.0
+google-api-python-client==2.105.0
+google-api-core==2.30.3
+
+# RSE — Retrieval & Synthesis Engine
+langgraph>=0.2.0
+langchain>=0.3.0
+langchain-core>=1.6.10
+langchain-google-genai>=2.0.0
+langchain-anthropic>=0.3.0
+# 1.7+ adds OpenAIDecisions (Decisions API) and pulls openai>=2.45
+langchain-openai>=1.7.2
+# E1 — Echo as an MCP server (mcp_server/). v2 of the SDK: MCPServer replaced FastMCP
+mcp>=2.3,<3
+# Authentication & Security
+passlib[bcrypt]==1.7.4
+pyjwt==2.13.0
+
+# RSE hybrid retrieval & ENP ML models
+numpy==1.26.4
+faiss-cpu==1.8.0
+scikit-learn==1.3.0
+
+# ENP — HTML cleaning & article extraction
+beautifulsoup4==4.12.3
+readability-lxml==0.8.1
+lxml_html_clean>=0.4.0
+
+# ENP — Tier-2 on-demand attachment extraction (architecture §8.3)
+pypdf==4.3.1
+pdfplumber==0.11.4
+python-docx==1.1.2
+# OCR for image attachments and scanned PDFs needs the Tesseract program as well
+# (Windows: winget install UB-Mannheim.TesseractOCR). Without it OCR stays off and
+# nothing breaks. Pillow and pypdfium2 come with pdfplumber.
+pytesseract==0.3.13
