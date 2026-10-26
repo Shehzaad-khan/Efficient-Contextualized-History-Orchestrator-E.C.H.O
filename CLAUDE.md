@@ -21,6 +21,10 @@ When code and doc disagree, check §3 below first — some deviations are delibe
 approved. The owner has given standing permission (2026-10-22) to update the design document
 whenever a decision or change makes it wrong: edit it directly, no need to ask.
 
+**Current plan (read first):** `docs/review/plan_2026-10-26_to_28.md` is the owner's hour-by-hour plan up to the review on
+Wed 28 Oct 2026 (tool loop + MCP today, tests + CI/CD, results, research paper, manual testing, thresholds, D6). Follow it and
+tick its boxes as work is done.
+
 **The LLD is stale on purpose (owner, 2026-10-24):** `docs/Phase III/` (the Low Level Design
 `.docx` files and `build/lld/build_lld.py`) was a Phase 3 review requirement and the owner has no
 current need for it. Do NOT keep it up to date and do not list it as pending work. If an LLD is

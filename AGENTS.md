@@ -5,6 +5,8 @@ Instructions for any AI agent (Antigravity, Cursor, Claude Code, etc.) working o
 
 ---
 
+**Current plan (read first):** `docs/review/plan_2026-10-26_to_28.md` is the owner's plan up to the review on Wed 28 Oct 2026. Follow it and tick its boxes.
+
 ## 1. What This Project Is
 
 **E.C.H.O (Efficient Contextualized History Orchestrator)** is a local-first, single-user personal memory system. It captures Gmail, Chrome, and YouTube activity through strict intent gates, enriches content in the background, and answers natural-language multi-turn queries through a LangGraph retrieval graph whose search is deterministic Python, with **usually 2 LLM calls per query, at most 6** (A26). A digital wellbeing module reflects time patterns without judging.
