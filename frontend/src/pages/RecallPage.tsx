@@ -3,8 +3,9 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { CornerDownLeft } from 'lucide-react'
 import AnswerBody from '../components/AnswerBody'
 import PageTitle from '../components/PageTitle'
-import { askEchoStreaming } from '../lib/api'
-import type { ChatMessage, QueryStep } from '../lib/types'
+import PastChats from '../components/PastChats'
+import { askEchoStreaming, fetchSessionMessages } from '../lib/api'
+import type { ChatMessage, QueryStep, SessionMessage } from '../lib/types'
 
 const EASE_OUT = [0.22, 1, 0.36, 1] as const
 
@@ -17,6 +18,35 @@ const SUGGESTIONS = [
 
 let messageCounter = 0
 const nextId = () => `m${++messageCounter}`
+
+/** The open chat's id is kept in this browser so a reload goes back to the same chat. */
+const SESSION_STORAGE_KEY = 'echo.recall.session'
+
+function readStoredSessionId(): string | null {
+  try {
+    return window.localStorage.getItem(SESSION_STORAGE_KEY)
+  } catch {
+    return null
+  }
+}
+
+function storeSessionId(sessionId: string | null): void {
+  try {
+    if (sessionId) window.localStorage.setItem(SESSION_STORAGE_KEY, sessionId)
+    else window.localStorage.removeItem(SESSION_STORAGE_KEY)
+  } catch {
+    // Private window or blocked storage: the chat still works, it just is not remembered.
+  }
+}
+
+/** Stored messages as chat bubbles. A stored reply has no pills, but its bold text and lists still render. */
+function toChatMessages(stored: SessionMessage[]): ChatMessage[] {
+  return stored.map((message) =>
+    message.role === 'echo'
+      ? { id: nextId(), role: message.role, text: message.text, markdown: message.text, sources: [] }
+      : { id: nextId(), role: message.role, text: message.text },
+  )
+}
 
 /** A pulsing dot on the thread while Echo searches, with the steps finished so far. */
 function ThinkingIndicator({ steps }: { steps: QueryStep[] }) {
@@ -65,7 +95,7 @@ function EchoAnswer({ message }: { message: ChatMessage }) {
       <p className="meta mb-2">
         echo{typeof message.resultCount === 'number' && !message.noResults ? ` · ${message.resultCount} memories` : ''}
       </p>
-      {message.markdown && message.sources && message.sources.length > 0 ? (
+      {message.markdown && message.sources ? (
         <AnswerBody markdown={message.markdown} sources={message.sources} />
       ) : (
         <div className="max-w-[68ch] whitespace-pre-wrap text-[15px] leading-7 text-ink-soft">
@@ -96,7 +126,10 @@ export default function RecallPage() {
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
   const [steps, setSteps] = useState<QueryStep[]>([])
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
   const sessionRef = useRef<string | null>(null)
+  // Set once the user asks, starts a new chat or picks a chat: the reload-restore must not override that.
+  const touchedRef = useRef(false)
   const endRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -104,10 +137,37 @@ export default function RecallPage() {
     endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
   }, [messages, busy])
 
+  /** Make a stored chat the open one: later questions keep its session id. */
+  const openStoredChat = useCallback((sessionId: string, stored: SessionMessage[]) => {
+    sessionRef.current = sessionId
+    setActiveSessionId(sessionId)
+    storeSessionId(sessionId)
+    setMessages(toChatMessages(stored))
+    setSteps([])
+  }, [])
+
+  // After a reload, go back to the chat that was open (if it still exists).
+  useEffect(() => {
+    const remembered = readStoredSessionId()
+    if (!remembered) return
+    let cancelled = false
+    fetchSessionMessages(remembered)
+      .then((chat) => {
+        if (!cancelled && !touchedRef.current) openStoredChat(chat.session_id, chat.messages)
+      })
+      .catch(() => {
+        if (!cancelled) storeSessionId(null) // gone (30-day cleanup) or backend down: start fresh
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [openStoredChat])
+
   const send = useCallback(
     async (raw?: string) => {
       const query = (raw ?? input).trim()
       if (!query || busy) return
+      touchedRef.current = true
       setInput('')
       setBusy(true)
       setSteps([])
@@ -119,6 +179,8 @@ export default function RecallPage() {
           setSteps((current) => [...current.filter((existing) => existing.node !== step.node), step]),
         )
         sessionRef.current = reply.session_id
+        setActiveSessionId(reply.session_id)
+        storeSessionId(reply.session_id)
         setMessages((current) => [
           ...current,
           {
@@ -148,7 +210,10 @@ export default function RecallPage() {
 
   /** A new chat is a new session id: forget the old one and clear the screen. */
   function startNewChat() {
+    touchedRef.current = true
     sessionRef.current = null
+    setActiveSessionId(null)
+    storeSessionId(null)
     setMessages([])
     setSteps([])
     inputRef.current?.focus()
@@ -161,6 +226,14 @@ export default function RecallPage() {
         title="Ask your memory."
         aside={
           <div className="flex items-center gap-4">
+            <PastChats
+              activeSessionId={activeSessionId}
+              disabled={busy}
+              onOpen={(sessionId, stored) => {
+                touchedRef.current = true
+                openStoredChat(sessionId, stored)
+              }}
+            />
             {!empty && (
               <button type="button" onClick={startNewChat} disabled={busy} className="btn-ghost font-mono text-xs normal-case disabled:opacity-40">
                 New chat

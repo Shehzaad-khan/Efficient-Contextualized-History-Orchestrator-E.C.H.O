@@ -22,6 +22,8 @@ import type {
   QueryResponse,
   QueryStep,
   RegretAnalytics,
+  SessionMessages,
+  SessionSummary,
   UserGroup,
   WeeklyInsight,
 } from './types'
@@ -212,6 +214,20 @@ export function askEchoStreaming(
 }
 
 // ── Wellbeing (WBA) ───────────────────────────────────────────────────────────
+
+/** The past chats, newest first (A27). Empty in demo mode: there is no history to list. */
+export function fetchSessions(limit = 50): Promise<SessionSummary[]> {
+  return withFallback(() => request<SessionSummary[]>(`/retrieval/sessions?limit=${limit}`), () => [])
+}
+
+/**
+ * One past chat's messages. Failures are NOT replaced by demo data: the caller
+ * must know the chat could not be opened (404 = gone, e.g. removed by the 30-day cleanup).
+ */
+export async function fetchSessionMessages(sessionId: string): Promise<SessionMessages> {
+  if (demoMode) throw new Error('No chat history in demo mode')
+  return request<SessionMessages>(`/retrieval/sessions/${encodeURIComponent(sessionId)}`)
+}
 
 export function fetchDaily(): Promise<DailySummary> {
   return withFallback(() => request<DailySummary>('/wellbeing/analytics/daily'), () => demoDaily)
