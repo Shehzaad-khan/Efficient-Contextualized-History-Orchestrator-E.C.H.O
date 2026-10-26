@@ -1,5 +1,7 @@
 # Echo — Personal Memory System
 
+[![CI](https://github.com/Shehzaad-khan/Efficient-Contextualized-History-Orchestrator-E.C.H.O/actions/workflows/ci.yml/badge.svg)](https://github.com/Shehzaad-khan/Efficient-Contextualized-History-Orchestrator-E.C.H.O/actions/workflows/ci.yml)
+
 > *Your digital life, unified. Search across Gmail, Chrome, and YouTube in one natural language query.*
 
 **E.C.H.O — Efficient Contextualized History Orchestrator** · Final-year capstone project · Local-first · Single-user
@@ -90,6 +92,19 @@ cd frontend && npm install && npm run dev
 Configuration via `.env`: `DATABASE_URL` (local PostgreSQL), `REDIS_URL` (local Redis), plus the key for the LLM provider set in `rse/config.py` `LLM_CONFIG` (OpenAI today; plug-and-play — one place to switch). `credentials.json` supplies Google OAuth; the tokens are plain local files (`token_gmail.json`, `token_youtube.json`, decision A35).
 
 The frontend runs without the backend too — it flips into a clearly-badged **demo mode** with seeded data, useful for demos.
+
+---
+
+## Tests and CI
+
+```bash
+pip install -r requirements-dev.txt
+pytest --cov          # 563 tests (unit / integration / system), about 94 % line coverage, no live services needed
+```
+
+Every push runs the same checks on GitHub (`.github/workflows/ci.yml`): compile, lint, bandit security scan, tests with an
+80 % coverage gate, and the frontend type check and build. Details, numbers and how old commits are replayed:
+`docs/review/ci_cd_guide.md`; what each test proves: `docs/review/test_guide.md`.
 
 ---
 

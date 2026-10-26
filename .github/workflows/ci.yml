@@ -1,0 +1,207 @@
+# E.C.H.O continuous integration.
+#
+# Runs on EVERY push to ANY branch (this also covers a merged pull request: the merge is a push to main),
+# and on demand with "Run workflow" in the Actions tab.
+#
+# Two jobs, no secrets, no live database:
+#   backend   compile check, lint (real bugs only), security scan (bandit), tests + coverage (pytest), dependency audit
+#   frontend  npm ci, type check, production build, dependency audit
+#
+# The same workflow also "replays" an old commit: run it by hand (or through the API) with the input `ref`
+# set to a commit hash. It then checks that commit out, lays today's tests and settings over it, and runs the
+# same checks. Old commits may fail (they did not have these tests); that is expected. See docs/review/ci_cd_guide.md.
+name: CI
+
+run-name: >-
+  ${{ github.event_name == 'workflow_dispatch'
+      && format('CI replay · {0} · {1}', inputs.sha_short, inputs.label)
+      || format('CI · {0}', github.event.head_commit.message) }}
+
+on:
+  push:
+    branches: ["**"]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Commit hash to replay (leave empty to test the branch you picked above)"
+        required: false
+        default: ""
+      sha_short:
+        description: "Short hash, shown in the run title"
+        required: false
+        default: ""
+      label:
+        description: "Commit message, shown in the run title"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.11"      # torch==2.2.2 and numpy==1.26.4 (requirements.txt) support up to 3.12
+  NODE_VERSION: "20"
+  PYTHON_DIRS: "backend enp ingestion mcp_server rse ste wba scripts"
+
+jobs:
+  backend:
+    name: Backend (compile, lint, security, tests, coverage)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: bash
+        # A replay tests the old commit in ./target; a normal run tests the checkout itself.
+        working-directory: ${{ inputs.ref != '' && 'target' || '.' }}
+    steps:
+      - name: Check out the commit this workflow runs from
+        uses: actions/checkout@v4
+        with:
+          path: ${{ inputs.ref != '' && 'tooling' || '.' }}
+
+      - name: Check out the old commit to replay
+        if: ${{ inputs.ref != '' }}
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          path: target
+
+      - name: Lay today's tests and settings over the old commit
+        if: ${{ inputs.ref != '' }}
+        working-directory: .
+        run: |
+          mkdir -p target/tests
+          cp -r tooling/tests/. target/tests/
+          cp tooling/pytest.ini tooling/.coveragerc tooling/ruff.toml tooling/requirements-ci.txt tooling/requirements-dev.txt target/
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: |
+            requirements-dev.txt
+            requirements-ci.txt
+            tooling/requirements-dev.txt
+            tooling/requirements-ci.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Compile every Python file (CLAUDE.md section 7)
+        run: |
+          dirs=""
+          for d in $PYTHON_DIRS; do [ -d "$d" ] && dirs="$dirs $d"; done
+          python -m compileall -q $dirs
+
+      - name: "Lint (real bugs only - syntax errors, undefined names)"
+        run: ruff check .
+
+      - name: Security scan with bandit (fails on HIGH severity)
+        run: |
+          dirs=""
+          for d in $PYTHON_DIRS; do [ -d "$d" ] && dirs="$dirs $d"; done
+          bandit -r $dirs -q -lll
+          # The full report (also MEDIUM and LOW findings) is saved for reading, it does not fail the build.
+          bandit -r $dirs -q -f json -o bandit-report.json || true
+          bandit -r $dirs -q -f txt  -o bandit-report.txt  || true
+
+      - name: Tests with coverage (unit, integration, system)
+        run: |
+          pytest --cov --cov-config=.coveragerc \
+                 --cov-report=term-missing --cov-report=xml --cov-report=html \
+                 --junitxml=junit.xml \
+                 --cov-fail-under=80
+
+      - name: Write the results into the run summary
+        if: ${{ always() }}
+        run: |
+          {
+            echo "### Tests and coverage"
+            echo
+            echo "Test files: unit $(ls tests/unit/test_*.py 2>/dev/null | wc -l), integration $(ls tests/integration/test_*.py 2>/dev/null | wc -l), system $(ls tests/system/test_*.py 2>/dev/null | wc -l)"
+            echo
+            python -m coverage report --format=markdown --skip-empty 2>/dev/null || echo "(no coverage data: the tests did not finish)"
+            echo
+            echo "### Security scan (bandit)"
+            echo
+            jq -r '"HIGH: \([.results[] | select(.issue_severity == "HIGH")] | length), MEDIUM: \([.results[] | select(.issue_severity == "MEDIUM")] | length), LOW: \([.results[] | select(.issue_severity == "LOW")] | length)"' bandit-report.json 2>/dev/null || echo "(no bandit report)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Save the reports
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-reports
+          path: |
+            ${{ inputs.ref != '' && 'target' || '.' }}/htmlcov
+            ${{ inputs.ref != '' && 'target' || '.' }}/coverage.xml
+            ${{ inputs.ref != '' && 'target' || '.' }}/junit.xml
+            ${{ inputs.ref != '' && 'target' || '.' }}/bandit-report.json
+            ${{ inputs.ref != '' && 'target' || '.' }}/bandit-report.txt
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Dependency audit (report only)
+        continue-on-error: true
+        run: pip-audit -r requirements-ci.txt --progress-spinner off
+
+  frontend:
+    name: Frontend (install, type check, build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref != '' && inputs.ref || github.sha }}
+
+      # The earliest commits have no frontend yet; there is nothing to check for them.
+      - name: Is there a frontend in this commit?
+        id: detect
+        run: |
+          if [ -f frontend/package.json ] && [ -f frontend/package-lock.json ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "No frontend/package.json and package-lock.json in this commit: nothing to build."
+          fi
+
+      - uses: actions/setup-node@v4
+        if: ${{ steps.detect.outputs.present == 'true' }}
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install (clean, from the lock file)
+        if: ${{ steps.detect.outputs.present == 'true' }}
+        working-directory: frontend
+        run: npm ci
+
+      # package-lock.json was created on Windows and lists only the Windows build of rollup's native part,
+      # so `npm ci` on Linux leaves vite without it ("Cannot find module @rollup/rollup-linux-x64-gnu").
+      # This adds the Linux one for this run only; nothing is saved to the repository.
+      - name: Add rollup's Linux binary (the lock file was made on Windows)
+        if: ${{ steps.detect.outputs.present == 'true' }}
+        working-directory: frontend
+        run: |
+          version=$(node -p "require('rollup/package.json').version")
+          npm install --no-save --no-package-lock --no-audit --no-fund "@rollup/rollup-linux-x64-gnu@${version}"
+
+      - name: Type check (tsc strict)
+        if: ${{ steps.detect.outputs.present == 'true' }}
+        working-directory: frontend
+        run: npm run typecheck --if-present
+
+      - name: Production build (tsc + vite)
+        if: ${{ steps.detect.outputs.present == 'true' }}
+        working-directory: frontend
+        run: npm run build
+
+      - name: Dependency audit (report only)
+        if: ${{ steps.detect.outputs.present == 'true' }}
+        working-directory: frontend
+        continue-on-error: true
+        run: npm audit --omit=dev

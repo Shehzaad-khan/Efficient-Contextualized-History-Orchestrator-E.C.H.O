@@ -191,7 +191,7 @@ def sign_in_gmail() -> None:
 
 # Zero-width and soft-hyphen characters. Marketing mail pads its hidden
 # preview text with them; they are invisible but break word matching.
-_INVISIBLE_RE = re.compile("[­͏​-‏⁠﻿]")
+_INVISIBLE_RE = re.compile("[­͏​-‏⁠﻿]")  # nosec B613
 _COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 _DROP_BLOCK_RE = re.compile(r"<(script|style|head|title)\b[^>]*>.*?</\1\s*>", re.IGNORECASE | re.DOTALL)
 # Tags that end a visual line. Turning them into "\n" keeps the line structure

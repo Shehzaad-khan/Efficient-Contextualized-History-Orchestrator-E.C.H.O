@@ -20,7 +20,7 @@ from mcp_server.server import server
 from rse.config import SYNTHESIS_EXCERPT_CHARS_REST, SYNTHESIS_EXCERPT_CHARS_TOP
 from rse.search_tool import SearchOutcome, argument_description
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 MEMORY_ID = "8f0f6a52-6a47-4e5e-9d0b-5d3f2f0f6a52"
 
 

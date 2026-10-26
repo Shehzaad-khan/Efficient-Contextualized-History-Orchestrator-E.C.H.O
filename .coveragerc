@@ -1,0 +1,21 @@
+[run]
+branch = False
+source =
+    backend
+    enp
+    ingestion
+    mcp_server
+    rse
+    ste
+    wba
+omit =
+    */__main__.py
+
+[report]
+show_missing = False
+skip_empty = True
+exclude_lines =
+    pragma: no cover
+    if __name__ == .__main__.:
+    raise NotImplementedError
+    if TYPE_CHECKING:
