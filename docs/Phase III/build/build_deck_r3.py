@@ -566,8 +566,10 @@ def slide_title(deck: Deck) -> None:
 def slide_guide_approval(deck: Deck) -> None:
     s = deck.clone(deck.find("Outline"), "Guide Approval Mail")
     set_background(s, bg("plain"))
-    notes(s, "Left empty on purpose: paste the guide's approval mail here. It is not part of the Review 3 template; "
-             "delete this slide if it is not wanted (build_deck_r3.py: INCLUDE_GUIDE_APPROVAL_SLIDE = False).")
+    picture(s, ASSETS / "guide_approval_mail.png", X0, Y0 + 0.03, W, Y1 - Y0 - 0.03)
+    notes(s, "Screenshot of the guide's approval mail (Fri 23 Oct 2026, 7:32 PM): 'Dear Students your PPT is approved'. "
+             "It is not part of the Review 3 template; delete this slide if it is not wanted "
+             "(build_deck_r3.py: INCLUDE_GUIDE_APPROVAL_SLIDE = False).")
 
 
 def slide_outline(deck: Deck) -> None:
@@ -609,12 +611,13 @@ def slide_abstract(deck: Deck) -> None:
     white_pill(s, X0, by, half, Y1 - by, [P(B("Scope. "), "One user, one laptop: desktop Chrome, Gmail and YouTube. "
                                            "Not a cloud service, a score or a blocker.", space_after=0)], size=19)
     white_pill(s, X0 + half + 0.25, by, half, Y1 - by, [
-        P(B("Local-first. "), "Storage and processing run on your laptop. Only your question and short snippets go to the "
-          "language model, never full emails.", space_after=0)], size=19)
+        P(B("Local-first. "), "Storage and processing run on your laptop. The language model gets your question and "
+          "limited excerpts of the best matches, never database rows.", space_after=0)], size=19)
     notes(s, "~45 s. The problem in one line (interview email, articles, tutorials, spread over three places). Then "
              "the three things E.C.H.O. does. Scope: one user, one laptop, desktop Chrome plus the Gmail API and "
-             "YouTube. Privacy: storage and processing are local; only the question and short snippets go to the "
-             "language model, never whole mails, pages or transcripts; the Gmail and YouTube APIs fetch your own data.")
+             "YouTube. Privacy: storage and processing are local; the language model gets the question and "
+             "limited excerpts (the first 8,000 characters of the top 3 results, 2,000 of the others), never database rows or "
+             "the whole store; the Gmail and YouTube APIs fetch your own data.")
 
 
 def slide_suggestions(deck: Deck) -> None:
@@ -714,7 +717,7 @@ def slide_architecture(deck: Deck) -> None:
     text(s, X0, cy, 5.2, Y1 - cy, [P(B("Gmail and YouTube APIs → "), "your own mail and video details", space_after=0)],
          size=19, color=STORE.dark, fill=WHITE, line=STORE.main, shape=MSO_SHAPE.ROUNDED_RECTANGLE, radius=0.2,
          anchor=MSO_ANCHOR.MIDDLE, margin=0.14, dash=True, line_w=1.5)
-    text(s, 6.15, cy, X1 - 6.15, Y1 - cy, [P(B("OpenAI language model ← "), "your question and short snippets, never full emails",
+    text(s, 6.15, cy, X1 - 6.15, Y1 - cy, [P(B("OpenAI language model ← "), "your question and limited excerpts, never database rows",
                                             space_after=0)],
          size=19, color=CLOUD.dark, fill=CLOUD.tint, line=CLOUD.main, shape=MSO_SHAPE.ROUNDED_RECTANGLE, radius=0.2,
          anchor=MSO_ANCHOR.MIDDLE, margin=0.14, dash=True, line_w=1.5)
@@ -727,8 +730,8 @@ def slide_architecture(deck: Deck) -> None:
              "settings. The enrichment worker runs in the background: it reads new rows, writes vectors and groups, "
              "and asks the language model only about unclear items. The recall engine and the wellbeing module only "
              "read. The dashboard and the MCP server (Claude Desktop) call them. Only two things leave the laptop: "
-             "the Google APIs, which return your own data, and the language model, which gets the question and short "
-             "snippets. Wellbeing sends it weekly totals only.")
+             "the Google APIs, which return your own data, and the language model, which gets the question and limited "
+             "excerpts. Wellbeing sends it weekly totals only.")
 
 
 def slide_impl_capture(deck: Deck) -> None:
@@ -845,7 +848,7 @@ def slide_impl_recall(deck: Deck) -> None:
     set_background(s, bg("base"))
     hs_y, hs_h = Y0 + 0.03, 1.1
     header_strip(s, hs_y, hs_h, MODULE_2 + " — how a question is answered",
-                 "LangGraph + LangChain · OpenAI gpt-5.6-luna · PostgreSQL full-text search · FAISS · local "
+                 "LangGraph + LangChain · OpenAI gpt-6-luna · PostgreSQL full-text search · FAISS · local "
                  "cross-encoder · FastAPI · React · MCP")
     steps = [
         "Model calls the search tool (≤ 5 rounds)", "Time phrase → hard date filter",
@@ -866,7 +869,7 @@ def slide_impl_recall(deck: Deck) -> None:
         "rrf(item)   = sum(1 / (60 + rank)) per list",
         "final(item) = 0.8 * cross_encoder + 0.2 * effort"])
     tw = W - lw - 0.2
-    for i, (big, small) in enumerate([("2 – 6", "model calls per question")]):
+    for i, (big, small) in enumerate([("2.3 mean", "model calls per question (2 – 6)")]):
         text(s, X0 + lw + 0.2 + i * (tw + 0.2), by, tw, bh, [
             P(B(big), size=24, color=PRIMARY.main, align=PP_ALIGN.CENTER, space_after=0),
             P(small, size=18, align=PP_ALIGN.CENTER, space_after=0, color=GREY)],
@@ -880,8 +883,8 @@ def slide_impl_recall(deck: Deck) -> None:
              "time, and merges by rank with Reciprocal Rank Fusion. A quality check can widen the search up to three "
              "times. A local cross-encoder (ms-marco-MiniLM-L-6-v2) reads the question and each item together; the "
              "final score is 0.8 x cross-encoder + 0.2 x effort (time spent, scroll, revisits). Then the thread or "
-             "the items within 5 minutes are added as context, and the model writes the answer from at most 10 "
-             "snippets of 500 characters. Recency boost and diversity re-ranking are deliberately not used. If the "
+             "the items within 5 minutes are added as context, and the model writes the answer from the top 10 "
+             "results (8,000 characters of text for the best 3, 2,000 for the rest). Recency boost and diversity re-ranking are deliberately not used. If the "
              "model is down, a deterministic search runs on the raw question.")
 
 
@@ -929,13 +932,13 @@ def slide_impl_recall_example(deck: Deck) -> None:
          size=18, anchor=MSO_ANCHOR.MIDDLE, margin=0.04)
     by = list_bottom + 0.12
     white_pill(s, X0, by, W, Y1 - by, [
-        P(B("What the model sees: "), "your question and short snippets of the best matches, never full emails or pages.", space_after=0)], size=19)
+        P(B("What the model sees: "), "your question and limited excerpts of the best matches (first 8,000 characters of the top 3), never database rows.", space_after=0)], size=19)
     notes(s, "~45 s. The example question is traced from the design; it is not a recorded run, and the chat on the "
              "right is an illustration of the answer format, not a screenshot. Answers are short chat replies; each "
              "citation becomes a memory pill (source logo, sender or site, date). Solid = the item says it, dashed = "
              "related context. Clicking a pill opens the original mail or page. Live progress ('Searching Gmail...') "
              "streams while it works. Follow-ups: each chat has its own session, so the next question continues from "
-             "the earlier turns. Attachment questions send the best three matching passages (about 1,500 characters). "
+             "the earlier turns. An attachment question adds the attachment text (up to 40,000 characters). "
              "The MCP server lets Claude Desktop call the same read-only tools: search_memories, get_memory, "
              "recent_activity.")
 
@@ -1016,7 +1019,7 @@ def slide_impl_groups(deck: Deck) -> None:
         P("Rules you write: keyword, domain, channel, sender, dates", bullet=True, space_after=6),
         P("Similarity: mean of the 3 nearest confirmed items", bullet=True, space_after=6),
         P("Suggestions start after 5 confirmed items", bullet=True, space_after=6),
-        P("Confident = a rule matches and similarity is above the bar", bullet=True, space_after=6),
+        P("Confident = a rule matches and similarity is above 0.85", bullet=True, space_after=6),
         P("Only items you confirmed teach the similarity", bullet=True, space_after=0)],
         accent=PRIMARY, size=19, heading_size=22)
     notes(s, "~45 s. You create a goal group ('Capstone project'), add a few items, and write rules. Every new item "
@@ -1071,8 +1074,9 @@ def slide_test_plan(deck: Deck) -> None:
     entries = [
         ("6 – 19 Oct", "Done", PRIMARY, True,
          "Every file reviewed, with 30 backend and 56 extension offline checks"),
-        ("22 – 25 Oct", "Done", PRIMARY, True, "Thresholds re-measured; tests written for the 25 scenarios"),
-        ("26 – 27 Oct", "Done", PRIMARY, True, "End-to-end run of all three sources and rehearsal"),
+        ("22 – 25 Oct", "Done", PRIMARY, True, "Final build and code freeze on 25 Oct"),
+        ("26 – 27 Oct", "Done", PRIMARY, True,
+         "563 tests; 38 questions, 15 capture sessions and 3 thresholds measured"),
     ]
     eh = (Y1 - Y0 - 0.03 - 2 * 0.15) / 3
     y = Y0 + 0.03
@@ -1113,9 +1117,10 @@ def slide_test_plan(deck: Deck) -> None:
         ry += rh + 0.05
     notes(s, "~30 s. 6-19 Oct: every file reviewed with offline simulation tests (fake database, fake Redis, FastAPI "
              "test client; a Node harness with a fake browser for the extension): 30 and 56 checks, recorded in the "
-             "commit messages. 22-25 Oct: thresholds re-measured on the re-embedded data; unit and integration tests "
-             "for the 25 scenarios in the design document; code freeze on 25 Oct. 26-27 Oct: end-to-end run of all "
-             "three sources, evaluation, rehearsal. Team: four equal shares; each member owns one area and "
+             "commit messages. 22-25 Oct: final build and code freeze on 25 Oct. 26 Oct: 563 pytest tests (333 unit, 220 integration, 10 "
+             "system, about 94 % line coverage, docs/review/ci_cd_guide.md; a re-run on a laptop without the mcp 2.x "
+             "package ran 547 of them) and the live evaluation on the test account: 119 items, 38 questions, 15 scripted "
+             "capture sessions, thresholds measured (docs/review/eval/RESULTS_2026-10-26.md). 27 Oct: rehearsal. Team: four equal shares; each member owns one area and "
              "cross-checks one area of another member (four equal shares).")
 
 
@@ -1137,8 +1142,8 @@ def slide_test_methods(deck: Deck) -> None:
     y2 = Y0 + 0.03 + h1 + 0.12
     mid_h = 1.5
     card(s, X0, y2, W, mid_h, "", [
-        P(B("Test cases: "), "25 scenarios · Gmail 5 · Chrome 7 · YouTube 4 · Recall 4 · Groups 2 · "
-          "Enrichment 1 · Retention 1 · Privacy 1", space_after=4),
+        P(B("Test cases: "), "563 automated tests (333 unit · 220 integration · 10 system), 94 % line coverage, run on "
+          "every push · 38 recall questions · 15 capture sessions", space_after=4),
         P(B("Tools: "), "Python test scripts (pytest) · FastAPI test client · Node harness (fake browser) · "
           "TypeScript compiler + Vite build · DevTools", space_after=0)],
         accent=STORE, size=19, anchor=MSO_ANCHOR.MIDDLE)
@@ -1162,37 +1167,51 @@ def slide_results(deck: Deck) -> None:
     s = deck.keep(deck.find("Results and Discussion"), "Results and Discussion – Evaluation")
     set_background(s, bg("base"))
     ty = Y0 + 0.03
-    bh = 1.05
+    bh = 1.5
     white_pill(s, X0, ty, W, bh, [
-        P(B("The evaluation runs after the new embedding model is switched in and every item is re-embedded. "),
-          "All fields the template asks for will be measured on that same data.", space_after=0)], size=20)
+        P(B("Test set: "), "119 items, 38 questions, test account. ",
+          B("Finding: "), "meaning search alone ranked best (MRR 0.99); the cross-encoder step lowered it to 0.90 on "
+          "this small set.", space_after=3),
+        P(B("Also: "), "13 of 13 clean capture sessions matched the design; no text past the 8,000-character cap "
+          "was sent to the model.", space_after=0)], size=18)
     metrics = [
-        ("Retrieval quality", "Recall@5 · MRR on a fixed question set"),
-        ("Search methods", "keyword-only · meaning-only · hybrid"),
-        ("Embedding model", "previous model vs the new one"),
-        ("Time per question", "median · 95th percentile"),
-        ("Model calls and cost", "per question"),
-        ("Enrichment", "items per minute · items per classification stage"),
+        ("Retrieval quality", "Recall@5 0.91 · MRR 0.90", "full agent loop; Recall@10 0.93"),
+        ("Search methods", "Recall@10: 0.70 · 0.96 · 0.96", "keyword · meaning · hybrid (rank fusion)"),
+        ("Embedding model", "Right item first: 37 vs 31 of 39", "new model vs MiniLM, earlier 39-question test"),
+        ("Time per question", "8.1 s median · 23.8 s p95", "44 turns, a memory-starved laptop"),
+        ("Model calls and cost", "2.3 calls · about $0.002", "per question; the price is an assumption"),
+        ("Enrichment", "19 items per minute", "71 % sorted by rules, 16 % by the model"),
     ]
-    top = ty + bh + 0.15
+    top = ty + bh + 0.12
     cw = (W - 0.25) / 2
-    rh = (Y1 - top - 2 * 0.12) / 3
-    for i, (name, how) in enumerate(metrics):
+    rh = (Y1 - top - 2 * 0.1) / 3
+    for i, (name, value, how) in enumerate(metrics):
         col, row = i // 3, i % 3
         x = X0 + col * (cw + 0.25)
-        y = top + row * (rh + 0.12)
+        y = top + row * (rh + 0.1)
         panel(s, x, y, cw, rh)
-        box(s, x, y + 0.12, 0.08, rh - 0.24, fill=PRIMARY.main)
-        text(s, x + 0.2, y, cw - 2.75, rh, [P(B(name), size=20, space_after=1), P(how, size=18, color=GREY,
-                                                                                    space_after=0)],
-             anchor=MSO_ANCHOR.MIDDLE, margin=0.06)
-        chip(s, x + cw - 2.5, y + (rh - 0.46) / 2, 2.35, 0.46, "to be measured", STORE, solid=False)
-    notes(s, "~40 s. The template asks for results versus expectations, reasons for any deviation, and a comparison "
-             "with other methods. Nothing here is a result yet: replace every 'to be measured' with a value from the "
-             "26-27 Oct runs. Recall@5 and MRR on a fixed question set; keyword-only vs meaning-only vs hybrid; the "
-             "previous embedding model vs the new one; median and 95th-percentile time per question; model calls and "
-             "cost per question; enrichment speed and how many items each classification stage resolves. Do not "
-             "present estimates as results.")
+        box(s, x, y + 0.1, 0.08, rh - 0.2, fill=PRIMARY.main)
+        text(s, x + 0.2, y, cw - 0.3, rh, [P(B(name), size=19, color=GREY, space_after=0),
+                                           P(B(value), size=21, color=PRIMARY.dark, space_after=0),
+                                           P(how, size=18, color=GREY, space_after=0)],
+             anchor=MSO_ANCHOR.MIDDLE, margin=0.04)
+    notes(s, "~60 s. Everything here was measured on 26 Oct on the test account (docs/review/eval/RESULTS_2026-10-26.md). "
+             "Questions and gold items were written by the team's assistant and are still to be checked by the owner; "
+             "say 'first test set' if asked. Retrieval, 38 questions, 81 gold items: keyword only Recall@10 0.70, "
+             "meaning only 0.96, rank fusion 0.96 (the keyword branch changed no top-10), full pipeline 0.93, MRR 0.99 "
+             "for meaning only against 0.90 for the full pipeline. Cause found in q28 and q30: the cross-encoder scores "
+             "are close to 0 for every candidate on these short questions, so the effort score decides the order. "
+             "Answers contained the right fact in 11 of 11 questions that have one. Time: median 8.1 s, 95th percentile "
+             "23.8 s over 44 turns, on a laptop with about 1 GB free RAM, so likely pessimistic. Model calls 2.34 per "
+             "turn (33 turns used 2, none needed all 5 searches). Cost: about $0.0021 per turn at an ASSUMED $0.20 and "
+             "$1.20 per million input and output tokens (copied from an older model comment; gpt-6-luna's price is not "
+             "checked). Embedding model: the 37/39 against 31/39 is from the model-choice test of 21 Oct "
+             "(Echo_System_Design.md A40), a different 39-question set, not repeated on tonight's 38. Enrichment: 3.1 s "
+             "per item, 19.3 items per minute including PDF text extraction; stages over all 119 items: structural 84, "
+             "model 19, centroid 11, domain 5. Capture: 13 clean scripted sessions, all agree (Chrome 8 of 8, YouTube "
+             "5 of 5), run with a synthetic user in one tab. Privacy: the largest request was 38,469 characters; no "
+             "item text beyond the cap appeared (a probe over only 2 long items). Thresholds measured: KNN bar 0.65 "
+             "-> 0.85, seed lead 0.08 -> 0.05, search quality gate 0.55 kept.")
 
 
 def slide_timeline(deck: Deck) -> None:
@@ -1205,7 +1224,7 @@ def slide_timeline(deck: Deck) -> None:
         ("Sep 2026", "Wellbeing and dashboard restored; Review 2", "Completed"),
         ("1 – 21 Oct", "File-by-file review; all design decisions closed", "Completed"),
         ("22 – 25 Oct", "Final build and freeze on 25 Oct", "Completed"),
-        ("26 – 27 Oct", "End-to-end run and rehearsal", "Completed"),
+        ("26 – 27 Oct", "Evaluation, tests and thresholds measured; rehearsal", "Completed"),
         ("Wed 28 Oct", "Review 3", "Review"),
     ]
     y = Y0 + 0.03
@@ -1236,7 +1255,7 @@ def slide_conclusion(deck: Deck) -> None:
         ("One private memory", "Gmail, Chrome and YouTube on your laptop, sorted into five groups"),
         ("Ask, don't search", "Merged, re-ranked search; answers cite the original items"),
         ("Reflect without judging", "Time, sessions, your own regrets; groups change only with your yes"),
-        ("Privacy by design", "Sensitive pages and typed text never captured; the model never gets full emails"),
+        ("Privacy by design", "Sensitive pages and typed text never captured; the model never gets database rows"),
     ]
     gap = 0.1
     h = (Y1 - Y0 - 0.03 - 3 * gap) / 4

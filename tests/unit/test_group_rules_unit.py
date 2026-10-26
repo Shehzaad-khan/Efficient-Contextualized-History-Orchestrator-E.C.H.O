@@ -77,7 +77,7 @@ def test_time_window_parsing():
 
 
 def test_thresholds_match_the_documented_values():
-    """Shows: the bars named in CLAUDE.md (5 confirmed members, KNN bar 0.65) are the ones in the code."""
+    """Shows: the bars named in CLAUDE.md (5 confirmed members, KNN bar 0.85) are the ones in the code."""
     assert gm.MIN_CONFIRMED_FOR_KNN == 5
-    assert gm.KNN_ONLY_THRESHOLD == 0.65
+    assert gm.KNN_ONLY_THRESHOLD == 0.85
     assert gm.RULE_WEIGHT + gm.KNN_WEIGHT == 1.0

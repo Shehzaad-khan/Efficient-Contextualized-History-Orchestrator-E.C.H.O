@@ -50,7 +50,7 @@ Unit tests for Gmail body parsing, hidden-text removal, attachments and headers 
 Unit tests for group rule matching and the hybrid score (pure functions, no database).
 
 - `test_rule_matches` — Shows: each of the five rule types matches the way the design says (substring, host, exact, address, window).
-- `test_thresholds_match_the_documented_values` — Shows: the bars named in CLAUDE.md (5 confirmed members, KNN bar 0.65) are the ones in the code.
+- `test_thresholds_match_the_documented_values` — Shows: the bars named in CLAUDE.md (5 confirmed members, KNN bar 0.85) are the ones in the code.
 
 ### `tests/unit/test_retrieval_logic.py` — 31 tests
 Unit tests for the deterministic retrieval steps: RRF fusion, quality check, widening, routing, effort score.
