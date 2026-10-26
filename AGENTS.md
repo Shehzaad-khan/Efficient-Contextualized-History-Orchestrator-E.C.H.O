@@ -5,6 +5,8 @@ Instructions for any AI agent (Antigravity, Cursor, Claude Code, etc.) working o
 
 ---
 
+**Current plan (read first):** `docs/review/plan_2026-10-26_to_28.md` is the owner's plan up to the review on Wed 28 Oct 2026. Follow it and tick its boxes.
+
 ## 1. What This Project Is
 
 **E.C.H.O (Efficient Contextualized History Orchestrator)** is a local-first, single-user personal memory system. It captures Gmail, Chrome, and YouTube activity through strict intent gates, enriches content in the background, and answers natural-language multi-turn queries through a LangGraph retrieval graph whose search is deterministic Python, with **usually 2 LLM calls per query, at most 6** (A26). A digital wellbeing module reflects time patterns without judging.
@@ -46,7 +48,7 @@ Instructions for any AI agent (Antigravity, Cursor, Claude Code, etc.) working o
    - Luna calls a `search_memories` tool for up to 5 rounds; after round 5 the next call must answer. The cap is enforced in code, never only in the prompt.
    - The search itself (FTS + FAISS, RRF, cross-encoder, neighbourhood) is deterministic Python.
 6. **Privacy boundaries:**
-   - The LLM receives only query text, short snippets, and aggregated numbers — never raw email/page bodies, full transcripts, or full database rows.
+   - The LLM receives only query text, bounded text excerpts, and aggregated numbers (owner's decision 2026-10-26, A23/A24: first 8,000 chars of each of the top 3 results, 2,000 of the others, up to 40,000 chars per attachment) — never database rows or the whole store.
    - Incognito browsing, typed text, and app-page content (Slack/Notion/Jira) are never captured.
    - Wellbeing language must remain descriptive, observational, and non-judgmental (no scores, no "wasted time" phrasing).
 7. **Preserve existing structure and naming:**
@@ -84,7 +86,7 @@ Every feature in the architecture doc is implemented and wired:
 `rsr/` — the orphaned duplicate of `rse/` — was **deleted on 2026-08-31**. It was mounted nowhere and its internal imports (`retrival.*`) had always been broken, so `import rsr` never succeeded. `rse/` is and always was the live retrieval engine. Its only non-duplicate content was a retrieval-quality evaluation harness; recover it from history if needed: `git checkout 16bde99 -- rsr/quality_evaluator.py rsr/query_quality_eval_set.py` (its `_calculate_diversity` metric measures a prohibited feature — drop that part).
 
 ### Known Open Items
-- **OCR for image attachments is optional:** `pytesseract` is commented in `requirements.txt` (requires the Tesseract system binary).
+- **OCR for images and scanned PDFs is built** (`pytesseract` in `requirements.txt`) but needs the Tesseract system binary; without it OCR stays off.
 - **Scheduling:** Weekly auto-assign is manual / OS-scheduler; monthly centroid recomputation runs at ENP startup when its file is missing or older than 30 days. There is no in-app cron.
 - **Frontend settings toggle:** "Memory indexing" in Settings is localStorage-only (ENP worker has no runtime switch); the three capture toggles ARE backend-wired.
 

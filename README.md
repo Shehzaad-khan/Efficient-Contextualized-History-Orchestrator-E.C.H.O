@@ -26,7 +26,7 @@ Echo finds the interview email, resolves its timestamp as a hard time anchor, re
 | **Conversational Memory** | Multi-turn sessions — *"find Chrome pages about that topic after that email"* resolves references from earlier turns |
 | **Intent Filtering** | Only saves content you genuinely engaged with — a 3-second misclick is discarded, a 2-minute read is kept |
 | **On-Demand Attachments** | Email PDFs/DOCX extracted in full only when a search needs them; binaries never stored |
-| **Local-First Privacy** | All personal data stays in PostgreSQL on your laptop. The LLM sees only your query and short snippets. |
+| **Local-First Privacy** | All personal data stays in PostgreSQL on your laptop. The LLM sees only your query and bounded text excerpts of the top results. |
 
 ---
 
@@ -116,5 +116,5 @@ The frontend runs without the backend too — it flips into a clearly-badged **d
 
 - All personal data lives on your laptop — never permanently in the cloud
 - Incognito is never tracked; typed text is never captured; app content (Slack, Notion, Jira) is never read
-- The LLM API receives only your query and short result snippets — never raw bodies, transcripts, or the database
+- The LLM API receives only your query and bounded text excerpts of the top results (up to 8,000 characters each for the best 3, 2,000 for the rest) and attachment text (up to 40,000 characters per file) — never the database or your whole store
 - Built-in controls: per-source capture toggles, domain/sender exclusions, soft deletion, full JSON/CSV export

@@ -43,6 +43,7 @@ from rse.config import (
     FAISS_TOP_K_PER_VARIANT,
     FULL_SCAN_K_MULTIPLIER,
     PG_KEYWORD_LIMIT,
+    SYNTHESIS_EXCERPT_CHARS_TOP,
 )
 from rse.state import EchoState, ParsedIntent
 
@@ -53,16 +54,18 @@ _ALL_SOURCES: tuple[str, ...] = ("gmail", "chrome", "youtube")
 
 # ── Shared SQL fragments ──────────────────────────────────────────────────────
 
-# raw_snippet is a plain leading excerpt used by the cross-encoder and the
-# synthesizer. Full raw_text never leaves PostgreSQL through this module.
-RESULT_COLUMNS = """
+# raw_snippet is a plain leading excerpt used by the cross-encoder (which clips it
+# to RERANK_DOC_CHAR_LIMIT) and the synthesizer (A24: the long excerpt of the top
+# results). It is cut in SQL at the longest length either needs, so the rest of
+# raw_text never leaves PostgreSQL through this module.
+RESULT_COLUMNS = f"""
     m.memory_id,
     m.source_type,
     m.title,
     m.created_at,
     m.auto_keywords,
     m.system_group_id,
-    LEFT(COALESCE(m.raw_text, ''), 1000) AS raw_snippet,
+    LEFT(COALESCE(m.raw_text, ''), {SYNTHESIS_EXCERPT_CHARS_TOP}) AS raw_snippet,
     me.dwell_time_seconds,
     me.watch_time_seconds,
     me.last_accessed_at,

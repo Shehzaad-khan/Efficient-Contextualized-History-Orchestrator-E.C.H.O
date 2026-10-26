@@ -9,11 +9,11 @@ Working file — committed to the repo from 2026-10-22 so Claude web can read it
 3. Section B needs a backup before any statement runs: a Neon snapshot or branch for Neon (B1–B3, done), a `pg_dump -Fc` of `echo_db` into `C:\Users\mdshe\echo_backups\` for the local database (B5).
 4. Section D is built after the whole review is finished.
 
-**Audit snapshot — 2026-10-25 (top-level IDs; supersedes the 2026-10-24 one):** 85 entries = **81 complete/resolved + 4 not fully complete**. Counting rule: A1–A45 are owner-decision entries, counted complete when the decision is recorded; their implementation follow-ups are audited separately below. B4 is informational/no action. Breakdown: A 45/45 decisions recorded; B 5/5 resolved (B5 ran 2026-10-25); C 29/29 resolved; D 2 complete (D1, D4), D2 partial (old `.doc` + the A4 merge left), D3 open, D5 partial (UI toggle left); E1 partial (decision made, implementation absent). E2 (import personal history + export button) was removed from scope on 2026-10-25: the presentation uses the test account only. The four not-fully-complete top-level IDs are D2, D3, D5, E1 (1 open, 3 partial). This top-level count is not a claim that all decided features are implemented. The 2026-10-25 build work (A27, A28, A37, OCR, review fixes) is in the working tree, not committed.
+**Audit snapshot — 2026-10-26 (top-level IDs; supersedes the 2026-10-25 one):** 86 entries = **84 complete/resolved + 2 not fully complete**. Counting rule: A1–A45 are owner-decision entries, counted complete when the decision is recorded; their implementation follow-ups are audited separately below. B4 is informational/no action. Breakdown: A 45/45 decisions recorded; B 5/5 resolved (B5 ran 2026-10-25); C 29/29 resolved; D 5 complete (D1, D2, D3, D4, D5; D3 and D5 built 2026-10-25, D2 closed 2026-10-26 with old `.doc` dropped), D6 open; E1 partial (decision made, implementation absent). E2 (import personal history + export button) was removed from scope on 2026-10-25: the presentation uses the test account only. The two not-fully-complete top-level IDs are D6 (four frontend gaps, found 2026-10-26, nothing built) and E1 (partial: decision made, implementation absent). D6 was added 2026-10-26, so the total went from 85 to 86. This top-level count is not a claim that all decided features are implemented. The 2026-10-25 build work (A16/A40 + B5, A27, A28, A37, OCR, D3, D5, A42, A18 part 1, review fixes) is committed and merged to `main` (PRs #12, #13, #14); the two branches were checked after the PR #14 merge and nothing was lost.
 
 **Decision 2026-10-25 (his): the presentation runs on the TEST ACCOUNT only.** There is no time to move to his personal account. So E2 (import personal history + export button) is out of scope, and the Mon 26 / Tue 27 Oct retest and the threshold recompute (A18, A40) use the test account's data.
 
-**Implementation follow-ups inside decided A entries (not additional top-level IDs):** 6 decision IDs still have an implementation step open or partial: 2 have build work remaining (A18 richer seeds and A40 threshold recompute, both deferred to Mon 26 / Tue 27 Oct); 4 are decided but their build waits on a talk with him (A23 and A24 query-matched passages, A26 tool loop, A42 auto-accept). **`AGENTS.md` hard constraints 3, 4 and 5 are STALE (his word, 2026-10-25): the recorded decisions win, so those four items are no longer blocked by it; they are only waiting for the talk.** A16 closed with B5; A37 closed; A17 closed by his decision (no further build); A28 closed as it is (progress lines only) on 2026-10-25. Their status is checked after A45 below.
+**Implementation follow-ups inside decided A entries (not additional top-level IDs):** 4 decision IDs still have an implementation step open or partial. Three wait on the Mon 26 / Tue 27 Oct retest on the test account's live data: A18 part 2 (seed-centroid threshold), A40 (threshold retune) and A42 (the KNN bar is built, its value must be re-measured). One is decided but not built: A26 (tool loop; build waits on a talk with him). `AGENTS.md` was brought in line with `CLAUDE.md` on 2026-10-25, so none of them is blocked by it. A16 closed with B5; A17 closed by his decision (no further build); A23 and A24 closed 2026-10-26 in a simplified form (leading text, bigger fixed caps, no passage selection); A27 complete (past-chats screen built, touch "peek" dropped); A28 closed as it is (progress lines only); A37 closed; A42's build is done (only the bar value is open). Their status is checked after A45 below.
 
 Original inventory: 45 decisions · 5 live-DB entries · 29 cross-file fixes · 5 build items · 2 later items = **86, minus E2 (removed 2026-10-25) = 85**. C29 (delete pending-answers file) was added 2026-10-22; A44 retry + A45 fresh Gmail poll were added 2026-10-21 as stretch (A45 closed with no build on 2026-10-24); A42 auto-accept + A43 user-group nesting, A41 Gmail open tracking, A40 model choice, E2 personal-data import, and A37–A39 (retention, spam, timings) were added 2026-10-21; A5/A6 were added 2026-10-15; A7–A24 were added 2026-10-17; A25–A28 were added 2026-10-18; E1 MCP was added 2026-10-18.
 
@@ -557,7 +557,7 @@ Still open — decide each:
      0.25 / 0.08). A category with recomputed centroids (A36) goes back to the doc's 0.55 / 0.08. Thursday, after
      the restore (~30 min, local DB read under the standing permission).
 - **Build status 2026-10-25 — part 1 DONE, part 2 STILL TO DO (needs the local DB; run it in the local session):**
-  - **Part 1 built (cloud session, working tree, not committed):** `SEED_TEXTS` in `enp/system_group_classifier.py` is now
+  - **Part 1 built (cloud session, commit dbaebee):** `SEED_TEXTS` in `enp/system_group_classifier.py` is now
     8 example sentences per category (was one 7–9-word bag), and `initialize_centroids` embeds each sentence and takes
     the mean as the seed centroid. Not run or measured: the cloud session has no PostgreSQL and no embedding model.
   - **Part 2 NOT built — the seed-specific Stage-3 threshold. To do in the local session:**
@@ -706,7 +706,7 @@ Still open — decide each:
     Content-Disposition inline, parts with a Content-ID unless the disposition is `attachment`, and images with a known
     size under 10 KB (`_MIN_ATTACHMENT_IMAGE_BYTES`); an unknown size (0) is kept. A PDF or DOCX under 10 KB stays.
   - Part 1 (types): XLSX, PPTX and EML built in the cloud session (D2, standard library instead of openpyxl/python-pptx).
-    RTF/ODF were built by mistake and removed. OCR for images and scanned PDFs is still open (Tesseract + pytesseract).
+    RTF/ODF were built by mistake and removed. OCR for images and scanned PDFs was built later, 2026-10-25 (see D2).
   - Part 3 (same filename: filename + size) BUILT 2026-10-24 (cloud session): `_download_attachment_data(service, email_id,
     filename, size)` keeps the same-named parts whose Gmail body size equals the stored `file_size` and takes the first of
     those; size 0 (unknown) or no size match falls back to the first same-named part. Both callers (`extract_full_text`,
@@ -715,7 +715,7 @@ Still open — decide each:
     message (three same-named PDFs: nested, attachmentId, inline data). NOT checked against the real Gmail API: that
     `body.size` equals the byte size stored at ingestion (it should; both come from the same field).
 
-### A23. Attachment text is sent to the LLM — the doc says it never is — [x] decided 2026-10-21
+### A23. Attachment text is sent to the LLM — the doc says it never is — [x] decided 2026-10-21; [x] closed 2026-10-26 (simplified: leading text, 40,000 / 80,000 chars)
 - Doc line 702: "The LLM API never receives: raw email bodies, full page content, video transcripts, **attachment
   text**, …". But doc §8.3 / §11 put attachment content into the synthesizer's context, and the code sends up to
   6,000 chars per attachment, 12,000 total, to the synthesis LLM (`MAX_CHARS_*` in enp/attachment_processor.py).
@@ -731,8 +731,19 @@ Still open — decide each:
   drop that prohibition completely (CLAUDE.md line removed 2026-10-21; MMR and recency boosting stay prohibited).
   At build time also fix the `rse/llm_synthesizer.py:29` docstring ("no semantic filtering or compression ... by
   design") and any paper/deck line that says compression is excluded.
+- **Simplified and closed 2026-10-26 (his decision, after the Sun 25 Oct freeze: "cut the difficult part"):** the passage selection
+  is NOT built. The query-matched top-3 passages are replaced by the leading text of each attachment, with larger fixed caps:
+  `MAX_CHARS_PER_ATTACHMENT` 6,000 -> **40,000** and `MAX_CHARS_TOTAL` 12,000 -> **80,000** (`enp/attachment_processor.py`; the
+  Redis cache stores the same longer text). Why these numbers: web research 2026-10-26 (AWS Bedrock model card, llm-stats, UF
+  NaviGator docs) gives gpt-6-luna a 1,050,000-token window, 922K max input, 128K max output, and a double price rate above 272K
+  input tokens ($0.10 per million input tokens). So nothing here comes near a limit; the caps are about answer quality and cost.
+  40,000 chars is ~10k tokens (about 12-15 pages), 80,000 total ~20k tokens: enough for most real PDFs and DOCX, and one 300-page
+  file cannot flood the prompt. No long-context accuracy test for Luna exists in public sources (checked), so the sizes follow the
+  general finding that models answer best from a few thousand relevant tokens, not from everything. Privacy: attachment text
+  already reached the LLM (exception recorded under A23 option 1); only the size grew. CLAUDE.md constraint 6, `AGENTS.md`, README
+  and the design doc now say "bounded text excerpts". **Not tested against a real long attachment and the live LLM yet.**
 
-### A24. How much text we take, and from WHERE (top only vs top + middle + end) — [x] decided 2026-10-21
+### A24. How much text we take, and from WHERE (top only vs top + middle + end) — [x] decided 2026-10-21; [x] A24.2 closed 2026-10-26 (simplified: leading excerpts, 8,000 / 2,000 chars)
 - **Today every cut takes the TOP only.** Checked in code 2026-10-17:
   | Where | Text | Cap (chars) |
   |---|---|---|
@@ -765,12 +776,22 @@ Still open — decide each:
 - **Decision (his, 2026-10-21), part by part:**
   1. **Embedding: keep top-only; raise the Chrome snippet 500 -> 800 chars** (same as Gmail; fits MiniLM's
      window). Chunking (several vectors per item) = paper future work.
-  2. **Result snippets to the LLM: the best-matching 500 chars of the CLEANED text** (quotes removed — signatures
+  2. **(Simplified 2026-10-26, see the closing note below.) Result snippets to the LLM: the best-matching 500 chars of the CLEANED text** (quotes removed — signatures
      stay since A12 — with ENP's cleaner, then the 500-char window that best matches the query; same method as A23). Replaces the
      raw first 500 chars in `rse/llm_synthesizer.py:189`. ~1 h.
   3. **Keyword search over the FULL text, with a stored index:** add a stored `tsvector` column + GIN index (schema
      open, A31.3) built at write time; drop the 5,000-char cap in `rse/search_coordinator.py` `_FTS_DOCUMENT`
      (line ~107). setup_db.py + ALTER on the dump. ~1 h. He wants a low-level walk-through of GIN at build time.
+
+- **A24.2 simplified and closed 2026-10-26 (his decision, same reason as A23):** no cleaned-text windows, no query matching. Each
+  result gets the leading text of `raw_text`: **8,000 chars for the 3 best results, 2,000 for the other 7**
+  (`rse/config.py`: `SYNTHESIS_EXCERPT_CHARS_TOP`, `SYNTHESIS_EXCERPT_CHARS_REST`, `SYNTHESIS_FULL_EXCERPT_RESULTS`; replaces
+  `SNIPPET_CHAR_LIMIT = 500`). `RESULT_COLUMNS` in `rse/search_coordinator.py` now cuts `raw_snippet` at 8,000 in SQL (was 1,000); the
+  cross-encoder still clips it to `RERANK_DOC_CHAR_LIMIT` (512), so ranking is unchanged. Worst case for ten results ~38,000 chars,
+  ~10k tokens. Top results get more because the answer is usually there and the lower ones are mostly noise. A24.1 (embedding)
+  and A24.3 (full-text keyword search) are unchanged and were already built. Checked offline: rank 1-3 blocks 8,063 chars, rank 4-10
+  2,063 (stubbed database and LLM); NOT run against the live backend yet. Known small leftover: raw Gmail text still carries quoted
+  replies (the cleaned-text part of the decision is dropped with the windows).
 
 ### A25. LLM = GPT-5.6 Luna on the Responses API, via LangChain — [x] DECIDED 2026-10-18 (build in Step 2)
 - **Rule ("plug-in for all, specialised for OpenAI"):** every LLM call stays behind LangChain, so any provider key
@@ -886,7 +907,7 @@ Still open — decide each:
   fields added in `rse/state.py`. Prompt/pill times are local (created_at is UTC). Done too: `retrieval_engine.py`
   defaults + return of the two new fields, `no_results_found` node shape (graph_nodes.py). Left: backend
   `QueryResponse.answer_sources` / `answer_markdown`, and the frontend pill UI + moment strip (Step 2).
-- **Backend half built 2026-10-25 (working tree, not committed):** `QueryResponse` in `backend/retrieval.py` now
+- **Backend half built 2026-10-25 (committed):** `QueryResponse` in `backend/retrieval.py` now
   returns `answer_markdown` and `answer_sources` (types in `frontend/src/lib/types.ts`: `AnswerSource`,
   `SessionSummary`). New `GET /retrieval/sessions?limit=50` -> `[{session_id, title, last_active, turns}]` from
   `message_store` (title = first question cut at 60 chars; limit 1-200, 422 outside). Checked on the real DB through
@@ -897,7 +918,7 @@ Still open — decide each:
   note is done. **Settled 2026-10-25 (his decision): `/retrieval/sessions` no longer needs `X-API-Key`** (the frontend must not ship a key in
   the browser bundle). Only this route was opened: `GET /retrieval/session/{id}` (the messages) and `DELETE` stay locked.
   Checked through FastAPI's TestClient on the real DB: list without a key 200 (5 chats), `limit=0` 422, detail and delete
-  without a key 401, detail with a wrong key 401. **Past-chats screen built 2026-10-25 (his go; working tree, not committed).** His wish was to open `GET /retrieval/session/{id}`; instead a new
+  without a key 401, detail with a wrong key 401. **Past-chats screen built 2026-10-25 (his go; commit 9472a09, merged in PR #13).** His wish was to open `GET /retrieval/session/{id}`; instead a new
   open route `GET /retrieval/sessions/{id}` returns clean `{role, text}` messages (404 when the chat has no messages, 400 on a bad id),
   and the diagnostic `/session/{id}` and `DELETE` stay locked. `frontend/src/components/PastChats.tsx`: a "Past chats" button next to
   "New chat" opens a panel (newest first, title, time, question count, "open now" mark; Escape or an outside click closes it; loaded on
@@ -914,7 +935,7 @@ Still open — decide each:
   `rse/llm_synthesizer.py` now removes broken markers (`_BROKEN_MARKER_RE`); checked on 6 strings (garbled, cut-off, `[2]` form,
   out-of-range, none, lone `⟦`).
   **Also 2026-10-25 (his decision): laptop only, so the touch "first tap = peek, second tap = open" is dropped.**
-- **Pills, moment strip and New chat built 2026-10-25 (working tree, not committed):** `frontend/src/components/AnswerBody.tsx`
+- **Pills, moment strip and New chat built 2026-10-25 (committed):** `frontend/src/components/AnswerBody.tsx`
   draws `answer_markdown` as chat text (paragraphs, bullet / numbered lists, **bold**; built as React elements, no HTML
   injection) with a pill for each ⟦n⟧: source icon (Mail / Globe / Play), the anchor (sender, site, channel) and the date;
   a click opens the original in a new tab; hover or keyboard focus shows a peek card (source, title, exact date and time);
@@ -936,7 +957,7 @@ Still open — decide each:
   then stream the reply text itself into the chat bubble (A27). Backend: a streaming variant of `/query`
   (LangGraph `stream` events); frontend: a step indicator above the typing bubble. Keep the plain POST as
   fallback.
-- **Built 2026-10-25 (working tree, not committed): the progress lines.** `rse/retrieval_engine.py` `run_query_stream`
+- **Built 2026-10-25 (committed): the progress lines.** `rse/retrieval_engine.py` `run_query_stream`
   (shares its setup and finish code with `run_query`; uses `graph.stream(stream_mode="updates")`), route
   `POST /retrieval/query/stream` in `backend/retrieval.py` (server-sent events: `session`, then one `step` per finished
   graph node with a fixed label and an optional count, then `done` with the same body as `/query`, or `error`); the plain
@@ -1246,7 +1267,7 @@ Still open — decide each:
   FAISS vectors (`remove` by memory_id), Redis keys. ~2 h. Panel answer: "user-controlled; default forever because
   recalling old things is the product". Storage estimate (assumption, not measured): ~100 items/day ≈ 180 MB/yr
   text + ~55 MB/yr vectors.
-- **Built 2026-10-25 (working tree, not committed):** `ste/retention.py` (`purge_expired_items`), run once at startup
+- **Built 2026-10-25 (commit b354647):** `ste/retention.py` (`purge_expired_items`), run once at startup
   by `backend/main.py` (`_run_retention`, never raises); setting `retention` = `forever` | `1y` | `6m` in
   `ste/settings_store.py` (an unknown value counts as `forever`) and `POST /settings` (`backend/items.py`, other
   values give 422); `FAISSManager.remove_many` (new); Settings page picker (`SettingsPage.tsx`, `api.ts`).
@@ -1618,21 +1639,21 @@ Still open — decide each:
 - **Decision updated 2026-10-24:** drop the `fresh` option. The existing 30-second poll delay is acceptable; this
   is a rare scenario and does not justify a separate query-time path. No implementation or paper change is needed.
 
-### Build-status cross-check for decided A entries — 2026-10-24
+### Build-status cross-check for decided A entries — 2026-10-24 (rows updated 2026-10-26)
 
-The `[x] decided` marks above mean the owner's decision is recorded. They do not mean the feature was built. Static review of the current workspace found these 11 decision IDs still have implementation work (A7's prior open row was stale; A7.1–A7.4 are built as recorded above):
+The `[x] decided` marks above mean the owner's decision is recorded. They do not mean the feature was built. Static review of the current workspace found 11 decision IDs with implementation work (A7's prior open row was stale; A7.1–A7.4 are built as recorded above). Rows were refreshed on 2026-10-26: the ones still open are A18 (part 2), A26, A40 and A42 (bar value only); the rest are closed:
 
 | ID | Current implementation check |
 |----|-------------------------------|
 | A16 | **Built and applied by B5 2026-10-25 (commit c719cdc):** `embedding_generator.fit_to_window` + `topic_extractor` ordered `TextPart`s (see the A16 entry). Closed once B5 has re-embedded with it. |
-| A17 | The 29 hand-added domains are present, but the decided review of the real top 50–100 Stage-4 domains in the restored local data remains open. |
-| A18 | **Part 1 built 2026-10-25 (working tree, not committed):** `SEED_TEXTS` are now 8 example sentences per category, averaged in `initialize_centroids`. **Part 2 still open:** the seed-specific Stage-3 threshold must be measured on the local `echo_db` (lowest score/lead with zero wrong) and wired into `stage3_centroid`; `CENTROID_MIN_SCORE` is still 0.55 for seeds. Steps are in the A18 entry. |
-| A23 | Tier-2 attachment content still starts at the beginning of extracted text; query-matched top passages are not selected. Not blocked any more: the `AGENTS.md` compression ban was removed 2026-10-25 (the owner lifted it on 2026-10-21). |
-| A24 | A24.3 full-text keyword indexing is built, but A24.2 query-matched cleaned-text windows are absent; the synthesizer still uses the leading snippet. Not blocked any more (see A23). |
+| A17 | **Closed 2026-10-25 (his decision):** the 29 hand-added domains stay; the review of real top domains is dropped (the test account has hardly any browsing). |
+| A18 | **Part 1 built 2026-10-25 (commit dbaebee):** `SEED_TEXTS` are now 8 example sentences per category, averaged in `initialize_centroids`. **Part 2 still open:** the seed-specific Stage-3 threshold must be measured on the local `echo_db` (lowest score/lead with zero wrong) and wired into `stage3_centroid`; `CENTROID_MIN_SCORE` is still 0.55 for seeds. Steps are in the A18 entry. |
+| A23 | **Closed 2026-10-26 (simplified by his decision):** no passage selection; leading attachment text, 40,000 chars per file and 80,000 total. See the A23 entry. |
+| A24 | **Closed 2026-10-26 (simplified by his decision):** A24.3 full-text indexing was already built; A24.2 became leading excerpts, 8,000 chars for the top 3 results and 2,000 for the rest. See the A24 entry. |
 | A26 | The agent/tool loop is not wired; `rse/README.md` still lists it under “Not yet wired.” Not blocked any more: `AGENTS.md` constraint 5 now reads "usually 2, max 6" (2026-10-25). |
-| A27 | **Backend, pills, moment strip and New chat built 2026-10-25 (working tree, not committed)**; see the A27 entry. Still open: the past-chats list / resume UI (waits on the key question in the A27 entry) and the touch "first tap = peek" behaviour. |
-| A28 | **Built 2026-10-25 (working tree, not committed):** see the A28 entry. The progress lines are built; streaming the reply text itself is not (see the entry). |
-| A37 | **Built 2026-10-25 (working tree, not committed):** see the A37 entry. Closed. |
+| A27 | **Built 2026-10-25, complete:** backend (`answer_markdown` / `answer_sources`), memory pills, moment strip, New chat, and the past-chats screen (`PastChats.tsx`, `GET /retrieval/sessions`, `GET /retrieval/sessions/{id}`). His decisions 2026-10-25: laptop only, so the touch "first tap = peek" is dropped; `GET /retrieval/sessions` needs no `X-API-Key`. See the A27 entry. |
+| A28 | **Built 2026-10-25 and closed as it is (his decision):** the progress lines are built (`run_query_stream`); streaming the reply text word by word is not built and is future work. See the A28 entry. |
+| A37 | **Built 2026-10-25 (commit b354647):** see the A37 entry. Closed. |
 | A40 | **Model switch built 2026-10-25 (commit c719cdc):** arctic-xs, query/document paths, `EMBEDDING_VERSION = "snowflake-arctic-embed-xs-v1"`, refuse-to-load on a version mismatch. Still open: the threshold retune (Stage 9, needs an evaluation question set) and B5.  **2026-10-25 his choice C (no question set yet): the design's start values were set, not measured:** `MIN_TOP_SIMILARITY` 0.35 -> 0.55 (`rse/config.py`), `KNN_ONLY_THRESHOLD` 0.60 -> 0.65 (`wba/group_manager.py`); recomputed-centroid 0.55 / 0.08 left as designed; the seed-centroid threshold needs A18, not built. Sanity check on the real index (105 title questions, 10 made-up unrelated ones): right answers scored 0.641-0.84 (median 0.777), unrelated up to 0.607 (median 0.518); 0.35 blocked 0 of 10 unrelated, 0.55 blocked 8 of 10. The sample suggests ~0.62 would separate it, but it is small and the right-answer questions are title-based (optimistic): measure on a real question set (Stage 9). **Deferred by him 2026-10-25: the recompute of these values (Stage 9 measuring, and the A18 seed threshold) waits until after Sun 25 Oct. He retests everything on live data Mon 26 + Tue 27 Oct, and the values are recomputed from that data before the demo. Until then the option C start values stay. Open item.** |
 | A42 | **Built 2026-10-25:** the confident path, accepted-only KNN examples and readiness count, and the review label are in. **Still open:** the KNN bar `KNN_ONLY_THRESHOLD` (0.65) is a start value and must be re-measured on the local data (shared with A32); see the A42 entry. |
 
@@ -1940,10 +1961,10 @@ The `[x] decided` marks above mean the owner's decision is recorded. They do not
 ### D1. Dispose the DB pool on shutdown — [x] 2026-10-22 (`postgresql_manager.dispose_engine()`, called in the `backend/main.py` lifespan after ENP stops; idempotent, engine is re-created on next use; the RSE psycopg2 pool in `rse/search_coordinator.py` is NOT closed — not part of this item)
 - Backend shutdown never calls `engine.dispose()`; pooled connections wait for Neon's idle timeout.
 
-### D2. Full attachment support — [~] 2026-10-25 OCR for images and scanned PDFs built; old `.doc` and the A4 merge still open
+### D2. Full attachment support — [x] 2026-10-26 complete (OCR built 2026-10-25, A4 merge found built, old `.doc` dropped by his decision)
 - **Works today:** PDF (pypdf → pdfplumber), DOCX (python-docx), `.txt` / `.md` / `.csv`.
 - **To build:**
-  - [x] OCR for images (PNG/JPG/…): **built and checked with the real program 2026-10-25 (working tree, not committed)**.
+  - [x] OCR for images (PNG/JPG/…): **built and checked with the real program 2026-10-25 (committed)**.
         `pytesseract==0.3.13` in `.venv` and `requirements.txt`; `_ocr_ready()` in `enp/attachment_processor.py` checks the
         Python package AND the Tesseract program once per process (finds it from `TESSERACT_CMD`, the PATH, the default
         Windows folders, then `~\tools\tesseract\tesseract.exe`). Tesseract 5.4.0 (UB-Mannheim build, English + osd) was
@@ -1959,7 +1980,7 @@ The `[x] decided` marks above mean the owner's decision is recorded. They do not
         60 s per page. 20 checks pass (17 with a stand-in OCR call: page order, A4 render size 1654 x 2339, the 10-page
         limit, the char cap, no readable text, an OCR crash, a 0-byte PDF, garbage bytes, a 0-byte JPEG, garbage as PNG,
         a text PDF still read by pypdf; plus the 3 real-program checks above).
-  - [ ] Old `.doc` files (python-docx cannot read them).
+  - [x] Old `.doc` files (python-docx cannot read them): **dropped 2026-10-26 by his decision, will not be handled.** The same goes for old `.xls` / `.ppt`.
   - [x] PPTX, XLSX, EML built 2026-10-24 (cloud session) in `enp/attachment_processor.py`; HTML was already there.
         (ODT/RTF were built first, then REMOVED the same day on his word: A22 says skip them. `.rtf` / `text/rtf` is now
         refused explicitly so it is not read as plain text.)
@@ -1967,9 +1988,14 @@ The `[x] decided` marks above mean the owner's decision is recorded. They do not
         `requirements.txt` does not change. Checked on generated files (slide order, notes, shared strings, inline
         strings, sheet names, EML plain vs HTML),
         on corrupt input (returns None) and on an oversized member (skipped). NOT checked on real Office files from
-        a real mailbox; do that locally. Still open: old `.doc`/`.xls`/`.ppt`, OCR, scanned PDFs.
-  - [ ] A4 decided 2026-10-21: extract at ingestion into `extracted_text`, merge into embedded text (shared
-        800-char budget) + full text into the tsvector, set `is_processed = TRUE`.
+        a real mailbox; do that locally. Open then: old `.doc`/`.xls`/`.ppt` (dropped 2026-10-26), OCR, scanned PDFs (OCR built 2026-10-25, see D2).
+  - [x] A4 decided 2026-10-21: extract at ingestion into `extracted_text`, merge into embedded text (shared
+        800-char budget) + full text into the tsvector, set `is_processed = TRUE`. **Found built on 2026-10-26 (the box was stale):**
+        `_load_attachment_texts` in `enp/enrichment_pipeline.py` reads `gmail_attachments.extracted_text` or extracts and stores it
+        (`extract_full_text`); `topic_extractor._attachment_parts` puts the attachment text after the body in the embedded text
+        (A16's 210-token pool split evenly replaced the 800-char budget); `_SEARCH_VECTOR_EXPRESSION` adds it to `search_vector`;
+        `mark_item_processed` sets `gmail_attachments.is_processed = TRUE`. Not checked on a real attachment with text: the 4 real
+        attachments are 0-byte JPEGs, so B5 re-embedded the mails without any attachment text.
 
 ### D4. Sessions are never built — [x] 2026-10-23 (found 2026-10-18, wba/wellbeing_analytics.py review)
 - **Built 2026-10-23:** `ensure_sessions_for_range` / `ensure_sessions_for_day` in `wba/wellbeing_analytics.py`. Today is rebuilt
@@ -2026,6 +2052,26 @@ The `[x] decided` marks above mean the owner's decision is recorded. They do not
   - The session length comes from stored sessions (dwell sums), not a live timer, so it can trail real time by a few minutes.
   - Checked in a browser with a mocked backend (card appears, snooze sends the call and closes it); NOT yet tried against the live
     backend and database with a real regret habit.
+
+### D6. Frontend gaps found after the build — [ ] open (found 2026-10-26; all four are frontend-only changes)
+Found while reviewing what the screens can actually do. Each one was checked on 2026-10-26: the backend route exists, and nothing in
+`frontend/src` calls it (also searched every remote branch for `addRule`, `assignToGroup`, `/assign` and `deleteSession`: no hits).
+- [ ] **D6.1 Old chats show plain text, no memory pills.** `save_turn` (`rse/conversation_memory.py`) stores only `final_answer` in
+  `message_store`, and `GET /retrieval/sessions/{id}` returns `{role, text}`, so `toChatMessages` in `frontend/src/pages/RecallPage.tsx`
+  rebuilds an old reply with `sources: []`. Bold text and lists still render (the text is markdown); only the pills and the moment strip
+  are missing. To fix: also save `answer_markdown` + `answer_sources` with the reply (the `message` column is JSONB, so no schema change)
+  and return them from `/sessions/{id}`. This one needs a small backend change as well as the frontend.
+- [ ] **D6.2 Deleting a chat from the Past chats panel.** The route `DELETE /retrieval/session/{id}` exists but needs `X-API-Key`, and
+  the key must not ship in the browser bundle (same reasoning as the A27 decision that opened `GET /retrieval/sessions`). So: open a
+  delete route the way `/sessions/{id}` was opened, then add the button and a confirm step to `PastChats.tsx` and a `deleteSession`
+  in `lib/api.ts`. Decide first whether to open the route (his call, it deletes data).
+- [ ] **D6.3 Adding a rule to a group.** `POST /wellbeing/groups/{id}/rules` exists (types keyword, domain, channel, sender,
+  time_window; 400 on a bad value) but no frontend code calls it. Add a form on the rules screen (`GroupRulesPage.tsx`) and an
+  `addRule` in `lib/api.ts` that does not fall back to demo data (same rule as `setRuleActive`). Also still not shown on that screen:
+  the step-9 rule suggestions (`GET /wellbeing/groups/{id}/rule-suggestions`).
+- [ ] **D6.4 Choosing items for a group by hand.** `POST /wellbeing/groups/{id}/assign` (`manual_assign`) and `GET .../items` exist; no
+  screen lets him pick items and put them in a group. Needs an item picker (recent items or search) and an `assignToGroup` in
+  `lib/api.ts`. This is a write path into `memory_user_groups` through `manual_assign`, which hard constraint 4 allows.
 
 ---
 

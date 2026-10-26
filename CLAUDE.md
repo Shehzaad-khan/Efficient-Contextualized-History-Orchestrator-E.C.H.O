@@ -21,6 +21,10 @@ When code and doc disagree, check §3 below first — some deviations are delibe
 approved. The owner has given standing permission (2026-10-22) to update the design document
 whenever a decision or change makes it wrong: edit it directly, no need to ask.
 
+**Current plan (read first):** `docs/review/plan_2026-10-26_to_28.md` is the owner's hour-by-hour plan up to the review on
+Wed 28 Oct 2026 (tool loop + MCP today, tests + CI/CD, results, research paper, manual testing, thresholds, D6). Follow it and
+tick its boxes as work is done.
+
 **The LLD is stale on purpose (owner, 2026-10-24):** `docs/Phase III/` (the Low Level Design
 `.docx` files and `build/lld/build_lld.py`) was a Phase 3 review requirement and the owner has no
 current need for it. Do NOT keep it up to date and do not list it as pending work. If an LLD is
@@ -64,8 +68,10 @@ ever wanted again, it will be recreated from `Echo_System_Design.md`, which is t
 5. **LLM calls per retrieval query: usually 2, max 6** (owner's decision A26, 2026-10-18:
    Luna calls a `search_memories` tool up to 5 rounds; after round 5 the next call must
    answer — cap enforced in code). The search itself is deterministic Python.
-6. **Privacy boundaries**: LLM receives only query text, short snippets, and aggregated
-   numbers. Never raw bodies/transcripts/full rows. Incognito, typed text, and app-page
+6. **Privacy boundaries**: LLM receives only query text, bounded text excerpts, and aggregated
+   numbers (owner's decision 2026-10-26, A23/A24: the first 8,000 chars of each of the top 3 results, 2,000 of the
+   others, up to 40,000 chars per attachment; the old "short snippets" limit is lifted). Never database rows or the
+   whole store. Incognito, typed text, and app-page
    content (Slack/Notion/Jira) are never captured. Wellbeing language must stay
    descriptive and non-judgmental — no scores, no "wasted time" phrasing.
 7. **Preserve existing structure and naming.** Modify only the module the task is
@@ -85,8 +91,8 @@ ever wanted again, it will be recreated from `Echo_System_Design.md`, which is t
   token window with its tokenizer** (owner's decisions A16 + A40, 2026-10-21): the stored
   `embeddable_text` is exactly what was embedded. Embedding model = snowflake-arctic-embed-xs
   (512 tokens, 384-d), replacing all-MiniLM-L6-v2. Built in code 2026-10-25 (`fit_to_window`, query path,
-  `EMBEDDING_VERSION = "snowflake-arctic-embed-xs-v1"`); the stored vectors switch at the B5 re-embed. Until then
-  `FAISSManager.load_index` refuses an index of another version (ValueError with the rebuild steps).
+  `EMBEDDING_VERSION = "snowflake-arctic-embed-xs-v1"`) and applied by the B5 re-embed on 2026-10-25 (111 items).
+  `FAISSManager.load_index` still refuses an index of another version (ValueError with the rebuild steps).
 - **Tier-1 attachment `lightweight_extract`** stores filename/mime/size, not the first
   500 chars of content (keeps the ingestion hot path fast). The full text is extracted
   later by the ENP worker (`enp/attachment_processor.extract_full_text`, A4) into
@@ -108,6 +114,10 @@ ever wanted again, it will be recreated from `Echo_System_Design.md`, which is t
   snippet capped at 300 characters for every source, including Gmail. It never sends full emails, pages, or
   transcripts. Missing LLM, call failure, or an invalid category falls back to `misc` with
   `classified_by = 'fallback'`.
+- **A23 and A24 are simplified (owner, 2026-10-26)**: no query-matched passages or windows. The synthesizer gets the leading
+  text of each result (8,000 chars for the top 3, 2,000 for the rest; `rse/config.py` `SYNTHESIS_EXCERPT_*`) and of each
+  attachment (`MAX_CHARS_PER_ATTACHMENT = 40000`, `MAX_CHARS_TOTAL = 80000`). Sizes were chosen from gpt-6-luna's published
+  limits (1.05M window, 272K long-context price tier), not from a measured long-context test.
 - **Conversation history keeps the `PostgresChatMessageHistory` table format, not the class.**
   `rse/conversation_memory.py` reads and writes the `message_store` table directly through the RSE psycopg2 pool.
 - File names differ from the doc's "Key Files" lists in places (e.g. `gmail_api.py`
@@ -115,9 +125,11 @@ ever wanted again, it will be recreated from `Echo_System_Design.md`, which is t
 
 ---
 
-## 4. Current state (as of 2026-07-07 — full audit complete)
+## 4. Current state (as of 2026-10-26)
 
-Every feature in the architecture doc is implemented and wired. Recent additions:
+Every feature in the architecture doc is implemented and wired, except the two items under "Known open items" below.
+The build status of every decided item is in `docs/review/ste_open_items.md` (84 of 86 top-level items complete).
+Earlier additions (2026-07):
 Tier-2 attachment extraction + real `fetch_attachment` node, `fetch_api` node (live
 Gmail poll for "today/just received" queries), capture settings (Redis) enforced in
 all three connectors, `DELETE /items/{id}` + `GET /export` + `GET|POST /settings`,
@@ -125,6 +137,12 @@ extension popup (search / recent 5 / pause toggle), centroid recomputation
 (`recompute_centroids()` in `enp/system_group_classifier.py`, persists `centroids.npz`;
 ENP runs it at startup when the file is missing or older than 30 days), rule-suggestion
 surfacing (step 9) + weekly review UI in the frontend.
+
+Added 2026-10-23 to 2026-10-26: arctic-embed-xs + token-window embedding and the B5 re-embed (A16/A40), the visits table and
+stored full-text `search_vector` (A1, A24.3), ENP attachment extraction with OCR for images and scanned PDFs (A4, D2),
+incremental Gmail polling (A5, A38), retention cleanup (A37), chat UI with memory pills, past chats and progress lines
+(A27, A28), regret reminder card with snooze (D3), group-rule pause/resume screen (D5), A42 auto-accept of confident group
+suggestions, and the simplified A23/A24 text limits (see §3).
 
 `rsr/` — the orphaned duplicate of `rse/` — was **deleted on 2026-08-31**. It was
 mounted nowhere and its internal imports (`retrival.*`) had always been broken, so
@@ -135,8 +153,14 @@ history if Review 2 needs it:
 (note its `_calculate_diversity` metric measures a prohibited feature — drop that part).
 
 Known open items:
-- OCR for image attachments is optional (pytesseract commented in requirements.txt —
-  needs the Tesseract system binary).
+- **A26 tool loop is not built** (Luna calling `search_memories` for up to 5 rounds; constraint 5 describes the decision, the
+  graph still runs the fixed two-call flow) and **E1, the MCP server, is not built**.
+- **D6, four frontend gaps** (backend routes exist, nothing calls them): old chats show no memory pills, no way to delete a chat,
+  no form to add a group rule, no screen to pick items for a group by hand. Details in `docs/review/ste_open_items.md` D6.
+- Threshold values are start values, to be re-measured on live data: A18 part 2 (seed-centroid threshold), A40
+  (`MIN_TOP_SIMILARITY` 0.55) and A42 (`KNN_ONLY_THRESHOLD` 0.65).
+- OCR for images and scanned PDFs is built (`pytesseract` in requirements.txt) but needs the Tesseract system binary
+  (Windows: `winget install UB-Mannheim.TesseractOCR`); without it OCR stays off.
 - Weekly auto-assign is manual/OS-scheduler; monthly centroid recomputation runs at ENP
   startup when its file is missing or older than 30 days. There is no in-app cron.
 - Frontend "Memory indexing" toggle in Settings is localStorage-only (ENP worker has
