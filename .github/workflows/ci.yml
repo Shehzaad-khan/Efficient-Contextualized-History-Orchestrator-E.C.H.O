@@ -12,10 +12,8 @@
 # same checks. Old commits may fail (they did not have these tests); that is expected. See docs/review/ci_cd_guide.md.
 name: CI
 
-run-name: >-
-  ${{ github.event_name == 'workflow_dispatch'
-      && format('CI replay · {0} · {1}', inputs.sha_short, inputs.label)
-      || format('CI · {0}', github.event.head_commit.message) }}
+# Push runs keep GitHub's default title (the first line of the commit message); replays get a readable title.
+run-name: ${{ github.event_name == 'workflow_dispatch' && format('CI replay · {0} · {1}', inputs.sha_short, inputs.label) || '' }}
 
 on:
   push:
