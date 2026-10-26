@@ -9,7 +9,7 @@ Working file — committed to the repo from 2026-10-22 so Claude web can read it
 3. Section B needs a backup before any statement runs: a Neon snapshot or branch for Neon (B1–B3, done), a `pg_dump -Fc` of `echo_db` into `C:\Users\mdshe\echo_backups\` for the local database (B5).
 4. Section D is built after the whole review is finished.
 
-**Audit snapshot — 2026-10-26 (top-level IDs; supersedes the 2026-10-25 one):** 85 entries = **83 complete/resolved + 2 not fully complete**. Counting rule: A1–A45 are owner-decision entries, counted complete when the decision is recorded; their implementation follow-ups are audited separately below. B4 is informational/no action. Breakdown: A 45/45 decisions recorded; B 5/5 resolved (B5 ran 2026-10-25); C 29/29 resolved; D 4 complete (D1, D3, D4, D5; D3 and D5 built 2026-10-25), D2 partial (old `.doc` + the A4 merge left); E1 partial (decision made, implementation absent). E2 (import personal history + export button) was removed from scope on 2026-10-25: the presentation uses the test account only. The two not-fully-complete top-level IDs are D2 and E1 (both partial). This top-level count is not a claim that all decided features are implemented. The 2026-10-25 build work (A16/A40 + B5, A27, A28, A37, OCR, D3, D5, A42, A18 part 1, review fixes) is committed and merged to `main` (PRs #12, #13, #14); the two branches were checked after the PR #14 merge and nothing was lost.
+**Audit snapshot — 2026-10-26 (top-level IDs; supersedes the 2026-10-25 one):** 85 entries = **83 complete/resolved + 2 not fully complete**. Counting rule: A1–A45 are owner-decision entries, counted complete when the decision is recorded; their implementation follow-ups are audited separately below. B4 is informational/no action. Breakdown: A 45/45 decisions recorded; B 5/5 resolved (B5 ran 2026-10-25); C 29/29 resolved; D 4 complete (D1, D3, D4, D5; D3 and D5 built 2026-10-25), D2 partial (the A4 merge left; old `.doc` dropped 2026-10-26); E1 partial (decision made, implementation absent). E2 (import personal history + export button) was removed from scope on 2026-10-25: the presentation uses the test account only. The two not-fully-complete top-level IDs are D2 and E1 (both partial). This top-level count is not a claim that all decided features are implemented. The 2026-10-25 build work (A16/A40 + B5, A27, A28, A37, OCR, D3, D5, A42, A18 part 1, review fixes) is committed and merged to `main` (PRs #12, #13, #14); the two branches were checked after the PR #14 merge and nothing was lost.
 
 **Decision 2026-10-25 (his): the presentation runs on the TEST ACCOUNT only.** There is no time to move to his personal account. So E2 (import personal history + export button) is out of scope, and the Mon 26 / Tue 27 Oct retest and the threshold recompute (A18, A40) use the test account's data.
 
@@ -1940,7 +1940,7 @@ The `[x] decided` marks above mean the owner's decision is recorded. They do not
 ### D1. Dispose the DB pool on shutdown — [x] 2026-10-22 (`postgresql_manager.dispose_engine()`, called in the `backend/main.py` lifespan after ENP stops; idempotent, engine is re-created on next use; the RSE psycopg2 pool in `rse/search_coordinator.py` is NOT closed — not part of this item)
 - Backend shutdown never calls `engine.dispose()`; pooled connections wait for Neon's idle timeout.
 
-### D2. Full attachment support — [~] 2026-10-25 OCR for images and scanned PDFs built; old `.doc` and the A4 merge still open
+### D2. Full attachment support — [~] 2026-10-25 OCR for images and scanned PDFs built; old `.doc` dropped by his decision 2026-10-26; the A4 merge still open
 - **Works today:** PDF (pypdf → pdfplumber), DOCX (python-docx), `.txt` / `.md` / `.csv`.
 - **To build:**
   - [x] OCR for images (PNG/JPG/…): **built and checked with the real program 2026-10-25 (committed)**.
@@ -1959,7 +1959,7 @@ The `[x] decided` marks above mean the owner's decision is recorded. They do not
         60 s per page. 20 checks pass (17 with a stand-in OCR call: page order, A4 render size 1654 x 2339, the 10-page
         limit, the char cap, no readable text, an OCR crash, a 0-byte PDF, garbage bytes, a 0-byte JPEG, garbage as PNG,
         a text PDF still read by pypdf; plus the 3 real-program checks above).
-  - [ ] Old `.doc` files (python-docx cannot read them).
+  - [x] Old `.doc` files (python-docx cannot read them): **dropped 2026-10-26 by his decision, will not be handled.** The same goes for old `.xls` / `.ppt`.
   - [x] PPTX, XLSX, EML built 2026-10-24 (cloud session) in `enp/attachment_processor.py`; HTML was already there.
         (ODT/RTF were built first, then REMOVED the same day on his word: A22 says skip them. `.rtf` / `text/rtf` is now
         refused explicitly so it is not read as plain text.)
@@ -1967,7 +1967,7 @@ The `[x] decided` marks above mean the owner's decision is recorded. They do not
         `requirements.txt` does not change. Checked on generated files (slide order, notes, shared strings, inline
         strings, sheet names, EML plain vs HTML),
         on corrupt input (returns None) and on an oversized member (skipped). NOT checked on real Office files from
-        a real mailbox; do that locally. Still open then: old `.doc`/`.xls`/`.ppt`, OCR, scanned PDFs (OCR built 2026-10-25, see D2).
+        a real mailbox; do that locally. Open then: old `.doc`/`.xls`/`.ppt` (dropped 2026-10-26), OCR, scanned PDFs (OCR built 2026-10-25, see D2).
   - [ ] A4 decided 2026-10-21: extract at ingestion into `extracted_text`, merge into embedded text (shared
         800-char budget) + full text into the tsvector, set `is_processed = TRUE`.
 
