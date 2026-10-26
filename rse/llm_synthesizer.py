@@ -24,10 +24,12 @@ in the context). After the call this module:
                          the conversation history use this one.
 
 Privacy contract (architecture Section 13.2): the LLM receives ONLY the query,
-formatted snippets (title, short excerpt, timestamp, source), and session
-history — never full raw_text, full transcripts, or database rows. Snippets
-are plain leading excerpts (SNIPPET_CHAR_LIMIT); no semantic filtering or
-compression is applied by design.
+formatted result blocks (title, a leading excerpt of the text, timestamp,
+source), and session history — never database rows or the whole store. Owner
+decision 2026-10-26 (A24): the excerpt is the first SYNTHESIS_EXCERPT_CHARS_TOP
+characters for the best SYNTHESIS_FULL_EXCERPT_RESULTS results and the first
+SYNTHESIS_EXCERPT_CHARS_REST for the others; no semantic filtering or
+compression is applied.
 
 Times shown to the LLM and in pills are the user's LOCAL time; created_at is
 stored as naive UTC.
@@ -43,7 +45,12 @@ from urllib.parse import urlparse
 
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 
-from rse.config import SNIPPET_CHAR_LIMIT, SYNTHESIS_TOP_RESULTS
+from rse.config import (
+    SYNTHESIS_EXCERPT_CHARS_REST,
+    SYNTHESIS_EXCERPT_CHARS_TOP,
+    SYNTHESIS_FULL_EXCERPT_RESULTS,
+    SYNTHESIS_TOP_RESULTS,
+)
 from rse.llm_factory import build_chat_model
 from rse.search_coordinator import fetch_visit_times, local_to_utc_naive
 from rse.state import EchoState
@@ -209,7 +216,8 @@ def _format_item(
         lines.append(f"    Visits in the asked period: {shown}")
     snippet = (item.get("raw_snippet") or "").strip()
     if snippet:
-        lines.append(f"    Excerpt: {snippet[:SNIPPET_CHAR_LIMIT]}")
+        limit = SYNTHESIS_EXCERPT_CHARS_TOP if index <= SYNTHESIS_FULL_EXCERPT_RESULTS else SYNTHESIS_EXCERPT_CHARS_REST
+        lines.append(f"    Excerpt: {snippet[:limit]}")
 
     for neighbor in neighbors:
         n_title = neighbor.get("title") or neighbor.get("subject") or "(untitled)"

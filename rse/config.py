@@ -109,7 +109,13 @@ ANCHOR_CANDIDATE_LIMIT = 5    # keyword candidates inspected when resolving anch
 
 # ── Synthesis ─────────────────────────────────────────────────────────────────
 SYNTHESIS_TOP_RESULTS = 10    # ranked results included in LLM Call 2 context
-SNIPPET_CHAR_LIMIT = 500      # raw-text excerpt length per result (plain truncation)
+# A24 (simplified 2026-10-26): no query-matched windows. Each result gets a plain leading excerpt of its
+# text. The three best results get the long one (where the answer usually is); the rest a short one, so
+# ten results stay near 10k tokens. gpt-6-luna has a 1.05M-token window, so this is a quality and cost
+# choice, not a fit: past ~272K input tokens the request is billed at the double long-context rate.
+SYNTHESIS_FULL_EXCERPT_RESULTS = 3     # best-ranked results that get the long excerpt
+SYNTHESIS_EXCERPT_CHARS_TOP = 8000     # leading chars of text for those (~2k tokens each)
+SYNTHESIS_EXCERPT_CHARS_REST = 2000    # leading chars for the other results (~500 tokens each)
 
 # ── Conversation memory ───────────────────────────────────────────────────────
 CONVERSATION_HISTORY_DAYS = 30  # cleanup deletes message_store rows older than this

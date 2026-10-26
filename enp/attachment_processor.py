@@ -80,10 +80,13 @@ logger = logging.getLogger(__name__)
 # Tier-2 auto-qualification threshold (bytes) when filename doesn't match query
 MAX_AUTO_FETCH_SIZE_BYTES = 500 * 1024
 
-# Caps keep the synthesis prompt bounded — the LLM receives snippets, never
-# unbounded documents (privacy + token budget, architecture §13.2).
-MAX_CHARS_PER_ATTACHMENT = 6000
-MAX_CHARS_TOTAL = 12000
+# Caps keep the synthesis prompt bounded. A23 (simplified 2026-10-26, owner decision): the
+# LLM gets the leading text of each attachment, no query-matched passages. 40,000 chars is
+# ~10k tokens (about 12-15 pages); 80,000 in total is ~20k tokens. gpt-6-luna has a 1.05M-token
+# window, so the caps protect answer quality and cost, and stop one 300-page file from
+# dominating the prompt.
+MAX_CHARS_PER_ATTACHMENT = 40000
+MAX_CHARS_TOTAL = 80000
 
 # Ingestion keeps the FULL text in gmail_attachments.extracted_text (A4), but not
 # without limit: the text also goes into the stored tsvector, which PostgreSQL

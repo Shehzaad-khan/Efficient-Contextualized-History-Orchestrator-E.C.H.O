@@ -83,8 +83,9 @@ Gmail is the exception: every received or sent mail is stored, because mail arri
 All personal data lives in PostgreSQL, FAISS and Redis on the laptop (A31, decided 2026-10-21; Neon and Upstash were
 the development setup and are dropped). The data that leaves the machine is fixed and small: the Google API calls that
 fetch the user's own data, and the LLM calls listed in §13.2. Privacy statement used for the panel (A31.5):
-"storage and processing are local; only the query and short snippets go to the LLM, never full mails, pages or
-transcripts; Gmail/YouTube APIs fetch the user's own data."
+"storage and processing are local; only the query and bounded text excerpts (the first 8,000 characters of each of the top 3
+results, 2,000 of the others, and up to 40,000 per attachment) go to the LLM, never the database or the whole store; Gmail/YouTube
+APIs fetch the user's own data." (Owner decision 2026-10-26, A23/A24: the earlier "short snippets only" wording no longer holds.)
 
 ### 2.3 Progressive Enrichment
 
@@ -144,7 +145,7 @@ flowchart TB
         FA[("FAISS index file")]
         RD[("Redis (WSL)")]
     end
-    LLM["OpenAI GPT-6 Luna<br/>(query + short snippets only)"]
+    LLM["OpenAI GPT-6 Luna<br/>(query + bounded text excerpts)"]
     GAPI["Gmail API / YouTube Data API"]
     UI["React dashboard :3000"]
 
@@ -385,7 +386,7 @@ earlier message carries error text in `auto_keywords`.
 | Types | PDF (pypdf → pdfplumber), DOCX (incl. tables, header/footer), TXT/MD/CSV/TSV/LOG/JSON/XML/ICS, HTML. Built 2026-10-24 (D2, standard library only, no new dependency): XLSX, PPTX (slides + notes), EML. Images only if Tesseract is installed (it is not) | OCR for images and scanned PDFs (Tesseract + `pytesseract`). Skipped: `.doc`/`.xls`/`.ppt`, RTF, ODT, ZIP, HEIC (A22.1; RTF is refused explicitly so `text/rtf` is not read as plain text). A22 named `openpyxl` and `python-pptx` for XLSX/PPTX; zip-and-regex readers (size-capped, no XML parser) replaced the libraries |
 | Embedding | Not embedded at all (C15) | Token budget (A16, replaces A4's 800-char split): body up to 300 tokens, then attachments fill the rest of the 512-token window, each attachment's start in turn (§8.2) |
 | Keyword search | Not searchable | Full extracted text goes into the stored tsvector (A4, A24.3) |
-| Sent to the LLM | Up to 6,000 chars per attachment, 12,000 total (`MAX_CHARS_PER_ATTACHMENT`, `MAX_CHARS_TOTAL`) | Only the top 3 passages that match the question, ~1,500 chars total, read from the stored text; no Gmail download at query time (A23, A4) |
+| Sent to the LLM | Up to 6,000 chars per attachment, 12,000 total | Leading text of each attachment, up to 40,000 chars per file and 80,000 in total (`MAX_CHARS_PER_ATTACHMENT`, `MAX_CHARS_TOTAL`; ~10k and ~20k tokens). No query-matched passages (owner decision 2026-10-26, A23 simplified) |
 | Same filename twice | First one is always downloaded | Match on filename + `file_size` (A22.3, built 2026-10-24; unknown size or no size match falls back to the first same-named part) |
 
 Binary files are never stored. Audio and video attachments are out of scope.
@@ -910,7 +911,7 @@ across reloads (localStorage, a per-viewer convenience).
 `store=true`; the turn's last `response_id` is saved inside the AI message JSON in `message_store`, and the next question sends
 only the new message plus `previous_response_id`, so Luna continues with its earlier reasoning and tool results. History is
 resent from `message_store` instead when the provider is not OpenAI, the id has expired, or the provider changed mid-chat.
-Privacy effect: what is sent is unchanged (question + short snippets), but OpenAI keeps each chat for about 30 days
+Privacy effect: what is sent is the question + bounded text excerpts (A23/A24), and OpenAI keeps each chat for about 30 days
 (Likely, OpenAI docs; verify at build) — see §13.
 
 ### 10.8 Key Files (RSE)
@@ -952,9 +953,12 @@ YouTube; solid = the item says it, dashed = related context), a hover peek card,
 (Gmail link built as `#all/<message_id>`, not `#inbox/`, so archived mail still opens), and a **moment strip** (one dot per
 cited item on a time ribbon, hidden when all sources are from one day).
 
-**Result snippets sent to the LLM (A24.2, built Thu–Sun):** per result, the 500-char window of the **cleaned** text that
-best matches the question (by keyword overlap, computed locally; preferred over embedding each window since A40, because
-scoring ~5 windows × 10 results with the embedding model would add Likely ~1 s per round under load, estimated from the per-item speed), instead of the first 500 chars of `raw_text`. At most 10 results reach the answer
+**Result excerpts sent to the LLM (A24, simplified 2026-10-26 by the owner: no query-matched windows):** per result, the leading text of `raw_text`:
+the first 8,000 characters for the 3 best-ranked results (`SYNTHESIS_EXCERPT_CHARS_TOP`, `SYNTHESIS_FULL_EXCERPT_RESULTS`), the first 2,000 for
+the other seven (`SYNTHESIS_EXCERPT_CHARS_REST`). Worst case is about 10k tokens for ten results. These sizes are a quality and cost choice, not a fit:
+`gpt-6-luna` has a 1.05M-token window (922K input, 128K output), and a request above 272K input tokens is billed at the double long-context rate.
+No published long-context accuracy figure exists for Luna, so the sizes follow the general finding that models answer best from a few relevant
+thousand tokens rather than from everything. At most 10 results reach the answer
 (`SYNTHESIS_TOP_RESULTS`). The prompt gets a `TODAY: <date> (<weekday>)` line and the rule "if the question names a period,
 use only items inside it" (A1.2); Chrome/YouTube lines show their visit times inside the range.
 
@@ -1195,7 +1199,7 @@ in the demo he shows the real token, and an encrypted blob looks fake). The pape
 rest". A token shown on a projector is a live key: revoke it after the demo (Google Account → Security → third-party access).
 `.gitignore` covers `token_*.json`. Logs never carry tokens, the DB URL or `.env` values.
 
-LLM-side retention (A26 `store=true`, decided 2026-10-21): the LLM still receives only the question and short snippets, but
+LLM-side retention (A26 `store=true`, decided 2026-10-21): the LLM still receives only the question and bounded text excerpts (A23/A24), but
 OpenAI keeps each chat for about 30 days so a follow-up continues from it (§10.7). Through MCP (§10.11), the outside client's
 LLM provider sees the snippets that Echo's tools return.
 
@@ -1203,8 +1207,8 @@ LLM provider sees the snippets that Echo's tools return.
 
 | Destination | What | When |
 |---|---|---|
-| OpenAI (LLM) | Question text; numbered snippets (title + best-matching 500-char window of cleaned text per item, ≤ 10 items); conversation history of the chat | Every recall question |
-| OpenAI (LLM) | Top 3 query-matched attachment passages, ~1,500 chars total (A23) | When the question asks for file content |
+| OpenAI (LLM) | Question text; numbered result blocks (title + leading text: 8,000 chars for the top 3, 2,000 for the rest, ≤ 10 items); conversation history of the chat | Every recall question |
+| OpenAI (LLM) | Leading attachment text, ≤ 40,000 chars per file and ≤ 80,000 in total (A23) | When the question asks for file content |
 | OpenAI (LLM) | Source + title (200 chars) + first 300 chars of clean text | Stage-4 classification of an ambiguous item, at ingestion (A19) |
 | OpenAI (LLM) | Aggregated weekly numbers | Weekly insight request |
 | Google — Gmail API | Read-only listing and fetching of the user's own mail | Every 30 s |
@@ -1362,7 +1366,7 @@ Values are the decided ones. Each test states the expected outcome; none has bee
 | 17 | Recall | "find my TechCorp interview email" | One search round, answer cites the mail with a pill |
 | 18 | Recall | Question with no matching data | Honest "not found" answer; ≤ 6 LLM calls |
 | 19 | Recall | Turn 2 "Chrome pages about that after that email" | Anchor resolved from turn 1; only Chrome items after it |
-| 20 | Recall | "what did the attached offer letter say about joining date" | Answer from ≤ 1,500 chars of matched passages |
+| 20 | Recall | "what did the attached offer letter say about joining date" | Answer from the attachment's leading text (≤ 40,000 chars) |
 | 21 | Groups | Group with 5 confirmed items; similar new item that matches no rule | `pending` suggestion; nothing in `memory_user_groups` until accepted |
 | 21b | Groups | Same group; new item matches a group rule and its KNN score ≥ the KNN bar (A42) | `decision = 'auto_accepted'`, `reviewed = FALSE`, member at once; shown in the review with "added automatically"; Remove deletes the membership; it does not count as a KNN example until kept |
 | 21c | ENP | One long dense item (code / IDs) (A16) | Stored `embeddable_text` ≤ 512 tokens of the model's tokenizer and ends on a whole word |
@@ -1452,7 +1456,7 @@ query latency and tokens per round (A25), embed speed of arctic-xs on the real d
 | Classifier | Recompute minimum / age | 10 items / 30 days | `_MIN_CONFIRMED_FOR_RECOMPUTE = 10`; age check none | A36 |
 | Classifier | Stage 4 input | 200 + 300 chars | `_STAGE4_TITLE_CHARS`, `_STAGE4_SNIPPET_CHARS` | A19 |
 | Attachments | Auto-fetch size | ≤ 500 KB (query-time path) | `attachment_processor.py` : `MAX_AUTO_FETCH_SIZE_BYTES` | §8.3 |
-| Attachments | Sent to LLM | top 3 passages, ~1,500 chars total | `MAX_CHARS_PER_ATTACHMENT = 6000`, `MAX_CHARS_TOTAL = 12000` | A23 |
+| Attachments | Sent to LLM | leading text, 40,000 per file / 80,000 total | `MAX_CHARS_PER_ATTACHMENT = 40000`, `MAX_CHARS_TOTAL = 80000` | A23 |
 | Attachments | Redis cache | 1 h | `ATTACHMENT_CACHE_TTL_SECONDS = 3600` | §4.3 |
 | RSE | Keyword candidates | 200 | `rse/config.py` : `PG_KEYWORD_LIMIT` | §10.3 |
 | RSE | FTS text | full text, stored tsvector | `search_coordinator.py` : `_FTS_DOCUMENT = "m.search_vector"` (built 2026-10-24) | A24.3 |
@@ -1466,7 +1470,7 @@ query latency and tokens per round (A25), embed speed of arctic-xs on the real d
 | RSE | Quality gate (also anchor FAISS fallback) | best cosine ≥ 0.55 (start value, tuned Thursday; just above the wrong-item 95th percentile 0.53 for arctic-xs); ≥ 2 candidates. It can only trigger widening, never prove "nothing there" | `MIN_TOP_SIMILARITY = 0.55` (`rse/config.py`, start value, not measured), `MIN_RESULT_COUNT` | §10.3, A40 |
 | RSE | Neighbourhood | top 3, ± 5 min, 5 each | `NEIGHBOR_TOP_ITEMS`, `NEIGHBOR_WINDOW_MINUTES`, `NEIGHBORS_PER_ITEM` | §10.3 |
 | RSE | Anchor candidates | 5 | `ANCHOR_CANDIDATE_LIMIT` | §10.3 |
-| RSE | Results to answer / snippet | 10 / best-matching 500 chars of cleaned text | `SYNTHESIS_TOP_RESULTS = 10`, `SNIPPET_CHAR_LIMIT = 500` (first 500 of raw) | A24.2 |
+| RSE | Results to answer / snippet | 10 / first 8,000 chars of text for the top 3, first 2,000 for the other 7 | `SYNTHESIS_TOP_RESULTS = 10`, `SYNTHESIS_EXCERPT_CHARS_TOP = 8000`, `SYNTHESIS_EXCERPT_CHARS_REST = 2000` | A24 |
 | RSE | History to parser / synthesizer | 10 / 6 messages, 500 chars each | `query_parser._HISTORY_MESSAGES`, `llm_synthesizer._HISTORY_MESSAGES` | §10.3 |
 | RSE | Search rounds | ≤ 5, then forced answer | none | A26 |
 | RSE | Chat history kept | 30 days | `CONVERSATION_HISTORY_DAYS = 30` | §10.7 |
@@ -2045,8 +2049,8 @@ the project history; "—" where no date was recorded.
 | A20 | 2026-10-21 | Balanced centroid recompute (per-source means averaged) | Centroids could learn the source instead of the category |
 | A21 | 2026-10-21 | Stage 4: OpenAI Decisions API (5 choices) or strict one-word reply, with a fallback path; `classification_confidence` dropped | No reply parsing on OpenAI; the confidence value was never used |
 | A22 | 2026-10-21 | Add XLSX, PPTX, EML, OCR; skip inline logos; same filename matched by size | Those types gave no text; logos counted as attachments |
-| A23 | 2026-10-21 | Only the top 3 query-matched passages (~1,500 chars) of attachments reach the LLM; contextual-compression prohibition lifted | First 6,000 chars were sent; answers missed deep content |
-| A24 | 2026-10-21 | Embedding top-only, Chrome snippet 500 → 800 (now A16's token budget); LLM snippets = best-matching 500-char window of cleaned text; keyword search over full text via stored tsvector + GIN | Words past 5,000 chars were unsearchable; raw snippets carried quotes |
+| A23 | 2026-10-21, simplified 2026-10-26 | Decided: top 3 query-matched passages. Built instead (owner, after the Sun 25 Oct freeze): leading text, 40,000 chars per attachment and 80,000 total, no passage selection | First 6,000 chars were sent; answers missed content deeper in the file |
+| A24 | 2026-10-21 | Embedding top-only, Chrome snippet 500 → 800 (now A16's token budget); LLM excerpts (simplified 2026-10-26) = leading text, 8,000 chars for the top 3 results and 2,000 for the rest, no query-matched windows; keyword search over full text via stored tsvector + GIN | Words past 5,000 chars were unsearchable; raw snippets carried quotes |
 | A25 | 2026-10-18 | GPT-5.6 Luna (changed to GPT-6 Luna 2026-10-24) on the Responses API via LangChain, reasoning effort medium; OpenAI extras only when provider is OpenAI | Cheaper per token and stronger; keeps plug-and-play |
 | A26 | 2026-10-18 | `search_memories` tool loop, ≤ 5 rounds; LLM calls usually 2, max 6 (was exactly 2) | Lets the model search again when the first search misses |
 | A27 | 2026-10-18 | Chat-style answers with memory pills, moment strip, chat sessions | Who/where/when cues fit a personal memory |

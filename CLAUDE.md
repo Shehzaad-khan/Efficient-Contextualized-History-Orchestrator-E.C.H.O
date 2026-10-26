@@ -64,8 +64,10 @@ ever wanted again, it will be recreated from `Echo_System_Design.md`, which is t
 5. **LLM calls per retrieval query: usually 2, max 6** (owner's decision A26, 2026-10-18:
    Luna calls a `search_memories` tool up to 5 rounds; after round 5 the next call must
    answer — cap enforced in code). The search itself is deterministic Python.
-6. **Privacy boundaries**: LLM receives only query text, short snippets, and aggregated
-   numbers. Never raw bodies/transcripts/full rows. Incognito, typed text, and app-page
+6. **Privacy boundaries**: LLM receives only query text, bounded text excerpts, and aggregated
+   numbers (owner's decision 2026-10-26, A23/A24: the first 8,000 chars of each of the top 3 results, 2,000 of the
+   others, up to 40,000 chars per attachment; the old "short snippets" limit is lifted). Never database rows or the
+   whole store. Incognito, typed text, and app-page
    content (Slack/Notion/Jira) are never captured. Wellbeing language must stay
    descriptive and non-judgmental — no scores, no "wasted time" phrasing.
 7. **Preserve existing structure and naming.** Modify only the module the task is
@@ -108,6 +110,10 @@ ever wanted again, it will be recreated from `Echo_System_Design.md`, which is t
   snippet capped at 300 characters for every source, including Gmail. It never sends full emails, pages, or
   transcripts. Missing LLM, call failure, or an invalid category falls back to `misc` with
   `classified_by = 'fallback'`.
+- **A23 and A24 are simplified (owner, 2026-10-26)**: no query-matched passages or windows. The synthesizer gets the leading
+  text of each result (8,000 chars for the top 3, 2,000 for the rest; `rse/config.py` `SYNTHESIS_EXCERPT_*`) and of each
+  attachment (`MAX_CHARS_PER_ATTACHMENT = 40000`, `MAX_CHARS_TOTAL = 80000`). Sizes were chosen from gpt-6-luna's published
+  limits (1.05M window, 272K long-context price tier), not from a measured long-context test.
 - **Conversation history keeps the `PostgresChatMessageHistory` table format, not the class.**
   `rse/conversation_memory.py` reads and writes the `message_store` table directly through the RSE psycopg2 pool.
 - File names differ from the doc's "Key Files" lists in places (e.g. `gmail_api.py`

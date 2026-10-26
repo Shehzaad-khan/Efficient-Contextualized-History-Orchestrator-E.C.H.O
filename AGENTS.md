@@ -46,7 +46,7 @@ Instructions for any AI agent (Antigravity, Cursor, Claude Code, etc.) working o
    - Luna calls a `search_memories` tool for up to 5 rounds; after round 5 the next call must answer. The cap is enforced in code, never only in the prompt.
    - The search itself (FTS + FAISS, RRF, cross-encoder, neighbourhood) is deterministic Python.
 6. **Privacy boundaries:**
-   - The LLM receives only query text, short snippets, and aggregated numbers — never raw email/page bodies, full transcripts, or full database rows.
+   - The LLM receives only query text, bounded text excerpts, and aggregated numbers (owner's decision 2026-10-26, A23/A24: first 8,000 chars of each of the top 3 results, 2,000 of the others, up to 40,000 chars per attachment) — never database rows or the whole store.
    - Incognito browsing, typed text, and app-page content (Slack/Notion/Jira) are never captured.
    - Wellbeing language must remain descriptive, observational, and non-judgmental (no scores, no "wasted time" phrasing).
 7. **Preserve existing structure and naming:**

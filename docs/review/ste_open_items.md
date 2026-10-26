@@ -13,7 +13,7 @@ Working file — committed to the repo from 2026-10-22 so Claude web can read it
 
 **Decision 2026-10-25 (his): the presentation runs on the TEST ACCOUNT only.** There is no time to move to his personal account. So E2 (import personal history + export button) is out of scope, and the Mon 26 / Tue 27 Oct retest and the threshold recompute (A18, A40) use the test account's data.
 
-**Implementation follow-ups inside decided A entries (not additional top-level IDs):** 6 decision IDs still have an implementation step open or partial. Three wait on the Mon 26 / Tue 27 Oct retest on the test account's live data: A18 part 2 (seed-centroid threshold), A40 (threshold retune) and A42 (the KNN bar is built, its value must be re-measured). Three are decided but not built: A23 and A24 (query-matched passages) and A26 (tool loop); build waits on a talk with him. `AGENTS.md` was brought in line with `CLAUDE.md` on 2026-10-25, so none of them is blocked by it. A16 closed with B5; A17 closed by his decision (no further build); A27 complete (past-chats screen built, touch "peek" dropped); A28 closed as it is (progress lines only); A37 closed; A42's build is done (only the bar value is open). Their status is checked after A45 below.
+**Implementation follow-ups inside decided A entries (not additional top-level IDs):** 4 decision IDs still have an implementation step open or partial. Three wait on the Mon 26 / Tue 27 Oct retest on the test account's live data: A18 part 2 (seed-centroid threshold), A40 (threshold retune) and A42 (the KNN bar is built, its value must be re-measured). One is decided but not built: A26 (tool loop; build waits on a talk with him). `AGENTS.md` was brought in line with `CLAUDE.md` on 2026-10-25, so none of them is blocked by it. A16 closed with B5; A17 closed by his decision (no further build); A23 and A24 closed 2026-10-26 in a simplified form (leading text, bigger fixed caps, no passage selection); A27 complete (past-chats screen built, touch "peek" dropped); A28 closed as it is (progress lines only); A37 closed; A42's build is done (only the bar value is open). Their status is checked after A45 below.
 
 Original inventory: 45 decisions · 5 live-DB entries · 29 cross-file fixes · 5 build items · 2 later items = **86, minus E2 (removed 2026-10-25) = 85**. C29 (delete pending-answers file) was added 2026-10-22; A44 retry + A45 fresh Gmail poll were added 2026-10-21 as stretch (A45 closed with no build on 2026-10-24); A42 auto-accept + A43 user-group nesting, A41 Gmail open tracking, A40 model choice, E2 personal-data import, and A37–A39 (retention, spam, timings) were added 2026-10-21; A5/A6 were added 2026-10-15; A7–A24 were added 2026-10-17; A25–A28 were added 2026-10-18; E1 MCP was added 2026-10-18.
 
@@ -715,7 +715,7 @@ Still open — decide each:
     message (three same-named PDFs: nested, attachmentId, inline data). NOT checked against the real Gmail API: that
     `body.size` equals the byte size stored at ingestion (it should; both come from the same field).
 
-### A23. Attachment text is sent to the LLM — the doc says it never is — [x] decided 2026-10-21
+### A23. Attachment text is sent to the LLM — the doc says it never is — [x] decided 2026-10-21; [x] closed 2026-10-26 (simplified: leading text, 40,000 / 80,000 chars)
 - Doc line 702: "The LLM API never receives: raw email bodies, full page content, video transcripts, **attachment
   text**, …". But doc §8.3 / §11 put attachment content into the synthesizer's context, and the code sends up to
   6,000 chars per attachment, 12,000 total, to the synthesis LLM (`MAX_CHARS_*` in enp/attachment_processor.py).
@@ -731,8 +731,19 @@ Still open — decide each:
   drop that prohibition completely (CLAUDE.md line removed 2026-10-21; MMR and recency boosting stay prohibited).
   At build time also fix the `rse/llm_synthesizer.py:29` docstring ("no semantic filtering or compression ... by
   design") and any paper/deck line that says compression is excluded.
+- **Simplified and closed 2026-10-26 (his decision, after the Sun 25 Oct freeze: "cut the difficult part"):** the passage selection
+  is NOT built. The query-matched top-3 passages are replaced by the leading text of each attachment, with larger fixed caps:
+  `MAX_CHARS_PER_ATTACHMENT` 6,000 -> **40,000** and `MAX_CHARS_TOTAL` 12,000 -> **80,000** (`enp/attachment_processor.py`; the
+  Redis cache stores the same longer text). Why these numbers: web research 2026-10-26 (AWS Bedrock model card, llm-stats, UF
+  NaviGator docs) gives gpt-6-luna a 1,050,000-token window, 922K max input, 128K max output, and a double price rate above 272K
+  input tokens ($0.10 per million input tokens). So nothing here comes near a limit; the caps are about answer quality and cost.
+  40,000 chars is ~10k tokens (about 12-15 pages), 80,000 total ~20k tokens: enough for most real PDFs and DOCX, and one 300-page
+  file cannot flood the prompt. No long-context accuracy test for Luna exists in public sources (checked), so the sizes follow the
+  general finding that models answer best from a few thousand relevant tokens, not from everything. Privacy: attachment text
+  already reached the LLM (exception recorded under A23 option 1); only the size grew. CLAUDE.md constraint 6, `AGENTS.md`, README
+  and the design doc now say "bounded text excerpts". **Not tested against a real long attachment and the live LLM yet.**
 
-### A24. How much text we take, and from WHERE (top only vs top + middle + end) — [x] decided 2026-10-21
+### A24. How much text we take, and from WHERE (top only vs top + middle + end) — [x] decided 2026-10-21; [x] A24.2 closed 2026-10-26 (simplified: leading excerpts, 8,000 / 2,000 chars)
 - **Today every cut takes the TOP only.** Checked in code 2026-10-17:
   | Where | Text | Cap (chars) |
   |---|---|---|
@@ -765,12 +776,22 @@ Still open — decide each:
 - **Decision (his, 2026-10-21), part by part:**
   1. **Embedding: keep top-only; raise the Chrome snippet 500 -> 800 chars** (same as Gmail; fits MiniLM's
      window). Chunking (several vectors per item) = paper future work.
-  2. **Result snippets to the LLM: the best-matching 500 chars of the CLEANED text** (quotes removed — signatures
+  2. **(Simplified 2026-10-26, see the closing note below.) Result snippets to the LLM: the best-matching 500 chars of the CLEANED text** (quotes removed — signatures
      stay since A12 — with ENP's cleaner, then the 500-char window that best matches the query; same method as A23). Replaces the
      raw first 500 chars in `rse/llm_synthesizer.py:189`. ~1 h.
   3. **Keyword search over the FULL text, with a stored index:** add a stored `tsvector` column + GIN index (schema
      open, A31.3) built at write time; drop the 5,000-char cap in `rse/search_coordinator.py` `_FTS_DOCUMENT`
      (line ~107). setup_db.py + ALTER on the dump. ~1 h. He wants a low-level walk-through of GIN at build time.
+
+- **A24.2 simplified and closed 2026-10-26 (his decision, same reason as A23):** no cleaned-text windows, no query matching. Each
+  result gets the leading text of `raw_text`: **8,000 chars for the 3 best results, 2,000 for the other 7**
+  (`rse/config.py`: `SYNTHESIS_EXCERPT_CHARS_TOP`, `SYNTHESIS_EXCERPT_CHARS_REST`, `SYNTHESIS_FULL_EXCERPT_RESULTS`; replaces
+  `SNIPPET_CHAR_LIMIT = 500`). `RESULT_COLUMNS` in `rse/search_coordinator.py` now cuts `raw_snippet` at 8,000 in SQL (was 1,000); the
+  cross-encoder still clips it to `RERANK_DOC_CHAR_LIMIT` (512), so ranking is unchanged. Worst case for ten results ~38,000 chars,
+  ~10k tokens. Top results get more because the answer is usually there and the lower ones are mostly noise. A24.1 (embedding)
+  and A24.3 (full-text keyword search) are unchanged and were already built. Checked offline: rank 1-3 blocks 8,063 chars, rank 4-10
+  2,063 (stubbed database and LLM); NOT run against the live backend yet. Known small leftover: raw Gmail text still carries quoted
+  replies (the cleaned-text part of the decision is dropped with the windows).
 
 ### A25. LLM = GPT-5.6 Luna on the Responses API, via LangChain — [x] DECIDED 2026-10-18 (build in Step 2)
 - **Rule ("plug-in for all, specialised for OpenAI"):** every LLM call stays behind LangChain, so any provider key
@@ -1620,15 +1641,15 @@ Still open — decide each:
 
 ### Build-status cross-check for decided A entries — 2026-10-24 (rows updated 2026-10-26)
 
-The `[x] decided` marks above mean the owner's decision is recorded. They do not mean the feature was built. Static review of the current workspace found 11 decision IDs with implementation work (A7's prior open row was stale; A7.1–A7.4 are built as recorded above). Rows were refreshed on 2026-10-26: the ones still open are A18 (part 2), A23, A24, A26, A40 and A42 (bar value only); the rest are closed:
+The `[x] decided` marks above mean the owner's decision is recorded. They do not mean the feature was built. Static review of the current workspace found 11 decision IDs with implementation work (A7's prior open row was stale; A7.1–A7.4 are built as recorded above). Rows were refreshed on 2026-10-26: the ones still open are A18 (part 2), A26, A40 and A42 (bar value only); the rest are closed:
 
 | ID | Current implementation check |
 |----|-------------------------------|
 | A16 | **Built and applied by B5 2026-10-25 (commit c719cdc):** `embedding_generator.fit_to_window` + `topic_extractor` ordered `TextPart`s (see the A16 entry). Closed once B5 has re-embedded with it. |
 | A17 | **Closed 2026-10-25 (his decision):** the 29 hand-added domains stay; the review of real top domains is dropped (the test account has hardly any browsing). |
 | A18 | **Part 1 built 2026-10-25 (commit dbaebee):** `SEED_TEXTS` are now 8 example sentences per category, averaged in `initialize_centroids`. **Part 2 still open:** the seed-specific Stage-3 threshold must be measured on the local `echo_db` (lowest score/lead with zero wrong) and wired into `stage3_centroid`; `CENTROID_MIN_SCORE` is still 0.55 for seeds. Steps are in the A18 entry. |
-| A23 | Tier-2 attachment content still starts at the beginning of extracted text; query-matched top passages are not selected. Not blocked any more: the `AGENTS.md` compression ban was removed 2026-10-25 (the owner lifted it on 2026-10-21). |
-| A24 | A24.3 full-text keyword indexing is built, but A24.2 query-matched cleaned-text windows are absent; the synthesizer still uses the leading snippet. Not blocked any more (see A23). |
+| A23 | **Closed 2026-10-26 (simplified by his decision):** no passage selection; leading attachment text, 40,000 chars per file and 80,000 total. See the A23 entry. |
+| A24 | **Closed 2026-10-26 (simplified by his decision):** A24.3 full-text indexing was already built; A24.2 became leading excerpts, 8,000 chars for the top 3 results and 2,000 for the rest. See the A24 entry. |
 | A26 | The agent/tool loop is not wired; `rse/README.md` still lists it under “Not yet wired.” Not blocked any more: `AGENTS.md` constraint 5 now reads "usually 2, max 6" (2026-10-25). |
 | A27 | **Built 2026-10-25, complete:** backend (`answer_markdown` / `answer_sources`), memory pills, moment strip, New chat, and the past-chats screen (`PastChats.tsx`, `GET /retrieval/sessions`, `GET /retrieval/sessions/{id}`). His decisions 2026-10-25: laptop only, so the touch "first tap = peek" is dropped; `GET /retrieval/sessions` needs no `X-API-Key`. See the A27 entry. |
 | A28 | **Built 2026-10-25 and closed as it is (his decision):** the progress lines are built (`run_query_stream`); streaming the reply text word by word is not built and is future work. See the A28 entry. |
