@@ -147,10 +147,11 @@ def query(request: QueryRequest):
     """
     Execute a natural language query against Echo memory.
 
-    Runs the 14-node LangGraph RSE (rse/retrieval_engine.py):
-      parse_intent → resolve_time_anchor → keyword + semantic search → RRF merge
-      → evaluate_quality (widen_scope up to 3x) → cross-encoder rerank
-      → neighbours / attachments / live Gmail → synthesize (or no_results_found)
+    Runs the LangGraph agent loop (rse/retrieval_engine.py, A26): Luna calls the
+    search_memories tool (up to 5 searches) and writes the answer. Each search is
+      time anchor → keyword + semantic search → RRF merge → quality check
+      (widen_scope up to 3x) → cross-encoder rerank → neighbours / attachment text.
+    Usually 2 LLM calls, at most 6.
 
     Multi-turn: pass the session_id from a previous response to continue
     the conversation with full context ("find Chrome pages about that topic").

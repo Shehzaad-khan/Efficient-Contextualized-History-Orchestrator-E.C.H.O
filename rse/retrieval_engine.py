@@ -1,35 +1,25 @@
 """
 retrieval_engine.py — LangGraph RSE entry point.
 
-Assembles the hybrid retrieval graph and exposes run_query() as the single
+Assembles the agent-loop graph (A26) and exposes run_query() as the single
 callable interface for the UI layer and API gateway.
 
-Graph topology (hybrid redesign):
+Graph topology:
 
-    parse_intent                       ← LLM Call 1 (query expansion + anchor fields)
-        ↓
-    resolve_time_anchor                ← deterministic T_anchor lookup (no-op if unanchored)
-        ↓          ↓
-    postgres_   faiss_semantic_        ← PARALLEL fan-out: keyword (FTS) branch and
-    keyword_    search                   semantic (multi-variant FAISS) branch run
-    search         ↓                     in the same LangGraph superstep
-        ↓          ↓
-    merge_and_rrf                      ← Reciprocal Rank Fusion (k=60) + hydration
-        ↓
-    evaluate_quality                   ← 5 deterministic checks, no LLM
-        ↓
-    [strong]            → rerank_cross_encoder  ← local ms-marco cross-encoder + effort score
-    [weak/empty]        → widen_scope (≤3)      → loops back to BOTH search branches
-    [weak, exhausted]   → rerank_cross_encoder  (closest matches, answered honestly)
-    [empty, exhausted]  → no_results_found      → END
-        ↓
-    extend_neighborhood                ← thread / session context for top 3
-        ↓
-    check_attachments → [fetch_attachment | fetch_api] → synthesize   ← LLM Call 2
-                                                            ↓
-                                                           END
+    agent                         ← Luna (LLM) with the search_memories tool bound
+      ↓ asks for searches    ↓ writes the answer
+    search                       finish        ← validates ⟦n⟧ citations → END
+      ↓ results back to Luna
+    agent …                       (up to MAX_SEARCHES searches)
 
-LLM calls per query: exactly 2, regardless of loop iterations.
+One search (rse/search_tool.py run_search) is the same deterministic pipeline as before A26:
+time anchor → keyword (FTS) ∥ semantic (FAISS) → RRF fusion (k=60) → quality check
+(→ widen_scope, up to 3 times) → local cross-encoder rerank → neighbourhood → optional
+attachment text. No LLM call happens inside it.
+
+LLM calls per query: usually 2 (Luna asks for one search, then answers), at most 6
+(MAX_SEARCHES searches, then a call without the tool). The cap is enforced in
+rse/agent_nodes.py, not only in the prompt.
 
 run_query output (A27): final_answer (readable chat answer, citations as text
 pills), answer_markdown (validated ⟦n⟧ markers for the pill UI),
@@ -45,28 +35,10 @@ from typing import Any, Iterator
 
 from langgraph.graph import StateGraph, END
 
-from rse.state import EchoState
-from rse.graph_nodes import (
-    node_parse_intent,
-    node_resolve_time_anchor,
-    node_postgres_keyword_search,
-    node_faiss_semantic_search,
-    node_merge_and_rrf,
-    node_evaluate_quality,
-    node_widen_scope,
-    node_rerank_cross_encoder,
-    node_extend_neighborhood,
-    node_check_attachments,
-    node_fetch_attachment,
-    node_fetch_api,
-    node_synthesize,
-    node_no_results_found,
-)
-from rse.graph_routing import (
-    route_after_evaluate_quality,
-    route_after_check_attachments,
-)
+from rse.agent_nodes import node_agent, node_finish, node_search
 from rse.conversation_memory import load_conversation_history, save_turn
+from rse.graph_routing import route_after_agent, route_after_search
+from rse.state import EchoState
 
 logger = logging.getLogger(__name__)
 
@@ -80,72 +52,14 @@ def _build_graph() -> Any:
     """
     graph = StateGraph(EchoState)
 
-    # ── Register nodes ───────────────────────────────────────────────────────
-    graph.add_node("parse_intent",            node_parse_intent)
-    graph.add_node("resolve_time_anchor",     node_resolve_time_anchor)
-    graph.add_node("postgres_keyword_search", node_postgres_keyword_search)
-    graph.add_node("faiss_semantic_search",   node_faiss_semantic_search)
-    graph.add_node("merge_and_rrf",           node_merge_and_rrf)
-    graph.add_node("evaluate_quality",        node_evaluate_quality)
-    graph.add_node("widen_scope",             node_widen_scope)
-    graph.add_node("rerank_cross_encoder",    node_rerank_cross_encoder)
-    graph.add_node("extend_neighborhood",     node_extend_neighborhood)
-    graph.add_node("check_attachments",       node_check_attachments)
-    graph.add_node("fetch_attachment",        node_fetch_attachment)
-    graph.add_node("fetch_api",               node_fetch_api)
-    graph.add_node("synthesize",              node_synthesize)
-    graph.add_node("no_results_found",        node_no_results_found)
+    graph.add_node("agent",  node_agent)
+    graph.add_node("search", node_search)
+    graph.add_node("finish", node_finish)
 
-    # ── Entry + anchor resolution ────────────────────────────────────────────
-    graph.set_entry_point("parse_intent")
-    graph.add_edge("parse_intent", "resolve_time_anchor")
-
-    # ── PARALLEL fan-out: both retrieval branches leave resolve_time_anchor ──
-    # LangGraph runs nodes reachable in the same superstep concurrently; the
-    # branches write disjoint state keys (postgres_results / faiss_results),
-    # and merge_and_rrf is a fan-in that waits for both.
-    graph.add_edge("resolve_time_anchor", "postgres_keyword_search")
-    graph.add_edge("resolve_time_anchor", "faiss_semantic_search")
-    graph.add_edge("postgres_keyword_search", "merge_and_rrf")
-    graph.add_edge("faiss_semantic_search",   "merge_and_rrf")
-
-    graph.add_edge("merge_and_rrf", "evaluate_quality")
-
-    # ── Conditional: evaluate_quality → strong/weak/empty ────────────────────
-    graph.add_conditional_edges(
-        "evaluate_quality",
-        route_after_evaluate_quality,
-        {
-            "rerank_cross_encoder": "rerank_cross_encoder",
-            "widen_scope":          "widen_scope",
-            "no_results_found":     "no_results_found",
-        },
-    )
-
-    # ── widen_scope loops back to BOTH search branches (fan-out again) ────────
-    graph.add_edge("widen_scope", "postgres_keyword_search")
-    graph.add_edge("widen_scope", "faiss_semantic_search")
-
-    # ── Post-ranking chain ────────────────────────────────────────────────────
-    graph.add_edge("rerank_cross_encoder", "extend_neighborhood")
-    graph.add_edge("extend_neighborhood",  "check_attachments")
-
-    # ── Conditional: check_attachments → fetch_attachment / fetch_api / synth ─
-    graph.add_conditional_edges(
-        "check_attachments",
-        route_after_check_attachments,
-        {
-            "fetch_attachment": "fetch_attachment",
-            "fetch_api":        "fetch_api",
-            "synthesize":       "synthesize",
-        },
-    )
-    graph.add_edge("fetch_attachment", "synthesize")
-    graph.add_edge("fetch_api",        "synthesize")
-
-    # ── Terminal edges ────────────────────────────────────────────────────────
-    graph.add_edge("synthesize",       END)
-    graph.add_edge("no_results_found", END)
+    graph.set_entry_point("agent")
+    graph.add_conditional_edges("agent", route_after_agent, {"search": "search", "finish": "finish"})
+    graph.add_conditional_edges("search", route_after_search, {"agent": "agent", "finish": "finish"})
+    graph.add_edge("finish", END)
 
     return graph.compile()
 
@@ -170,9 +84,10 @@ def run_query(
                     when not provided (i.e. single-turn query).
 
     Returns:
-        Final EchoState dict containing final_answer, ranked_results,
-        parsed_intent, and all other state fields, plus session_id and
-        result_count.
+        Final EchoState dict containing final_answer, found_items (every item
+        shown to Luna, in citation-number order), parsed_intent (the last
+        search's arguments), llm_calls, search_count and all other state
+        fields, plus session_id and result_count.
     """
     session_id, initial_state = _start_session(user_query, session_id)
     started = time.perf_counter()
@@ -232,35 +147,25 @@ def run_query_stream(
     yield {"event": "done", "result": _finish_query(session_id, user_query, final_state, graph_failed, started)}
 
 
-# What each finished graph node says to the user, and which written key (if any)
-# supplies a count to show beside it. No query text, titles or snippets.
-_STEP_LABELS: dict[str, tuple[str, str | None]] = {
-    "parse_intent":            ("Understood your question", None),
-    "resolve_time_anchor":     ("Checked time references", None),
-    "postgres_keyword_search": ("Searched by keywords", "postgres_results"),
-    "faiss_semantic_search":   ("Searched by meaning", "faiss_results"),
-    "merge_and_rrf":           ("Combined the matches", "merged_candidates"),
-    "evaluate_quality":        ("Checked the matches", None),
-    "widen_scope":             ("Widened the search", None),
-    "rerank_cross_encoder":    ("Ranked the best matches", "ranked_results"),
-    "extend_neighborhood":     ("Looked at what surrounds them", None),
-    "check_attachments":       ("Checked attachments", None),
-    "fetch_attachment":        ("Read an attachment", None),
-    "fetch_api":               ("Checked Gmail for new mail", "api_results"),
-    "synthesize":              ("Wrote the answer", None),
-    "no_results_found":        ("Found nothing close", None),
-}
-
-
+# What each finished graph step says to the user. The frontend keeps one progress line per `node`
+# value (it replaces a line with the same node), so every search gets its own event name.
+# No query text, titles or snippets, so a progress line can be shown or logged without leaking content.
 def _step_event(node: str, written: dict[str, Any]) -> dict[str, Any]:
-    label, count_key = _STEP_LABELS.get(node, (node.replace("_", " ").capitalize(), None))
-    value = written.get(count_key) if count_key else None
-    return {
-        "event": "step",
-        "node": node,
-        "label": label,
-        "count": len(value) if isinstance(value, (list, tuple)) else None,
-    }
+    count = None
+    if node == "agent":
+        if written.get("pending_calls"):
+            first = written.get("llm_calls", 1) <= 1
+            event_node = "agent_plan" if first else f"agent_read_{written.get('llm_calls', 0)}"
+            label = "Understood your question" if first else "Read the matches, searching again"
+        else:
+            event_node, label = "agent_answer", "Wrote the answer"
+    elif node == "search":
+        event_node = f"search_{written.get('search_count', 0)}"
+        label = "Searched your memories"
+        count = written.get("last_search_count")
+    else:  # finish
+        event_node, label = "finish", "Checked the sources"
+    return {"event": "step", "node": event_node, "label": label, "count": count}
 
 
 def _start_session(user_query: str, session_id: str | None) -> tuple[str, EchoState]:
@@ -275,17 +180,15 @@ def _start_session(user_query: str, session_id: str | None) -> tuple[str, EchoSt
     initial_state: EchoState = {
         "user_query":           user_query,
         "conversation_history": conversation_history,
+        "agent_messages":       [],
+        "llm_calls":            0,
+        "pending_calls":        [],
+        "agent_failed":         False,
+        "search_count":         0,
+        "found_items":          [],
+        "last_search_count":    0,
         "parsed_intent":        {},
-        "anchor_time":          None,
-        "anchor_item":          None,
-        "postgres_results":     [],
-        "faiss_results":        [],
-        "merged_candidates":    [],
-        "ranked_results":       [],
         "neighbor_items":       {},
-        "attachment_content":   None,
-        "api_results":          [],
-        "result_quality":       "empty",
         "attempt_count":        0,
         "final_answer":         "",
         "answer_markdown":      "",
@@ -321,18 +224,18 @@ def _finish_query(
     if answer and not graph_failed:
         save_turn(session_id, user_query, answer)
 
-    result_count = len(
-        final_state.get("ranked_results") or final_state.get("merged_candidates") or []
-    )
+    result_count = len(final_state.get("found_items") or [])
 
     logger.info(
         "run_query: complete in %.0f ms — no_results=%s answer_length=%d result_count=%d sources=%d "
-        "attempts=%d",
+        "llm_calls=%d searches=%d widened=%d",
         (time.perf_counter() - started) * 1000,
         final_state.get("no_results"),
         len(answer),
         result_count,
         len(final_state.get("answer_sources") or []),
+        final_state.get("llm_calls", 0),
+        final_state.get("search_count", 0),
         final_state.get("attempt_count", 0),
     )
 
@@ -356,18 +259,16 @@ if __name__ == "__main__":
     query = sys.argv[1] if len(sys.argv) > 1 else "find my TechCorp interview email"
     result = run_query(query)
 
-    print("\n── PARSED INTENT ──────────────────────────────────────────")
+    print("\n── LAST SEARCH ────────────────────────────────────────────")
     import json
     print(json.dumps(result.get("parsed_intent", {}), indent=2, default=str))
+    print(f"  llm_calls={result.get('llm_calls')} searches={result.get('search_count')} "
+          f"widened={result.get('attempt_count')}")
 
-    if result.get("anchor_item"):
-        print("\n── TIME ANCHOR ────────────────────────────────────────────")
-        print(f"  {result['anchor_item'].get('title')} @ {result.get('anchor_time')}")
-
-    print(f"\n── RANKED RESULTS: {len(result.get('ranked_results', []))} ──")
-    for row in result.get("ranked_results", [])[:5]:
+    print(f"\n── ITEMS SHOWN TO THE MODEL: {len(result.get('found_items', []))} ──")
+    for number, row in enumerate(result.get("found_items", [])[:10], start=1):
         print(
-            f"  [{row.get('source_type')}] {str(row.get('title', '(no title)'))[:70]} "
+            f"  [{number}] ({row.get('source_type')}) {str(row.get('title', '(no title)'))[:70]} "
             f"(final={row.get('final_score', 0):.3f} ce={row.get('ce_score')} "
             f"rrf={row.get('rrf_score', 0):.4f})"
         )

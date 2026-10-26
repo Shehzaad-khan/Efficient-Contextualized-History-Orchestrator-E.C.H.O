@@ -579,7 +579,7 @@ def _get_stage4_llm():
     """
     Lazily build the fallback classifier LLM from the shared plug-and-play
     LLM_CONFIG (rse.config — single provider change point for the whole app),
-    with the same temperature and fail-fast retry limit as RSE's parse_intent.
+    with the same temperature and fail-fast retry limit as the RSE's former query parser (parser_model).
     Returns None when no provider/API key is configured; Stage 4 then degrades
     to the deterministic 'misc' fallback so enrichment never blocks on the LLM.
     """

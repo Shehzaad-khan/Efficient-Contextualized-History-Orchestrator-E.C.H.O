@@ -3,6 +3,9 @@ Conditional edge routing functions for the LangGraph RSE graph.
 
 Each function receives the current EchoState and returns the name of the next
 node to route to. All routing is pure Python — no LLM calls here.
+
+route_after_evaluate_quality runs inside one search (rse/search_tool.py run_search);
+route_after_agent and route_after_search steer the agent loop graph.
 """
 import logging
 
@@ -48,42 +51,25 @@ def route_after_evaluate_quality(state: EchoState) -> str:
     return route
 
 
-def route_after_check_attachments(state: EchoState) -> str:
+def route_after_agent(state: EchoState) -> str:
     """
-    Route after check_attachments (architecture §10.3 Node 6) — three-way:
+    Route after the agent call: search when Luna asked for searches, else finish.
 
-    - fetch_attachment when parsed_intent.fetch_attachment is True AND a
-      top-3 ranked result has attachments
-    - fetch_api when parsed_intent.fetch_api is True (live-freshness queries:
-      "latest", "today", "just received")
-    - synthesize otherwise
-
-    When both flags fire, the attachment wins — its content answers the
-    specific document request; freshness is already covered by the ranked set.
-
-    Args:
-        state: Current EchoState.
-
-    Returns:
-        Name of the next node.
+    node_agent leaves pending_calls empty on every call that carried no tool (the
+    cap) and on a reply with no tool call, so a model that ignores the cap still
+    ends here.
     """
-    intent = state.get("parsed_intent", {})
-    ranked_results = state.get("ranked_results", [])
+    route = "search" if state.get("pending_calls") else "finish"
+    logger.info("route_after_agent: llm_calls=%d searches=%d → %s",
+                state.get("llm_calls", 0), state.get("search_count", 0), route)
+    return route
 
-    fetch_attachment_requested = bool(intent.get("fetch_attachment", False))
-    fetch_api_requested = bool(intent.get("fetch_api", False))
-    # has_attachments only exists on Gmail rows; other sources read as False.
-    has_attachments_in_top3 = any(r.get("has_attachments") for r in ranked_results[:3])
 
-    if fetch_attachment_requested and has_attachments_in_top3:
-        route = "fetch_attachment"
-    elif fetch_api_requested:
-        route = "fetch_api"
-    else:
-        route = "synthesize"
-
-    logger.info(
-        "route_after_check_attachments: attachment=%s api=%s has_attachments_in_top3=%s → %s",
-        fetch_attachment_requested, fetch_api_requested, has_attachments_in_top3, route,
-    )
+def route_after_search(state: EchoState) -> str:
+    """
+    Route after a round of searches: back to Luna to read the results, or straight to finish
+    when the agent call itself failed (then the results are listed without Luna's answer).
+    """
+    route = "finish" if state.get("agent_failed") else "agent"
+    logger.info("route_after_search: → %s", route)
     return route

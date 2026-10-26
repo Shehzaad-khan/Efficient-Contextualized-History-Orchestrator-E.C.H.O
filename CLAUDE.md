@@ -66,8 +66,8 @@ ever wanted again, it will be recreated from `Echo_System_Design.md`, which is t
    `reviewed=FALSE` and shown in the weekly review, where Remove undoes it. Only items he
    confirmed (`decision='accepted'`) are used as KNN examples.
 5. **LLM calls per retrieval query: usually 2, max 6** (owner's decision A26, 2026-10-18:
-   Luna calls a `search_memories` tool up to 5 rounds; after round 5 the next call must
-   answer — cap enforced in code). The search itself is deterministic Python.
+   Luna calls a `search_memories` tool up to 5 searches; the 6th call has no tool and must
+   answer — cap enforced in `rse/agent_nodes.py`, built 2026-10-26). The search itself is deterministic Python.
 6. **Privacy boundaries**: LLM receives only query text, bounded text excerpts, and aggregated
    numbers (owner's decision 2026-10-26, A23/A24: the first 8,000 chars of each of the top 3 results, 2,000 of the
    others, up to 40,000 chars per attachment; the old "short snippets" limit is lifted). Never database rows or the
@@ -118,6 +118,12 @@ ever wanted again, it will be recreated from `Echo_System_Design.md`, which is t
   text of each result (8,000 chars for the top 3, 2,000 for the rest; `rse/config.py` `SYNTHESIS_EXCERPT_*`) and of each
   attachment (`MAX_CHARS_PER_ATTACHMENT = 40000`, `MAX_CHARS_TOTAL = 80000`). Sizes were chosen from gpt-6-luna's published
   limits (1.05M window, 272K long-context price tier), not from a measured long-context test.
+- **A26 agent loop, as built (2026-10-26)**: the graph is `agent ⇄ search → finish` (`rse/agent_nodes.py`, `rse/search_tool.py`). It differs from the
+  decision text on purpose: no `time_phrase` / `sender_or_domain` arguments (no resolver or sender filter exists; Luna passes a `since` date copied from a
+  calendar in the prompt, and the sender goes into `query`); `parse_intent` is gone, its checker lives on as `rse/query_parser.py`
+  `intent_from_tool_args`; `fetch_api` / `check_attachments` are gone (A45 dropped the live poll; `read_attachment` is a tool argument);
+  `previous_response_id` chaining is deferred (item numbers restart each question). History the agent reads: 12 messages, 1,000 chars per question,
+  3,000 per answer (`rse/config.py`). Checked offline with the real OpenAI client against a fake endpoint, NOT yet against the live service.
 - **Conversation history keeps the `PostgresChatMessageHistory` table format, not the class.**
   `rse/conversation_memory.py` reads and writes the `message_store` table directly through the RSE psycopg2 pool.
 - File names differ from the doc's "Key Files" lists in places (e.g. `gmail_api.py`
@@ -131,7 +137,7 @@ Every feature in the architecture doc is implemented and wired, except the two i
 The build status of every decided item is in `docs/review/ste_open_items.md` (84 of 86 top-level items complete).
 Earlier additions (2026-07):
 Tier-2 attachment extraction + real `fetch_attachment` node, `fetch_api` node (live
-Gmail poll for "today/just received" queries), capture settings (Redis) enforced in
+Gmail poll for "today/just received" queries; removed 2026-10-26 with the A26 loop, A45), capture settings (Redis) enforced in
 all three connectors, `DELETE /items/{id}` + `GET /export` + `GET|POST /settings`,
 extension popup (search / recent 5 / pause toggle), centroid recomputation
 (`recompute_centroids()` in `enp/system_group_classifier.py`, persists `centroids.npz`;
@@ -142,7 +148,8 @@ Added 2026-10-23 to 2026-10-26: arctic-embed-xs + token-window embedding and the
 stored full-text `search_vector` (A1, A24.3), ENP attachment extraction with OCR for images and scanned PDFs (A4, D2),
 incremental Gmail polling (A5, A38), retention cleanup (A37), chat UI with memory pills, past chats and progress lines
 (A27, A28), regret reminder card with snooze (D3), group-rule pause/resume screen (D5), A42 auto-accept of confident group
-suggestions, and the simplified A23/A24 text limits (see §3).
+suggestions, the simplified A23/A24 text limits (see §3), and on 2026-10-26 the A26 agent loop (Luna calls `search_memories` up to 5 searches;
+usually 2 LLM calls, max 6) with `tests/test_agent_loop.py`.
 
 `rsr/` — the orphaned duplicate of `rse/` — was **deleted on 2026-08-31**. It was
 mounted nowhere and its internal imports (`retrival.*`) had always been broken, so
@@ -153,8 +160,9 @@ history if Review 2 needs it:
 (note its `_calculate_diversity` metric measures a prohibited feature — drop that part).
 
 Known open items:
-- **A26 tool loop is not built** (Luna calling `search_memories` for up to 5 rounds; constraint 5 describes the decision, the
-  graph still runs the fixed two-call flow) and **E1, the MCP server, is not built**.
+- **E1, the MCP server, is not built** (it will reuse `rse/search_tool.py`). **A26 is built** but its first live run against OpenAI is
+  still to be done by the owner (`python -m rse.retrieval_engine "find my TechCorp interview email"`: expect `llm_calls=2 searches=1` in the log;
+  if the API rejects the forced first tool choice, set `FORCE_FIRST_SEARCH = False` in `rse/config.py`).
 - **D6, four frontend gaps** (backend routes exist, nothing calls them): old chats show no memory pills, no way to delete a chat,
   no form to add a group rule, no screen to pick items for a group by hand. Details in `docs/review/ste_open_items.md` D6.
 - Threshold values are start values, to be re-measured on live data: A18 part 2 (seed-centroid threshold), A40

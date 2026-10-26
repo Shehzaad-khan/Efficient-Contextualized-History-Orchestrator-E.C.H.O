@@ -43,10 +43,10 @@ Echo finds the interview email, resolves its timestamp as a hard time anchor, re
               clean → classify (4-stage) → embed → index
                               │
                               ▼
-              LangGraph Retrieval Engine (usually 2 LLM calls, max 6):
-              parse_intent → time anchor → [keyword ∥ semantic] → RRF
+              LangGraph Retrieval Engine (agent loop; usually 2 LLM calls, max 6):
+              Luna calls search_memories → time anchor → [keyword ∥ semantic] → RRF
               → quality gate → (widen ≤3×) → cross-encoder re-rank
-              → neighborhood context → attachments / live poll → synthesize
+              → neighborhood context → attachment text → Luna answers (cited)
                               │
                               ▼
         React dashboard ("Midnight Study")
@@ -94,7 +94,7 @@ The frontend runs without the backend too — it flips into a clearly-badged **d
 
 ## Design Decisions Worth Knowing
 
-- **Usually 2 LLM calls per query, max 6** — the LLM may call a `search_memories` tool for up to 5 rounds, then must answer (decision A26). The search itself is deterministic, inspectable Python.
+- **Usually 2 LLM calls per query, max 6** — Luna calls a `search_memories` tool for up to 5 searches, then must answer (decision A26, built 2026-10-26). The search itself is deterministic, inspectable Python.
 - **Rank fusion, not score fusion** — `ts_rank` and cosine similarity live on incomparable scales; RRF (k=60) merges by rank.
 - **Everything rebuildable but PostgreSQL** — FAISS and Redis can be regenerated from it at any time.
 
