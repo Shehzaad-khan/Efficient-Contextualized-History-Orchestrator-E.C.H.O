@@ -9,7 +9,7 @@ Working file — committed to the repo from 2026-10-22 so Claude web can read it
 3. Section B needs a backup before any statement runs: a Neon snapshot or branch for Neon (B1–B3, done), a `pg_dump -Fc` of `echo_db` into `C:\Users\mdshe\echo_backups\` for the local database (B5).
 4. Section D is built after the whole review is finished.
 
-**Audit snapshot — 2026-10-26 (top-level IDs; supersedes the 2026-10-25 one):** 85 entries = **83 complete/resolved + 2 not fully complete**. Counting rule: A1–A45 are owner-decision entries, counted complete when the decision is recorded; their implementation follow-ups are audited separately below. B4 is informational/no action. Breakdown: A 45/45 decisions recorded; B 5/5 resolved (B5 ran 2026-10-25); C 29/29 resolved; D 4 complete (D1, D3, D4, D5; D3 and D5 built 2026-10-25), D2 partial (the A4 merge left; old `.doc` dropped 2026-10-26); E1 partial (decision made, implementation absent). E2 (import personal history + export button) was removed from scope on 2026-10-25: the presentation uses the test account only. The two not-fully-complete top-level IDs are D2 and E1 (both partial). This top-level count is not a claim that all decided features are implemented. The 2026-10-25 build work (A16/A40 + B5, A27, A28, A37, OCR, D3, D5, A42, A18 part 1, review fixes) is committed and merged to `main` (PRs #12, #13, #14); the two branches were checked after the PR #14 merge and nothing was lost.
+**Audit snapshot — 2026-10-26 (top-level IDs; supersedes the 2026-10-25 one):** 85 entries = **84 complete/resolved + 1 not fully complete**. Counting rule: A1–A45 are owner-decision entries, counted complete when the decision is recorded; their implementation follow-ups are audited separately below. B4 is informational/no action. Breakdown: A 45/45 decisions recorded; B 5/5 resolved (B5 ran 2026-10-25); C 29/29 resolved; D 5 complete (D1, D2, D3, D4, D5; D3 and D5 built 2026-10-25, D2 closed 2026-10-26 with old `.doc` dropped); E1 partial (decision made, implementation absent). E2 (import personal history + export button) was removed from scope on 2026-10-25: the presentation uses the test account only. The one not-fully-complete top-level ID is E1 (partial: decision made, implementation absent). This top-level count is not a claim that all decided features are implemented. The 2026-10-25 build work (A16/A40 + B5, A27, A28, A37, OCR, D3, D5, A42, A18 part 1, review fixes) is committed and merged to `main` (PRs #12, #13, #14); the two branches were checked after the PR #14 merge and nothing was lost.
 
 **Decision 2026-10-25 (his): the presentation runs on the TEST ACCOUNT only.** There is no time to move to his personal account. So E2 (import personal history + export button) is out of scope, and the Mon 26 / Tue 27 Oct retest and the threshold recompute (A18, A40) use the test account's data.
 
@@ -1961,7 +1961,7 @@ The `[x] decided` marks above mean the owner's decision is recorded. They do not
 ### D1. Dispose the DB pool on shutdown — [x] 2026-10-22 (`postgresql_manager.dispose_engine()`, called in the `backend/main.py` lifespan after ENP stops; idempotent, engine is re-created on next use; the RSE psycopg2 pool in `rse/search_coordinator.py` is NOT closed — not part of this item)
 - Backend shutdown never calls `engine.dispose()`; pooled connections wait for Neon's idle timeout.
 
-### D2. Full attachment support — [~] 2026-10-25 OCR for images and scanned PDFs built; old `.doc` dropped by his decision 2026-10-26; the A4 merge still open
+### D2. Full attachment support — [x] 2026-10-26 complete (OCR built 2026-10-25, A4 merge found built, old `.doc` dropped by his decision)
 - **Works today:** PDF (pypdf → pdfplumber), DOCX (python-docx), `.txt` / `.md` / `.csv`.
 - **To build:**
   - [x] OCR for images (PNG/JPG/…): **built and checked with the real program 2026-10-25 (committed)**.
@@ -1989,8 +1989,13 @@ The `[x] decided` marks above mean the owner's decision is recorded. They do not
         strings, sheet names, EML plain vs HTML),
         on corrupt input (returns None) and on an oversized member (skipped). NOT checked on real Office files from
         a real mailbox; do that locally. Open then: old `.doc`/`.xls`/`.ppt` (dropped 2026-10-26), OCR, scanned PDFs (OCR built 2026-10-25, see D2).
-  - [ ] A4 decided 2026-10-21: extract at ingestion into `extracted_text`, merge into embedded text (shared
-        800-char budget) + full text into the tsvector, set `is_processed = TRUE`.
+  - [x] A4 decided 2026-10-21: extract at ingestion into `extracted_text`, merge into embedded text (shared
+        800-char budget) + full text into the tsvector, set `is_processed = TRUE`. **Found built on 2026-10-26 (the box was stale):**
+        `_load_attachment_texts` in `enp/enrichment_pipeline.py` reads `gmail_attachments.extracted_text` or extracts and stores it
+        (`extract_full_text`); `topic_extractor._attachment_parts` puts the attachment text after the body in the embedded text
+        (A16's 210-token pool split evenly replaced the 800-char budget); `_SEARCH_VECTOR_EXPRESSION` adds it to `search_vector`;
+        `mark_item_processed` sets `gmail_attachments.is_processed = TRUE`. Not checked on a real attachment with text: the 4 real
+        attachments are 0-byte JPEGs, so B5 re-embedded the mails without any attachment text.
 
 ### D4. Sessions are never built — [x] 2026-10-23 (found 2026-10-18, wba/wellbeing_analytics.py review)
 - **Built 2026-10-23:** `ensure_sessions_for_range` / `ensure_sessions_for_day` in `wba/wellbeing_analytics.py`. Today is rebuilt
