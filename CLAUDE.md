@@ -87,8 +87,8 @@ ever wanted again, it will be recreated from `Echo_System_Design.md`, which is t
   token window with its tokenizer** (owner's decisions A16 + A40, 2026-10-21): the stored
   `embeddable_text` is exactly what was embedded. Embedding model = snowflake-arctic-embed-xs
   (512 tokens, 384-d), replacing all-MiniLM-L6-v2. Built in code 2026-10-25 (`fit_to_window`, query path,
-  `EMBEDDING_VERSION = "snowflake-arctic-embed-xs-v1"`); the stored vectors switch at the B5 re-embed. Until then
-  `FAISSManager.load_index` refuses an index of another version (ValueError with the rebuild steps).
+  `EMBEDDING_VERSION = "snowflake-arctic-embed-xs-v1"`) and applied by the B5 re-embed on 2026-10-25 (111 items).
+  `FAISSManager.load_index` still refuses an index of another version (ValueError with the rebuild steps).
 - **Tier-1 attachment `lightweight_extract`** stores filename/mime/size, not the first
   500 chars of content (keeps the ingestion hot path fast). The full text is extracted
   later by the ENP worker (`enp/attachment_processor.extract_full_text`, A4) into
@@ -121,9 +121,11 @@ ever wanted again, it will be recreated from `Echo_System_Design.md`, which is t
 
 ---
 
-## 4. Current state (as of 2026-07-07 — full audit complete)
+## 4. Current state (as of 2026-10-26)
 
-Every feature in the architecture doc is implemented and wired. Recent additions:
+Every feature in the architecture doc is implemented and wired, except the two items under "Known open items" below.
+The build status of every decided item is in `docs/review/ste_open_items.md` (84 of 85 top-level items complete).
+Earlier additions (2026-07):
 Tier-2 attachment extraction + real `fetch_attachment` node, `fetch_api` node (live
 Gmail poll for "today/just received" queries), capture settings (Redis) enforced in
 all three connectors, `DELETE /items/{id}` + `GET /export` + `GET|POST /settings`,
@@ -131,6 +133,12 @@ extension popup (search / recent 5 / pause toggle), centroid recomputation
 (`recompute_centroids()` in `enp/system_group_classifier.py`, persists `centroids.npz`;
 ENP runs it at startup when the file is missing or older than 30 days), rule-suggestion
 surfacing (step 9) + weekly review UI in the frontend.
+
+Added 2026-10-23 to 2026-10-26: arctic-embed-xs + token-window embedding and the B5 re-embed (A16/A40), the visits table and
+stored full-text `search_vector` (A1, A24.3), ENP attachment extraction with OCR for images and scanned PDFs (A4, D2),
+incremental Gmail polling (A5, A38), retention cleanup (A37), chat UI with memory pills, past chats and progress lines
+(A27, A28), regret reminder card with snooze (D3), group-rule pause/resume screen (D5), A42 auto-accept of confident group
+suggestions, and the simplified A23/A24 text limits (see §3).
 
 `rsr/` — the orphaned duplicate of `rse/` — was **deleted on 2026-08-31**. It was
 mounted nowhere and its internal imports (`retrival.*`) had always been broken, so
@@ -141,8 +149,12 @@ history if Review 2 needs it:
 (note its `_calculate_diversity` metric measures a prohibited feature — drop that part).
 
 Known open items:
-- OCR for image attachments is optional (pytesseract commented in requirements.txt —
-  needs the Tesseract system binary).
+- **A26 tool loop is not built** (Luna calling `search_memories` for up to 5 rounds; constraint 5 describes the decision, the
+  graph still runs the fixed two-call flow) and **E1, the MCP server, is not built**.
+- Threshold values are start values, to be re-measured on live data: A18 part 2 (seed-centroid threshold), A40
+  (`MIN_TOP_SIMILARITY` 0.55) and A42 (`KNN_ONLY_THRESHOLD` 0.65).
+- OCR for images and scanned PDFs is built (`pytesseract` in requirements.txt) but needs the Tesseract system binary
+  (Windows: `winget install UB-Mannheim.TesseractOCR`); without it OCR stays off.
 - Weekly auto-assign is manual/OS-scheduler; monthly centroid recomputation runs at ENP
   startup when its file is missing or older than 30 days. There is no in-app cron.
 - Frontend "Memory indexing" toggle in Settings is localStorage-only (ENP worker has
