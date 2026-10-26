@@ -9,7 +9,7 @@ Working file — committed to the repo from 2026-10-22 so Claude web can read it
 3. Section B needs a backup before any statement runs: a Neon snapshot or branch for Neon (B1–B3, done), a `pg_dump -Fc` of `echo_db` into `C:\Users\mdshe\echo_backups\` for the local database (B5).
 4. Section D is built after the whole review is finished.
 
-**Audit snapshot — 2026-10-26 (top-level IDs; supersedes the 2026-10-25 one):** 85 entries = **84 complete/resolved + 1 not fully complete**. Counting rule: A1–A45 are owner-decision entries, counted complete when the decision is recorded; their implementation follow-ups are audited separately below. B4 is informational/no action. Breakdown: A 45/45 decisions recorded; B 5/5 resolved (B5 ran 2026-10-25); C 29/29 resolved; D 5 complete (D1, D2, D3, D4, D5; D3 and D5 built 2026-10-25, D2 closed 2026-10-26 with old `.doc` dropped); E1 partial (decision made, implementation absent). E2 (import personal history + export button) was removed from scope on 2026-10-25: the presentation uses the test account only. The one not-fully-complete top-level ID is E1 (partial: decision made, implementation absent). This top-level count is not a claim that all decided features are implemented. The 2026-10-25 build work (A16/A40 + B5, A27, A28, A37, OCR, D3, D5, A42, A18 part 1, review fixes) is committed and merged to `main` (PRs #12, #13, #14); the two branches were checked after the PR #14 merge and nothing was lost.
+**Audit snapshot — 2026-10-26 (top-level IDs; supersedes the 2026-10-25 one):** 86 entries = **84 complete/resolved + 2 not fully complete**. Counting rule: A1–A45 are owner-decision entries, counted complete when the decision is recorded; their implementation follow-ups are audited separately below. B4 is informational/no action. Breakdown: A 45/45 decisions recorded; B 5/5 resolved (B5 ran 2026-10-25); C 29/29 resolved; D 5 complete (D1, D2, D3, D4, D5; D3 and D5 built 2026-10-25, D2 closed 2026-10-26 with old `.doc` dropped), D6 open; E1 partial (decision made, implementation absent). E2 (import personal history + export button) was removed from scope on 2026-10-25: the presentation uses the test account only. The two not-fully-complete top-level IDs are D6 (four frontend gaps, found 2026-10-26, nothing built) and E1 (partial: decision made, implementation absent). D6 was added 2026-10-26, so the total went from 85 to 86. This top-level count is not a claim that all decided features are implemented. The 2026-10-25 build work (A16/A40 + B5, A27, A28, A37, OCR, D3, D5, A42, A18 part 1, review fixes) is committed and merged to `main` (PRs #12, #13, #14); the two branches were checked after the PR #14 merge and nothing was lost.
 
 **Decision 2026-10-25 (his): the presentation runs on the TEST ACCOUNT only.** There is no time to move to his personal account. So E2 (import personal history + export button) is out of scope, and the Mon 26 / Tue 27 Oct retest and the threshold recompute (A18, A40) use the test account's data.
 
@@ -2052,6 +2052,26 @@ The `[x] decided` marks above mean the owner's decision is recorded. They do not
   - The session length comes from stored sessions (dwell sums), not a live timer, so it can trail real time by a few minutes.
   - Checked in a browser with a mocked backend (card appears, snooze sends the call and closes it); NOT yet tried against the live
     backend and database with a real regret habit.
+
+### D6. Frontend gaps found after the build — [ ] open (found 2026-10-26; all four are frontend-only changes)
+Found while reviewing what the screens can actually do. Each one was checked on 2026-10-26: the backend route exists, and nothing in
+`frontend/src` calls it (also searched every remote branch for `addRule`, `assignToGroup`, `/assign` and `deleteSession`: no hits).
+- [ ] **D6.1 Old chats show plain text, no memory pills.** `save_turn` (`rse/conversation_memory.py`) stores only `final_answer` in
+  `message_store`, and `GET /retrieval/sessions/{id}` returns `{role, text}`, so `toChatMessages` in `frontend/src/pages/RecallPage.tsx`
+  rebuilds an old reply with `sources: []`. Bold text and lists still render (the text is markdown); only the pills and the moment strip
+  are missing. To fix: also save `answer_markdown` + `answer_sources` with the reply (the `message` column is JSONB, so no schema change)
+  and return them from `/sessions/{id}`. This one needs a small backend change as well as the frontend.
+- [ ] **D6.2 Deleting a chat from the Past chats panel.** The route `DELETE /retrieval/session/{id}` exists but needs `X-API-Key`, and
+  the key must not ship in the browser bundle (same reasoning as the A27 decision that opened `GET /retrieval/sessions`). So: open a
+  delete route the way `/sessions/{id}` was opened, then add the button and a confirm step to `PastChats.tsx` and a `deleteSession`
+  in `lib/api.ts`. Decide first whether to open the route (his call, it deletes data).
+- [ ] **D6.3 Adding a rule to a group.** `POST /wellbeing/groups/{id}/rules` exists (types keyword, domain, channel, sender,
+  time_window; 400 on a bad value) but no frontend code calls it. Add a form on the rules screen (`GroupRulesPage.tsx`) and an
+  `addRule` in `lib/api.ts` that does not fall back to demo data (same rule as `setRuleActive`). Also still not shown on that screen:
+  the step-9 rule suggestions (`GET /wellbeing/groups/{id}/rule-suggestions`).
+- [ ] **D6.4 Choosing items for a group by hand.** `POST /wellbeing/groups/{id}/assign` (`manual_assign`) and `GET .../items` exist; no
+  screen lets him pick items and put them in a group. Needs an item picker (recent items or search) and an `assignToGroup` in
+  `lib/api.ts`. This is a write path into `memory_user_groups` through `manual_assign`, which hard constraint 4 allows.
 
 ---
 

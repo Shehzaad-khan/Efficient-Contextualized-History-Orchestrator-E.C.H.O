@@ -124,7 +124,7 @@ ever wanted again, it will be recreated from `Echo_System_Design.md`, which is t
 ## 4. Current state (as of 2026-10-26)
 
 Every feature in the architecture doc is implemented and wired, except the two items under "Known open items" below.
-The build status of every decided item is in `docs/review/ste_open_items.md` (84 of 85 top-level items complete).
+The build status of every decided item is in `docs/review/ste_open_items.md` (84 of 86 top-level items complete).
 Earlier additions (2026-07):
 Tier-2 attachment extraction + real `fetch_attachment` node, `fetch_api` node (live
 Gmail poll for "today/just received" queries), capture settings (Redis) enforced in
@@ -151,6 +151,8 @@ history if Review 2 needs it:
 Known open items:
 - **A26 tool loop is not built** (Luna calling `search_memories` for up to 5 rounds; constraint 5 describes the decision, the
   graph still runs the fixed two-call flow) and **E1, the MCP server, is not built**.
+- **D6, four frontend gaps** (backend routes exist, nothing calls them): old chats show no memory pills, no way to delete a chat,
+  no form to add a group rule, no screen to pick items for a group by hand. Details in `docs/review/ste_open_items.md` D6.
 - Threshold values are start values, to be re-measured on live data: A18 part 2 (seed-centroid threshold), A40
   (`MIN_TOP_SIMILARITY` 0.55) and A42 (`KNN_ONLY_THRESHOLD` 0.65).
 - OCR for images and scanned PDFs is built (`pytesseract` in requirements.txt) but needs the Tesseract system binary
