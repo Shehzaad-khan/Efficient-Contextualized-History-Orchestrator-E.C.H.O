@@ -9,11 +9,13 @@ Working file — committed to the repo from 2026-10-22 so Claude web can read it
 3. Section B needs a backup before any statement runs: a Neon snapshot or branch for Neon (B1–B3, done), a `pg_dump -Fc` of `echo_db` into `C:\Users\mdshe\echo_backups\` for the local database (B5).
 4. Section D is built after the whole review is finished.
 
-**Audit snapshot — 2026-10-24 (top-level IDs):** 86 entries = **80 complete/resolved + 6 not fully complete**. Counting rule: A1–A45 are owner-decision entries, counted complete when the decision is recorded; their implementation follow-ups are audited separately below. B4 is informational/no action. Breakdown: A 45/45 decisions recorded; B 4 resolved (B1–B3 and informational B4), B5 open; C 29/29 resolved; D 2 complete, D2/D3 open, D5 partial; E1 partial (decision made, implementation absent), E2 open. The six not-fully-complete top-level IDs are B5, D2, D3, D5, E1, E2 (4 open, 2 partial). This top-level count is not a claim that all decided features are implemented. **Update 2026-10-25: D3 and D5 are built** (see their entries), so of these six, four remain: B5, D2, E1, E2.
+**Audit snapshot — 2026-10-25 (top-level IDs; supersedes the 2026-10-24 one):** 85 entries = **81 complete/resolved + 4 not fully complete**. Counting rule: A1–A45 are owner-decision entries, counted complete when the decision is recorded; their implementation follow-ups are audited separately below. B4 is informational/no action. Breakdown: A 45/45 decisions recorded; B 5/5 resolved (B5 ran 2026-10-25); C 29/29 resolved; D 2 complete (D1, D4), D2 partial (old `.doc` + the A4 merge left), D3 open, D5 partial (UI toggle left); E1 partial (decision made, implementation absent). E2 (import personal history + export button) was removed from scope on 2026-10-25: the presentation uses the test account only. The four not-fully-complete top-level IDs are D2, D3, D5, E1 (1 open, 3 partial). This top-level count is not a claim that all decided features are implemented. The 2026-10-25 build work (A27, A28, A37, OCR, review fixes) is in the working tree, not committed.
 
-**Implementation follow-ups inside decided A entries (not additional top-level IDs):** 11 decision IDs still have an implementation step open or partial: 7 have build work remaining; 4 had been blocked by `AGENTS.md` hard constraints (A23/A24 by constraint 3, A26 by constraint 5, A42 by constraint 4); `AGENTS.md` was brought in line with `CLAUDE.md` on 2026-10-25, so none of them is blocked any more. A7 is complete; its previous cross-check row was stale. Their status is checked after A45 below. In particular, A16/A40 are prerequisites for B5; do not run B5 before those decisions' implementation work is complete.
+**Decision 2026-10-25 (his): the presentation runs on the TEST ACCOUNT only.** There is no time to move to his personal account. So E2 (import personal history + export button) is out of scope, and the Mon 26 / Tue 27 Oct retest and the threshold recompute (A18, A40) use the test account's data.
 
-Original inventory: 45 decisions · 5 live-DB entries · 29 cross-file fixes · 5 build items · 2 later items = **86**. C29 (delete pending-answers file) was added 2026-10-22; A44 retry + A45 fresh Gmail poll were added 2026-10-21 as stretch (A45 closed with no build on 2026-10-24); A42 auto-accept + A43 user-group nesting, A41 Gmail open tracking, A40 model choice, E2 personal-data import, and A37–A39 (retention, spam, timings) were added 2026-10-21; A5/A6 were added 2026-10-15; A7–A24 were added 2026-10-17; A25–A28 were added 2026-10-18; E1 MCP was added 2026-10-18.
+**Implementation follow-ups inside decided A entries (not additional top-level IDs):** 6 decision IDs still have an implementation step open or partial: 2 have build work remaining (A18 richer seeds and A40 threshold recompute, both deferred to Mon 26 / Tue 27 Oct); 4 are decided but their build waits on a talk with him (A23 and A24 query-matched passages, A26 tool loop, A42 auto-accept). **`AGENTS.md` hard constraints 3, 4 and 5 are STALE (his word, 2026-10-25): the recorded decisions win, so those four items are no longer blocked by it; they are only waiting for the talk.** A16 closed with B5; A37 closed; A17 closed by his decision (no further build); A28 closed as it is (progress lines only) on 2026-10-25. Their status is checked after A45 below.
+
+Original inventory: 45 decisions · 5 live-DB entries · 29 cross-file fixes · 5 build items · 2 later items = **86, minus E2 (removed 2026-10-25) = 85**. C29 (delete pending-answers file) was added 2026-10-22; A44 retry + A45 fresh Gmail poll were added 2026-10-21 as stretch (A45 closed with no build on 2026-10-24); A42 auto-accept + A43 user-group nesting, A41 Gmail open tracking, A40 model choice, E2 personal-data import, and A37–A39 (retention, spam, timings) were added 2026-10-21; A5/A6 were added 2026-10-15; A7–A24 were added 2026-10-17; A25–A28 were added 2026-10-18; E1 MCP was added 2026-10-18.
 
 ---
 
@@ -528,8 +530,9 @@ Still open — decide each:
 - **Built 2026-10-24 (cloud session, first half):** 29 domains added to `DOMAIN_CATEGORY_MAP` (136 -> 165 entries: 96 study,
   38 entertainment, 20 work, 11 personal; the first `personal` entries) from the simulation's misses above. Left out on
   purpose, like medium.com: chatgpt.com, claude.ai, docs.google.com, news sites (content too varied for a domain rule).
-  **Still open (local):** the pass over the real top 50-100 Stage-4 domains (`classified_by IN ('llm','fallback')`) on the
-  restored data; the cloud session has no access to it.
+  **Closed 2026-10-25 by his decision, no further build:** the pass over the real top 50-100 Stage-4 domains is dropped. The
+  test account has hardly any browsing, so its domains cannot predict real use and there is nothing worth adding. The 29
+  domains added above stay as the final map for this demo.
 
 ### A18. Improve the initial seed centroids — Stage 3 almost never fires with them — [x] decided 2026-10-21 (found 2026-10-17; his ask 2026-10-21: improve the seeds)
 - Seeds are one 7–9-word bag of words per category. Real items score cosine **0.10–0.55** against them, so the
@@ -891,10 +894,26 @@ Still open — decide each:
   `final_answer`; 3 sources, each with a link and role `direct`); a second turn on the same `session_id` gave
   `turns` = 2; the list is newest first; no key and a wrong key give 401. My two test chats were deleted from
   `message_store` afterwards. The Gmail link already uses `#all/<thread_id>` (`rse/llm_synthesizer.py:166`), so that
-  note is done. **Open question (his call): `/retrieval/sessions` needs `X-API-Key` like the other session routes,
-  and the frontend has no key (it must not ship one in the browser bundle).** Either open it like `/query` (it only
-  shows the user's own questions on a local port) or keep the key and give the UI a different route; until you pick,
-  the chat list UI cannot be wired.
+  note is done. **Settled 2026-10-25 (his decision): `/retrieval/sessions` no longer needs `X-API-Key`** (the frontend must not ship a key in
+  the browser bundle). Only this route was opened: `GET /retrieval/session/{id}` (the messages) and `DELETE` stay locked.
+  Checked through FastAPI's TestClient on the real DB: list without a key 200 (5 chats), `limit=0` 422, detail and delete
+  without a key 401, detail with a wrong key 401. **Past-chats screen built 2026-10-25 (his go; working tree, not committed).** His wish was to open `GET /retrieval/session/{id}`; instead a new
+  open route `GET /retrieval/sessions/{id}` returns clean `{role, text}` messages (404 when the chat has no messages, 400 on a bad id),
+  and the diagnostic `/session/{id}` and `DELETE` stay locked. `frontend/src/components/PastChats.tsx`: a "Past chats" button next to
+  "New chat" opens a panel (newest first, title, time, question count, "open now" mark; Escape or an outside click closes it; loaded on
+  every open). Picking a chat loads its messages and keeps its session id, so the next question continues it. `RecallPage.tsx` also
+  remembers the open chat id in `localStorage` (`echo.recall.session`) and goes back to it after a reload; a chat that no longer
+  exists starts fresh. `last_active` is returned as UTC so the browser shows local time. Stored replies carry no pills (message_store
+  keeps text only), so an old chat shows plain text, with bold and lists drawn. Checked: route test on the real DB with throwaway chats
+  (messages, unknown id 404, bad id 400, diagnostic and delete still 401, list time and title correct); `tsc` clean; in Chrome: panel
+  lists the chats (an HTML `<script>` title is shown as text), opening one shows its messages, a reload returns to it, a question asked
+  in the opened chat made it grow from 2 to 3 turns (same session id), New chat clears the stored id and a reload then starts empty,
+  a deleted chat starts fresh, no console errors. All throwaway chats deleted. **The moment strip was seen in a real browser in the same
+  run (dots from 30 Mar to 21 May).** Not built: deleting a chat from the screen, and a stored chat's pills.
+  **Bug found and fixed in the same run:** one real answer showed a stray `⟦8⚠` after the pills (a garbled citation marker from the model).
+  `rse/llm_synthesizer.py` now removes broken markers (`_BROKEN_MARKER_RE`); checked on 6 strings (garbled, cut-off, `[2]` form,
+  out-of-range, none, lone `⟦`).
+  **Also 2026-10-25 (his decision): laptop only, so the touch "first tap = peek, second tap = open" is dropped.**
 - **Pills, moment strip and New chat built 2026-10-25 (working tree, not committed):** `frontend/src/components/AnswerBody.tsx`
   draws `answer_markdown` as chat text (paragraphs, bullet / numbered lists, **bold**; built as React elements, no HTML
   injection) with a pill for each ⟦n⟧: source icon (Mail / Globe / Play), the anchor (sender, site, channel) and the date;
@@ -908,10 +927,10 @@ Still open — decide each:
   rendered to HTML in Node: 3 sources over 3 days -> 3 dots at 1.0 %, 31.8 %, 99.0 % (31.8 % hand-checked from the
   times), same-day sources -> no strip, a `<script>` title is escaped, an unknown marker is dropped, a source with no link
   is a focusable span, null and invalid dates do not crash. NOT built: "What was I doing around then?" in the peek card
-  (needs the ±5 min neighbourhood in `answer_sources`), the touch "first tap = peek, second tap = open", the past-chats list
-  and resume (the key question above), remembering the open chat across a reload, a visual check of the strip in a browser.
+  (needs the ±5 min neighbourhood in `answer_sources`), the past-chats list
+  and resume screen (built later the same day, see above), remembering the open chat across a reload, a visual check of the strip in a browser.
 
-### A28. Live "what Echo is doing" progress in the UI — [x] DECIDED 2026-10-18 (his go: "really good one")
+### A28. Live "what Echo is doing" progress in the UI — [x] DECIDED 2026-10-18 (his go: "really good one"); CLOSED as it is 2026-10-25 (progress lines only; word-by-word reply text is future work)
 - With up to 5 search rounds a query can take several seconds. Stream the steps ("Searching Gmail for 'offer
   letter', last 2 weeks…", "Reading 8 results…", "Writing the answer…") over SSE instead of one silent POST,
   then stream the reply text itself into the chat bubble (A27). Backend: a streaming variant of `/query`
@@ -999,8 +1018,8 @@ Still open — decide each:
      three ways, case by case at build time: (a) look the real value up from the TEST account itself — Gmail API,
      the test account's YouTube Takeout, the test Chrome profile's History file (real visit times, last 90 days);
      (b) approximate; (c) NULL where honest. Personal-data import
-     (Google Takeout + browser History file) is NOT part of the build: moved to E2, stretch from Mon 26 Oct,
-     not shown in the demo unless fully ready.
+     (Google Takeout + browser History file) is NOT part of the build: E2 (personal-history import) was REMOVED from scope 2026-10-25
+     (his decision: the presentation uses the test account only).
   3. Schema: **fully open** (add, change or drop) — the 16-table lock is lifted. Guardrails (his ask: "keep me
      within limits so that I don't creep scope"): every schema change must belong to a decided item; each one is
      written twice — in `scripts/setup_db.py` (fresh installs) AND as an ALTER/migration SQL run on the restored
@@ -1399,8 +1418,8 @@ Still open — decide each:
     windows with the embedding model, 10 results × ~5 windows per round would add ~1 s per round under load
     (Likely, from per-item speed) — so use keyword overlap there, or measure first.
   - B5 re-embed time, worst case (every item fills the window): ~110 test items (Likely: `data_faiss/echo_faiss.index`
-    was 169,005 bytes on 16 Oct = ~110 vectors of 1,536 bytes; Neon may hold more now) → arctic-xs ~24 s. If the E2
-    personal import brings 3,000 items: MiniLM 4 min, arctic-xs 11 min, bge 17 min, granite@512 36 min, @1,024 100 min.
+    was 169,005 bytes on 16 Oct = ~110 vectors of 1,536 bytes; Neon may hold more now) → arctic-xs ~24 s. If a
+    personal import (E2, removed from scope 2026-10-25) had brought 3,000 items: MiniLM 4 min, arctic-xs 11 min, bge 17 min, granite@512 36 min, @1,024 100 min.
     Daily load at ~100 items/day (A37's assumption): arctic-xs ~22 s of CPU.
   - Build: ~45 min code + the B5 re-embed already planned + the cutoff re-tune.
   - Risk: no test item was longer than ~940 tokens, but Chrome pages reach 12,000 chars (~3,000 tokens). Notice it on
@@ -2011,31 +2030,6 @@ The `[x] decided` marks above mean the owner's decision is recorded. They do not
 ---
 
 ## E. Later — after the review AND Step 2 are complete
-
-### E2. Import personal history + an "export my data" option (stretch, from Mon 26 Oct if time permits) — [ ] later (his plan, 2026-10-21)
-- Researched 2026-10-21. Gmail: no export needed (the connector already reads the whole mailbox; add a date cutoff).
-  YouTube: Google Takeout `watch-history.json` (title, video URL, channel, UTC time) + the same Data API fill as
-  live capture; no watch time / completion. Chrome: the profile's local `History` SQLite (`urls` + `visits`:
-  url, title, visit times, `visit_duration`), kept 90 days only; NO page text, scroll, interactions or real dwell.
-- What we GET / DON'T GET / CHANGES, per source:
-  - Gmail — get: everything live capture gets (sender, subject, body, labels, attachments, time). Missing: nothing.
-    Change: date cutoff in `gmail_api.py` (~30 min).
-  - YouTube — get: video id, title, channel, exact time of every watch, watch count; Data API then adds
-    description, duration, category, Short/regular (same as live). Missing: watch time, completion %; the 15 s /
-    20 s gate cannot apply, so every watched video gets in. Change: importer drops ads ("From Google Ads"),
-    removed videos (no titleUrl) and YouTube Music entries; writes NULL watch time / completion (~2-3 h).
-  - Chrome (the profile's local `History` file, not Takeout — Takeout only has Chrome-sync history) — get: URL,
-    title, domain, exact time of every visit, visit count; last 90 days only. Missing: page text (search sees
-    title + URL only), scroll, interactions, real dwell (`visit_duration` = until the tab moved on, not
-    foreground). Change: importer runs live capture's own filters (canonicalize_url, extract_domain, excluded /
-    sensitive domains, app pages, chrome:// URLs) + gate (>= 2 visits or >= 10 s); writes NULL dwell / scroll /
-    interactions (~3 h). Copy the file first (locked while the browser is open). History is per browser
-    PROFILE, not per Google account.
-  - Shared: skip existing rows via UNIQUE(source_type, source_id); explicit NULLs (schema defaults are 0); an
-    `imported` marker column; reranker skips NULL dwell (A29). Total ~1 day incl. ~2 h testing. Start the Takeout
-    early — Google emails the link (minutes to hours).
-  - Build on a separate branch (it lands after the Sun 25 freeze); merge only if it works end to end.
-- Frontend "export my data" button (GET /export already exists). Not in the demo unless fully ready.
 
 ### E1. Echo as an MCP server (Claude Desktop or any MCP client) — [~] decision complete 2026-10-21; build still open (checked 2026-10-24)
 - **Decision (his, 2026-10-21): build it this week** (moved from "later" into the Thu 22 – Sun 25 build).

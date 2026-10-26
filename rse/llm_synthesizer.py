@@ -59,6 +59,9 @@ _SOURCE_ICONS: dict[str, str] = {"gmail": "✉", "chrome": "🌐", "youtube": "�
 
 # ⟦3⟧ is the asked-for marker; [3] is accepted too because models fall back to it.
 _MARKER_RE = re.compile(r"⟦\s*(\d{1,2})\s*⟧|\[(\d{1,2})\]")
+# A garbled marker such as "⟦8⚠⟧" or a cut-off "⟦8" matches neither form above; left in the
+# text it would show as stray symbols. Applied after canonical markers are in place.
+_BROKEN_MARKER_RE = re.compile(r"⟦(?!\d{1,2}⟧)[^\s⟦⟧]{0,6}⟧?")
 # Two or more markers separated only by spaces/commas form one pill group.
 _MARKER_GROUP_RE = re.compile(r"(?:⟦\d{1,2}⟧)(?:[\s,]*⟦\d{1,2}⟧)*")
 
@@ -272,6 +275,7 @@ def _apply_citations(answer: str, ranked: list[dict[str, Any]]) -> tuple[str, st
         return ""
 
     answer_markdown = _MARKER_RE.sub(canonical, answer)
+    answer_markdown = _BROKEN_MARKER_RE.sub(lambda _match: "", answer_markdown)
     # Tidy the gaps a dropped marker leaves: double spaces inside a line (not
     # leading indentation, which markdown lists need) and spaces before punctuation.
     answer_markdown = re.sub(r"(?<=\S)[ \t]{2,}", " ", answer_markdown)

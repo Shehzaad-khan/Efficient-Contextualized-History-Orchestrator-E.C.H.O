@@ -7,12 +7,15 @@ FastAPI router that exposes the RSE (Retrieval & Synthesis Engine) as HTTP endpo
 Endpoints:
     POST /retrieval/query          — main query endpoint (no API key: the local UI calls it)
     POST /retrieval/query/stream   — same query as server-sent events with live steps (no API key)
-    GET  /retrieval/sessions       — past chats, newest first    (X-API-Key required)
+    GET  /retrieval/sessions       — past chats, newest first    (no API key: the local UI calls it)
+    GET  /retrieval/sessions/{id}  — one past chat's messages    (no API key: the local UI calls it)
     GET  /retrieval/session/{id}   — session diagnostic          (X-API-Key required)
     DELETE /retrieval/session/{id} — clear session history       (X-API-Key required)
 
-The session routes return or delete chat history, so they need ECHO_API_KEY;
-without it set they answer 503.
+The diagnostic and delete routes (/session/{id}) need ECHO_API_KEY; without it
+set they answer 503. The chat list and one chat's messages (/sessions, /sessions/{id})
+are open like /query: they show only the user's own questions and Echo's replies, on
+a local port.
 
 Threading: every route is a plain `def`, so FastAPI runs it in its threadpool.
 The RSE graph and the DB calls block, and must never run on the event loop.
@@ -26,13 +29,15 @@ import logging
 import os
 import re
 import secrets
-from datetime import datetime
-from typing import Optional
+from datetime import datetime, timezone
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Security
 from fastapi.responses import StreamingResponse
 from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, Field
+
+from langchain_core.messages import AIMessage, HumanMessage
 
 from rse.conversation_memory import load_conversation_history
 from rse.search_coordinator import get_connection
@@ -115,11 +120,26 @@ class QueryResponse(BaseModel):
     answer_sources: list[dict] = Field(default_factory=list)
 
 
+def _as_utc(moment: datetime) -> datetime:
+    """message_store.created_at is a naive UTC time; mark it so the browser shows local time."""
+    return moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)
+
+
 class SessionSummary(BaseModel):
     session_id: str
     title: str
     last_active: datetime
     turns: int
+
+
+class SessionMessage(BaseModel):
+    role: Literal["user", "echo"]
+    text: str
+
+
+class SessionMessages(BaseModel):
+    session_id: str
+    messages: list[SessionMessage]
 
 
 @router.post("/query", response_model=QueryResponse)
@@ -190,7 +210,7 @@ def query_stream(request: QueryRequest):
     )
 
 
-@router.get("/sessions", response_model=list[SessionSummary], dependencies=[Depends(_require_api_key)])
+@router.get("/sessions", response_model=list[SessionSummary])
 def list_sessions(limit: int = Query(50, ge=1, le=200)):
     """
     The past chats, most recently active first (A27 chat list).
@@ -217,11 +237,35 @@ def list_sessions(limit: int = Query(50, ge=1, le=200)):
         SessionSummary(
             session_id=session_id,
             title=_session_title(first_question),
-            last_active=last_active,
+            last_active=_as_utc(last_active),
             turns=turns,
         )
         for session_id, first_question, last_active, turns in rows
     ]
+
+
+@router.get("/sessions/{session_id}", response_model=SessionMessages)
+def get_session_messages(session_id: str):
+    """
+    One past chat's messages, oldest first, for the chat screen (A27 resume).
+
+    The stored reply is the readable answer text (message_store keeps no pills),
+    so a resumed chat shows plain text; new questions in it get pills as usual.
+    404 when the session has no messages (never existed, or the 30-day cleanup
+    removed it); a DB error is also logged and answers 404 because
+    load_conversation_history returns [] on failure.
+    """
+    _check_session_id(session_id)
+    history = load_conversation_history(session_id)
+    messages = [
+        SessionMessage(role="user" if isinstance(message, HumanMessage) else "echo", text=str(message.content))
+        for message in history
+        if isinstance(message, (HumanMessage, AIMessage))
+    ]
+    if not messages:
+        raise HTTPException(status_code=404, detail="Chat not found")
+    logger.info("Loaded %d messages of a past chat", len(messages))
+    return SessionMessages(session_id=session_id, messages=messages)
 
 
 @router.get("/session/{session_id}", dependencies=[Depends(_require_api_key)])
