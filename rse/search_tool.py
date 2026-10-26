@@ -15,7 +15,7 @@ before A26, in the same order, on a private EchoState of its own:
       → optional attachment text (read_attachment)
 
 No stage changed: only the caller did. The LLM calls Luna makes to decide and to answer are counted
-in rse/agent_nodes.py; this module makes none. The same function will serve the MCP server (E1).
+in rse/agent_nodes.py; this module makes none. The same function serves the MCP server (E1, mcp_server/tools.py).
 Logs carry counts and flags only — never the query.
 """
 import logging
@@ -105,6 +105,11 @@ class SearchMemoriesArgs(BaseModel):
             "attachment to the result. 'Find the email about the offer' is false."
         ),
     )
+
+
+def argument_description(name: str) -> str:
+    """The description of one search_memories argument, so the MCP server shows clients the same words Luna reads."""
+    return SearchMemoriesArgs.model_fields[name].description or ""
 
 
 def _not_run(**_: Any) -> str:

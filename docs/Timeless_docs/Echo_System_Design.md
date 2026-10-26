@@ -965,7 +965,7 @@ and `/query/stream`). Tests: `tests/test_agent_loop.py`.
   client builds a valid Responses API request (reasoning medium, no temperature, forced first tool choice) and sends the tool result
   and the reasoning item back in round 2 against a local fake endpoint; NOT yet checked against the live OpenAI service.
 - **Fresh Gmail poll (A45): dropped, not built.** A new mail appears after the next background poll (≤ 30 s, A5).
-  `fetch_recent_items` stays for the MCP `recent_activity` tool (E1).
+  `fetch_recent_items` stays in `rse/search_coordinator.py` (the MCP `recent_activity` tool was dropped, E1).
 
 ### 10.10 Answer Format and Live Progress
 
@@ -992,21 +992,32 @@ use only items inside it" (A1.2); Chrome/YouTube lines show their visit times in
 for 'offer letter', last 2 weeks…", "Reading 8 results…", "Writing the answer…"), then streams the reply text. The plain
 POST stays as the fallback. Endpoint path: (TBD at build).
 
-### 10.11 Echo as an MCP Server (E1, decided 2026-10-21, built Thu–Sun)
+### 10.11 Echo as an MCP Server (E1, decided 2026-10-21, built 2026-10-26)
 
 Echo also exposes its deterministic tools over the **Model Context Protocol**, so an outside assistant (Claude Desktop
 first, or any MCP client) can query the user's memories with its own model. Echo stays the engine; the client is the brain
 and replaces Luna's agent loop for that conversation.
 
-- **Tools (build scope):** `search_memories` (same contract as A26: query, alternative_phrasings?, sources?, since?, anchor_item? / anchor_relation? →
-  short numbered snippets), `get_memory` (one item's details, as the peek card shows), `recent_activity`. A read-only
-  wellbeing tool set (time patterns, sessions, regret) is optional, only if time permits. Group decisions stay
-  human-in-the-loop through the existing review flow; no MCP tool writes.
-- **Transport:** stdio, launched by the client from a config entry; the server calls `rse/` and `wba/` functions directly
-  (no HTTP hop). Dependency: the official MCP Python SDK (`mcp`), added to `requirements.txt`.
-- **Privacy:** tools return snippets and aggregates only, never raw bodies. The client's own LLM provider then sees those
-  snippets; the MCP README says so.
-- Entry-point file and config snippet: (TBD at build).
+- **Tools (built 2026-10-26, both read-only):** `search_memories` (the same arguments and the same `run_search` as Luna's tool, A26:
+  `query`, `alternative_phrasings`, `sources`, `since`, `anchor_item` / `anchor_relation`, `read_attachment`; returns up to 10 numbered
+  items with their `memory_id`, and starts with today's date so the client can work out `since`) and `get_memory` (one item by
+  `memory_id`: details, link, the first 8,000 characters of text, attachment names; `read_attachment` adds the attachment text, up to
+  40,000 characters). Not built, by decision (2026-10-26): `recent_activity` (a search with `since` = today covers a question with a
+  topic; `fetch_recent_items` stays in `rse/search_coordinator.py` if it is wanted) and the optional wellbeing tools. No tool writes.
+- **No Luna call:** the connected client's model does the reasoning and has no round cap from Echo; Echo only searches and reads.
+- **Transport and files:** stdio, launched by the client from a config entry (`claude_desktop_config.json`, snippet in
+  `mcp_server/README.md`). `mcp_server/server.py` registers the tools with the official SDK (`mcp>=2.3,<3`, v2: `MCPServer`, which
+  replaced `FastMCP`) and runs over stdio; `mcp_server/tools.py` holds the logic. The server calls `rse/` functions directly (no HTTP hop),
+  sets the working directory to the project root itself (the client config has no such setting), logs to stderr only (the backend's
+  `logs/echo.log` is not shared: two processes rotating one file at midnight can clash on Windows), and loads the models in a background
+  thread started by the server's lifespan, so the start-up handshake answers at once and stray library output goes to stderr.
+- **Index freshness:** the server has its own copy of the FAISS index, while the backend's enrichment worker keeps saving a newer file. Before
+  each search the server compares the file's modification time with the one it loaded and reloads when it changed; a reload that meets
+  the moment between the index file and its metadata being replaced is retried once, then the old copy is kept.
+- **Privacy:** the tools return the same bounded excerpts as the app (8,000 / 2,000 characters, 40,000 for an attachment), never rows or the
+  whole store. The client's own LLM provider (Anthropic, for Claude Desktop) then sees those excerpts; the MCP README says so.
+- **Checked 2026-10-26:** `tests/test_mcp_server.py` (16 tests: tool logic, the protocol in memory with the SDK's own client, and a real
+  child process over stdio pipes). NOT yet run against the live database and Claude Desktop.
 
 ## 11. Digital Wellbeing Module (WBA)
 
@@ -1278,7 +1289,7 @@ Likely blocked (inference, not verified); going local removes this — only port
 | LLM | OpenAI GPT-6 Luna, Responses API | via `langchain-openai` |
 | Embeddings | sentence-transformers | `sentence-transformers==5.4.1`, `torch==2.2.2`; model `Snowflake/snowflake-arctic-embed-xs` (A40.1, from Thursday's re-embed; earlier model `all-MiniLM-L6-v2`) |
 | Re-ranking | cross-encoder | `cross-encoder/ms-marco-MiniLM-L-6-v2` (kept, A40.2) |
-| MCP server (built Thu–Sun, E1) | official MCP Python SDK | `mcp`, added to requirements.txt at build (not installed today) |
+| MCP server (built 2026-10-26, E1) | official MCP Python SDK, v2 | `mcp>=2.3,<3` in requirements.txt (v2 renamed `FastMCP` to `MCPServer`) |
 | Enrichment | BeautifulSoup, pypdf, pdfplumber, python-docx | `beautifulsoup4==4.12.3`, `pypdf==4.3.1`, `pdfplumber==0.11.4`, `python-docx==1.1.2` |
 | Enrichment (built Thu–Sun) | openpyxl, python-pptx, pytesseract + Tesseract, youtube-transcript-api (if A11 passes) | added to requirements.txt at build |
 | Google | google-api-python-client, google-auth-oauthlib | `2.105.0`, `1.2.0` |
@@ -2105,7 +2116,7 @@ the project history; "—" where no date was recorded.
 | A26 store | 2026-10-21 (deferred 2026-10-26) | OpenAI `store=true` + `previous_response_id` chaining — not built; history of 12 messages (1,000 / 3,000 chars) is resent from `message_store` | Chaining would carry reasoning and tool results across turns, but item numbers restart each question and would clash with a remembered turn |
 | A44 | 2026-10-21 | Automatic retry of failed ENP items (stretch) | Paper claimed it; build if time permits |
 | A45 | 2026-10-21 | Fresh Gmail poll as a `search_memories` option (stretch) | Keeps "just received" answers instant |
-| E1 | 2026-10-21 | Echo as an MCP server, in this build | Any MCP client can use Echo's memory |
+| E1 | 2026-10-21 (built 2026-10-26) | Echo as an MCP server over stdio with two read-only tools, `search_memories` and `get_memory`; `recent_activity` and the wellbeing tools dropped | Any MCP client can use Echo's memory |
 
 # Appendix B — Data Repairs, Build Items and Later Work
 
@@ -2121,5 +2132,5 @@ the project history; "—" where no date was recorded.
 | D3 | built 2026-10-25 | Regret reminder card in the dashboard; snooze route |
 | D4 | built 2026-10-23 | Sessions are built on demand (`ensure_sessions_for_day`) |
 | D5 | built 2026-10-25 (route 2026-10-22) | Rules screen: pause/resume switch per rule; quiet rules marked |
-| E1 | decided 2026-10-21 — in this build | Echo as an MCP server: `search_memories`, `get_memory`, `recent_activity` over stdio (§10.11); wellbeing tools optional |
+| E1 | built 2026-10-26 | Echo as an MCP server over stdio: `search_memories`, `get_memory` (§10.11); `recent_activity` and the wellbeing tools dropped by decision |
 | E2 | stretch, from Mon 26 Oct | Import personal history (Takeout, Chrome `History`) and an export button; separate branch |

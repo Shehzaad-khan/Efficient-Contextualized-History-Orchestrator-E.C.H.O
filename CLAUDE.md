@@ -134,7 +134,7 @@ ever wanted again, it will be recreated from `Echo_System_Design.md`, which is t
 ## 4. Current state (as of 2026-10-26)
 
 Every feature in the architecture doc is implemented and wired, except the two items under "Known open items" below.
-The build status of every decided item is in `docs/review/ste_open_items.md` (84 of 86 top-level items complete).
+The build status of every decided item is in `docs/review/ste_open_items.md` (85 of 86 top-level items complete).
 Earlier additions (2026-07):
 Tier-2 attachment extraction + real `fetch_attachment` node, `fetch_api` node (live
 Gmail poll for "today/just received" queries; removed 2026-10-26 with the A26 loop, A45), capture settings (Redis) enforced in
@@ -149,7 +149,7 @@ stored full-text `search_vector` (A1, A24.3), ENP attachment extraction with OCR
 incremental Gmail polling (A5, A38), retention cleanup (A37), chat UI with memory pills, past chats and progress lines
 (A27, A28), regret reminder card with snooze (D3), group-rule pause/resume screen (D5), A42 auto-accept of confident group
 suggestions, the simplified A23/A24 text limits (see §3), and on 2026-10-26 the A26 agent loop (Luna calls `search_memories` up to 5 searches;
-usually 2 LLM calls, max 6) with `tests/test_agent_loop.py`.
+usually 2 LLM calls, max 6) with `tests/test_agent_loop.py`, and the E1 MCP server (`mcp_server/`, `tests/test_mcp_server.py`).
 
 `rsr/` — the orphaned duplicate of `rse/` — was **deleted on 2026-08-31**. It was
 mounted nowhere and its internal imports (`retrival.*`) had always been broken, so
@@ -160,8 +160,8 @@ history if Review 2 needs it:
 (note its `_calculate_diversity` metric measures a prohibited feature — drop that part).
 
 Known open items:
-- **E1, the MCP server, is not built** (it will reuse `rse/search_tool.py`). **A26 is built** but its first live run against OpenAI is
-  still to be done by the owner (`python -m rse.retrieval_engine "find my TechCorp interview email"`: expect `llm_calls=2 searches=1` in the log;
+- **A26 and E1 are built, with their first live run still to be done by the owner.** E1 is `mcp_server/` (tools `search_memories` and `get_memory`,
+  stdio; setup in `mcp_server/README.md`; run it from Claude Desktop). A26: (`python -m rse.retrieval_engine "find my TechCorp interview email"`: expect `llm_calls=2 searches=1` in the log;
   if the API rejects the forced first tool choice, set `FORCE_FIRST_SEARCH = False` in `rse/config.py`).
 - **D6, four frontend gaps** (backend routes exist, nothing calls them): old chats show no memory pills, no way to delete a chat,
   no form to add a group rule, no screen to pick items for a group by hand. Details in `docs/review/ste_open_items.md` D6.

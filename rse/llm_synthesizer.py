@@ -239,6 +239,7 @@ def _format_item(
     neighbors: list[dict[str, Any]],
     visit_times: Optional[list[datetime]] = None,
     rank: int = 1,
+    show_id: bool = False,
 ) -> str:
     """One numbered context block: metadata line, visits in the asked period
     (Chrome/YouTube), snippet, neighbor lines. `index` is the item's number for the whole
@@ -248,6 +249,8 @@ def _format_item(
         f"[{index}] ({item.get('source_type')}) {title}",
         f"    {_item_location(item)} — {_format_timestamp(item.get('created_at'))}",
     ]
+    if show_id:
+        lines.append(f"    memory_id: {item['memory_id']}")
     if visit_times:
         shown = ", ".join(_format_timestamp(visited_at) for visited_at in visit_times[-_MAX_VISITS_SHOWN:])
         lines.append(f"    Visits in the asked period: {shown}")
@@ -406,6 +409,64 @@ _QUALITY_WORDS = {
 }
 
 
+def quality_words(quality: str) -> str:
+    """'strong' | 'weak' | 'empty' in words, for the header of a search result."""
+    return _QUALITY_WORDS.get(quality, quality)
+
+
+def format_result_body(
+    *,
+    requested: ParsedIntent,
+    applied: ParsedIntent,
+    widen_attempts: int,
+    numbered: list[tuple[int, dict[str, Any], bool]],
+    neighbor_items: dict[str, list[dict[str, Any]]],
+    visits: dict[str, list[datetime]],
+    attachment_text: Optional[str] = None,
+    attachment_number: Optional[int] = None,
+    show_ids: bool = False,
+) -> str:
+    """
+    The part of a search result that is the same for Luna and for an MCP client.
+
+    Args:
+        requested: The intent that was asked for.
+        applied: The intent that was finally searched (differs when widen_scope ran).
+        widen_attempts: How many times widen_scope ran for this search.
+        numbered: (number, item, is_new) in rank order. A new item gets a full block; an item
+            already shown earlier in the same question is one line, so its text is not sent twice.
+        neighbor_items: memory_id → related items.
+        visits: memory_id → visit times inside the asked period (Chrome/YouTube).
+        attachment_text: Extracted text of one item's attachment, when read_attachment asked for it.
+        attachment_number: The number of the item that attachment belongs to.
+        show_ids: Add each item's memory_id (an MCP client needs it for get_memory).
+    """
+    lines = [f"You asked for: {_describe_filters(requested)}"]
+    if widen_attempts:
+        lines.append(
+            "Note: nothing matched at first, so Echo widened the search automatically — "
+            f"{_widening_note(requested, applied)}. Check that the matches fit the question."
+        )
+    lines.append("")
+
+    if not numbered:
+        lines.append("No matches for these words and filters. Try different words, another source or no date filter.")
+    for rank, (number, item, is_new) in enumerate(numbered, start=1):
+        if is_new:
+            lines.append(_format_item(
+                number, item, neighbor_items.get(item["memory_id"], []), visits.get(item["memory_id"]),
+                rank, show_id=show_ids,
+            ))
+        else:
+            title = item.get("title") or item.get("subject") or "(untitled)"
+            lines.append(f"[{number}] ({item.get('source_type')}) {title} — (already shown above)")
+        lines.append("")
+
+    if attachment_text:
+        lines.append(f"ATTACHMENT TEXT (item [{attachment_number}]):\n{attachment_text}\n")
+    return "\n".join(lines)
+
+
 def format_search_round(
     *,
     search_no: int,
@@ -420,51 +481,56 @@ def format_search_round(
     attachment_number: Optional[int] = None,
 ) -> str:
     """
-    One search_memories result as the text Luna reads.
+    One search_memories result as the text Luna reads: a header with the search count, the
+    shared body (format_result_body), and a footer with the searches left.
 
     Args:
         search_no: 1-based count of searches so far in this query (this one included).
-        requested: The intent Luna asked for.
-        applied: The intent that was finally searched (differs when widen_scope ran).
-        quality: 'strong' | 'weak' | 'empty' from evaluate_quality.
-        widen_attempts: How many times widen_scope ran for this search.
-        numbered: (number, item, is_new) in rank order. A new item gets a full block; an item
-            Luna already saw in an earlier search is one line, so its text is not sent twice.
-        neighbor_items: memory_id → related items.
-        visits: memory_id → visit times inside the asked period (Chrome/YouTube).
-        attachment_text: Extracted text of one item's attachment, when read_attachment asked for it.
-        attachment_number: The number of the item that attachment belongs to.
+        The rest as in format_result_body, plus quality: 'strong' | 'weak' | 'empty'.
     """
     left = MAX_SEARCHES - search_no
-    lines = [
-        f"SEARCH {search_no} of {MAX_SEARCHES} — {len(numbered)} match(es) ({_QUALITY_WORDS.get(quality, quality)})",
-        f"You asked for: {_describe_filters(requested)}",
-    ]
-    if widen_attempts:
-        lines.append(
-            "Note: nothing matched at first, so Echo widened the search automatically — "
-            f"{_widening_note(requested, applied)}. Check that the matches fit the question."
-        )
-    lines.append("")
-
-    if not numbered:
-        lines.append("No matches for these words and filters. Try different words, another source or no date filter.")
-    for rank, (number, item, is_new) in enumerate(numbered, start=1):
-        if is_new:
-            lines.append(_format_item(
-                number, item, neighbor_items.get(item["memory_id"], []), visits.get(item["memory_id"]), rank,
-            ))
-        else:
-            title = item.get("title") or item.get("subject") or "(untitled)"
-            lines.append(f"[{number}] ({item.get('source_type')}) {title} — (already shown above)")
-        lines.append("")
-
-    if attachment_text:
-        lines.append(f"ATTACHMENT TEXT (item [{attachment_number}]):\n{attachment_text}\n")
-
-    lines.append(f"Searches used: {search_no} of {MAX_SEARCHES}.")
+    header = f"SEARCH {search_no} of {MAX_SEARCHES} — {len(numbered)} match(es) ({quality_words(quality)})"
+    body = format_result_body(
+        requested=requested, applied=applied, widen_attempts=widen_attempts, numbered=numbered,
+        neighbor_items=neighbor_items, visits=visits, attachment_text=attachment_text,
+        attachment_number=attachment_number,
+    )
+    lines = [header, body, f"Searches used: {search_no} of {MAX_SEARCHES}."]
     if left <= 0:
         lines.append("No searches left: answer now from what you have and say plainly what you did not find.")
+    return "\n".join(lines)
+
+
+def format_memory_detail(
+    item: dict[str, Any],
+    attachments: list[dict[str, Any]],
+    attachment_text: Optional[str] = None,
+) -> str:
+    """One memory item for an MCP client's get_memory: metadata, link, the leading text, attachment names.
+
+    The text is the item's first SYNTHESIS_EXCERPT_CHARS_TOP characters (what hydrate_memory_items returns),
+    the same bound a top search result gets; attachment text, when asked for, is already capped by
+    enp/attachment_processor.
+    """
+    title = item.get("title") or item.get("subject") or "(untitled)"
+    lines = [
+        f"({item.get('source_type')}) {title}",
+        f"memory_id: {item['memory_id']}",
+        f"{_item_location(item)} — {_format_timestamp(item.get('created_at'))}",
+    ]
+    link = _link(item)
+    if link:
+        lines.append(f"Open original: {link}")
+    if attachments:
+        shown = ", ".join(
+            f"{a.get('filename') or '(unnamed)'} ({a.get('mime_type') or 'unknown type'})" for a in attachments
+        )
+        lines.append(f"Attachments: {shown}")
+    snippet = (item.get("raw_snippet") or "").strip()
+    lines.append("")
+    lines.append(f"Text (first {SYNTHESIS_EXCERPT_CHARS_TOP} characters): {snippet}" if snippet else "No stored text.")
+    if attachment_text:
+        lines.append(f"\nATTACHMENT TEXT:\n{attachment_text}")
     return "\n".join(lines)
 
 

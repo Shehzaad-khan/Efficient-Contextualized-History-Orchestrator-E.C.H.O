@@ -9,7 +9,7 @@ Working file — committed to the repo from 2026-10-22 so Claude web can read it
 3. Section B needs a backup before any statement runs: a Neon snapshot or branch for Neon (B1–B3, done), a `pg_dump -Fc` of `echo_db` into `C:\Users\mdshe\echo_backups\` for the local database (B5).
 4. Section D is built after the whole review is finished.
 
-**Audit snapshot — 2026-10-26 (top-level IDs; supersedes the 2026-10-25 one):** 86 entries = **84 complete/resolved + 2 not fully complete**. Counting rule: A1–A45 are owner-decision entries, counted complete when the decision is recorded; their implementation follow-ups are audited separately below. B4 is informational/no action. Breakdown: A 45/45 decisions recorded; B 5/5 resolved (B5 ran 2026-10-25); C 29/29 resolved; D 5 complete (D1, D2, D3, D4, D5; D3 and D5 built 2026-10-25, D2 closed 2026-10-26 with old `.doc` dropped), D6 open; E1 partial (decision made, implementation absent). E2 (import personal history + export button) was removed from scope on 2026-10-25: the presentation uses the test account only. The two not-fully-complete top-level IDs are D6 (four frontend gaps, found 2026-10-26, nothing built) and E1 (partial: decision made, implementation absent). D6 was added 2026-10-26, so the total went from 85 to 86. A26 was built later on 2026-10-26; the top-level count is unchanged because A entries count as complete when the decision is recorded (its build status is in the A26 entry). This top-level count is not a claim that all decided features are implemented. The 2026-10-25 build work (A16/A40 + B5, A27, A28, A37, OCR, D3, D5, A42, A18 part 1, review fixes) is committed and merged to `main` (PRs #12, #13, #14); the two branches were checked after the PR #14 merge and nothing was lost.
+**Audit snapshot — 2026-10-26 (top-level IDs; supersedes the 2026-10-25 one):** 86 entries = **85 complete/resolved + 1 not fully complete** (E1 built later on 2026-10-26). Counting rule: A1–A45 are owner-decision entries, counted complete when the decision is recorded; their implementation follow-ups are audited separately below. B4 is informational/no action. Breakdown: A 45/45 decisions recorded; B 5/5 resolved (B5 ran 2026-10-25); C 29/29 resolved; D 5 complete (D1, D2, D3, D4, D5; D3 and D5 built 2026-10-25, D2 closed 2026-10-26 with old `.doc` dropped), D6 open; E1 built 2026-10-26. E2 (import personal history + export button) was removed from scope on 2026-10-25: the presentation uses the test account only. The one not-fully-complete top-level ID is D6 (four frontend gaps, found 2026-10-26, nothing built); E1 was the other until it was built on 2026-10-26. D6 was added 2026-10-26, so the total went from 85 to 86. A26 was built later on 2026-10-26; the top-level count is unchanged because A entries count as complete when the decision is recorded (its build status is in the A26 entry). This top-level count is not a claim that all decided features are implemented. The 2026-10-25 build work (A16/A40 + B5, A27, A28, A37, OCR, D3, D5, A42, A18 part 1, review fixes) is committed and merged to `main` (PRs #12, #13, #14); the two branches were checked after the PR #14 merge and nothing was lost.
 
 **Decision 2026-10-25 (his): the presentation runs on the TEST ACCOUNT only.** There is no time to move to his personal account. So E2 (import personal history + export button) is out of scope, and the Mon 26 / Tue 27 Oct retest and the threshold recompute (A18, A40) use the test account's data.
 
@@ -857,7 +857,7 @@ Still open — decide each:
   - **Tool arguments:** `query`, `alternative_phrasings` (≤ 2), `sources`, `since` (YYYY-MM-DD, copied from a calendar in the first message),
     `anchor_item` / `anchor_relation`, `read_attachment`. **Not built, by decision:** `time_phrase` and `sender_or_domain` (no resolver or sender
     filter exists; the sender goes into `query`, it is already searchable text), `read_more` (A23/A24 already give 8,000 chars per top result), the
-    live Gmail poll (A45). `fetch_recent_items` stays for E1's `recent_activity`.
+    live Gmail poll (A45). `fetch_recent_items` stays in `rse/search_coordinator.py` (E1's `recent_activity` tool was dropped).
   - **`parse_intent` is gone, its checking is not:** `rse/query_parser.py` now holds `intent_from_tool_args` (repairs unknown sources, broken dates,
     the string "false", duplicate variants, half an anchor, empty query) and `fallback_intent`. Removed: `node_parse_intent`, `node_check_attachments`,
     `node_fetch_api`, the separate `synthesize` node.
@@ -2114,7 +2114,7 @@ Found while reviewing what the screens can actually do. Each one was checked on 
 
 ## E. Later — after the review AND Step 2 are complete
 
-### E1. Echo as an MCP server (Claude Desktop or any MCP client) — [~] decision complete 2026-10-21; build still open (checked 2026-10-24)
+### E1. Echo as an MCP server (Claude Desktop or any MCP client) — [x] decided 2026-10-21; [x] BUILT 2026-10-26 (first run against Claude Desktop still to do)
 - **Decision (his, 2026-10-21): build it this week** (moved from "later" into the Thu 22 – Sun 25 build).
   Scope for the build: tools `search_memories` (same contract as A26), `get_memory`, `recent_activity`; stdio
   transport; Claude Desktop config snippet + an MCP README with the privacy note below. The wellbeing tool set
@@ -2133,3 +2133,29 @@ Found while reviewing what the screens can actually do. Each one was checked on 
 - Likely stack: official MCP Python SDK, stdio transport for Claude Desktop, reusing `rse/` and `wba/`
   functions directly (no HTTP hop). Decide when we get here.
 - **Status check 2026-10-24:** no MCP server entry point/config/README was found in the workspace, and `mcp` is not in `requirements.txt`. The decision is complete; the implementation is not.
+- **Built 2026-10-26 (scope cut by his decision the same day):**
+  - **Tools:** `search_memories` (the same arguments and the same `run_search` as Luna's tool; up to 10 numbered items with their `memory_id`;
+    every result starts with today's date so the client can work out `since`) and `get_memory` (one item by `memory_id`: details, link, first
+    8,000 characters, attachment names; `read_attachment` adds attachment text, up to 40,000 characters). **Dropped by decision:**
+    `recent_activity` (search with `since` = today covers a question with a topic; a question with no topic, like "what did I do today",
+    is weak under a topic search) and the optional wellbeing tools. No tool writes.
+  - **No Luna call:** the client's model (Claude, in Claude Desktop) reasons and writes the answer; what goes to the cloud is the tool results,
+    to Anthropic instead of OpenAI. Same bounded excerpts as the app. The README says so.
+  - **Files:** `mcp_server/server.py` (registers the tools with the official SDK; `mcp>=2.3,<3`, v2 where `FastMCP` became `MCPServer`; stdio),
+    `mcp_server/tools.py` (the logic), `mcp_server/README.md` (install, Windows config snippet, privacy, troubleshooting), `mcp>=2.3,<3` in
+    `requirements.txt`. Small shared changes in `rse/llm_synthesizer.py` (`format_result_body`, `format_memory_detail`, `quality_words`, optional
+    `memory_id` line) and `rse/search_tool.py` (`argument_description`); Luna's result text is unchanged.
+  - **Design points:** the server sets the working directory itself (the client config has none); logs to stderr only (the backend's `logs/echo.log`
+    is not shared); the models load in a thread started by the server's lifespan so the start-up handshake is immediate; before each search the
+    FAISS index is reloaded if the backend saved a newer file (retry once on a half-written pair, else keep the old copy); `memory_id` is validated
+    as a UUID before any query; errors are short text with no connection details.
+  - **Tests (`tests/test_mcp_server.py`, 16; all 38 tests pass offline):** tool logic (numbered items with ids and today's date, excerpt limits
+    8,000 / 2,000, bad arguments, a failing search leaks nothing, widening and attachment text reported, no matches), `get_memory` (detail,
+    attachment names and link, text only on request, ids that are not ids never reach the database, unknown id, no attachment query for pages),
+    index reload (once per change; a failed reload keeps the old index), the protocol with the SDK's own client (two read-only tools, Luna's
+    argument descriptions, a search through the protocol, an unknown source refused) and a real child process over stdio pipes. Deliberate
+    breakages (id check removed, ids hidden, reload on every search, a stray `print` in the warm-up) each failed the matching test or, for the
+    print, did not break the protocol.
+  - **His first run (not done here: no database or Claude Desktop in the cloud container):** `pip install "mcp>=2.3,<3"`, add the snippet from
+    `mcp_server/README.md` to `%APPDATA%\Claude\claude_desktop_config.json`, quit and restart Claude Desktop, ask it to search Echo for the
+    TechCorp interview email, then to open the first result. Logs: `%APPDATA%\Claude\logs\mcp-server-echo.log`.

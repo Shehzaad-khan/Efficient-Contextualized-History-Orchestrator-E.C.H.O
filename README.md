@@ -65,6 +65,7 @@ Echo finds the interview email, resolves its timestamp as a hard time anchor, re
 | `ste/` | **STE** | PostgreSQL / FAISS / Redis managers, token-file helpers, capture-settings store |
 | `enp/` | **ENP** | Background enrichment: cleaning, 4-stage classifier, embeddings, Tier-2 attachment extraction |
 | `rse/` | **RSE** | LangGraph hybrid retrieval graph, conversation memory, LLM synthesis |
+| `mcp_server/` | **E1** | Echo as an MCP server for Claude Desktop (`search_memories`, `get_memory`); see its README |
 | `backend/` | **UIL** | FastAPI gateway (`main.py`) — all routers, data export/deletion/settings |
 | `frontend/` | **UIL** | React + TypeScript dashboard: Recall |
 | `scripts/` | — | DB setup (`setup_db.py`), ENP queue status (`enp_status.py`) |

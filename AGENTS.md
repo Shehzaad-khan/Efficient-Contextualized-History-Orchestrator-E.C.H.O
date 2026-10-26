@@ -86,7 +86,7 @@ Every feature in the architecture doc is implemented and wired:
 `rsr/` — the orphaned duplicate of `rse/` — was **deleted on 2026-08-31**. It was mounted nowhere and its internal imports (`retrival.*`) had always been broken, so `import rsr` never succeeded. `rse/` is and always was the live retrieval engine. Its only non-duplicate content was a retrieval-quality evaluation harness; recover it from history if needed: `git checkout 16bde99 -- rsr/quality_evaluator.py rsr/query_quality_eval_set.py` (its `_calculate_diversity` metric measures a prohibited feature — drop that part).
 
 ### Known Open Items
-- **E1 (MCP server) is not built;** A26 is built but its first run against the live OpenAI service is still to do (see CLAUDE.md §4).
+- **A26 (agent loop) and E1 (MCP server, `mcp_server/`) are built;** their first runs against the live OpenAI service and Claude Desktop are still to do (see CLAUDE.md §4).
 - **OCR for images and scanned PDFs is built** (`pytesseract` in `requirements.txt`) but needs the Tesseract system binary; without it OCR stays off.
 - **Scheduling:** Weekly auto-assign is manual / OS-scheduler; monthly centroid recomputation runs at ENP startup when its file is missing or older than 30 days. There is no in-app cron.
 - **Frontend settings toggle:** "Memory indexing" in Settings is localStorage-only (ENP worker has no runtime switch); the three capture toggles ARE backend-wired.

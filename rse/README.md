@@ -122,5 +122,6 @@ The log line `run_query: complete … llm_calls=2 searches=1` shows the call cou
 ## Not yet done
 
 - The first run of the agent loop against the live OpenAI service (checked so far with the real client against a local fake endpoint).
-- `previous_response_id` chaining (deferred, A26) and the MCP server (E1, will reuse `search_tool.py`).
+- `previous_response_id` chaining (deferred, A26).
+- The MCP server (E1, `mcp_server/`, built; shares `search_tool.run_search`) has not yet been run from Claude Desktop.
 - End-to-end testing against the local PostgreSQL + a populated FAISS index with the loop.
