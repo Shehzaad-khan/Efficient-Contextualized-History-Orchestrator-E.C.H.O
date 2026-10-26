@@ -118,13 +118,26 @@ Old commits are **expected to fail** the test step (they do not contain most of 
 usually pass compile, lint and bandit; commits before the frontend existed simply skip the frontend job.
 The newest commit and everything after it must stay green.
 
-To (re)start the replay of every commit (needs the GitHub CLI, run once the workflow is on `main`):
+To (re)start the replay of the 82 commits made before this work (needs the GitHub CLI, run once the workflow is on `main`).
+The list ends at `950e6ef`, the last commit before the tests and the pipeline: the three commits after it
+(`aa25b1e`, `a047f4d` and the PR #17 merge) already have their own push runs, so using `main` here would start duplicates.
+This replay was done on 2026-10-26 (82 runs); only repeat it if you need to.
 
 ```bash
-git log --reverse --format='%H%x09%h%x09%s' main | while IFS=$'\t' read -r full short subject; do
+git log --reverse --format='%H%x09%h%x09%s' 950e6ef | while IFS=$'\t' read -r full short subject; do
   gh workflow run ci.yml --ref main -f ref="$full" -f sha_short="$short" -f label="$subject"
   sleep 3
 done
+```
+
+PowerShell:
+
+```powershell
+git log --reverse --format="%H|%h|%s" 950e6ef | ForEach-Object {
+  $f,$s,$m = $_ -split '\|',3
+  gh workflow run ci.yml --ref main -f ref=$f -f sha_short=$s -f label="$m"
+  Start-Sleep -Seconds 3
+}
 ```
 
 From then on, **one commit = one run**: every new push or merge creates its own entry.
