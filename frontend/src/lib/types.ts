@@ -41,6 +41,17 @@ export interface SessionSummary {
   turns: number
 }
 
+/** One stored message of a past chat from GET /retrieval/sessions/{id}. */
+export interface SessionMessage {
+  role: 'user' | 'echo'
+  text: string
+}
+
+export interface SessionMessages {
+  session_id: string
+  messages: SessionMessage[]
+}
+
 export interface MemoryItem {
   memory_id: string
   source_type: SourceType
