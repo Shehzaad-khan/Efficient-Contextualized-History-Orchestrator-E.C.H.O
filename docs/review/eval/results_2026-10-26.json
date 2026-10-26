@@ -1,0 +1,3999 @@
+{
+  "item_counts": {
+    "chrome": 30,
+    "gmail": 78,
+    "youtube": 11
+  },
+  "summary": {
+    "retrieval": {
+      "keyword": {
+        "questions": 38,
+        "recall_at_10": 0.6973684210526315,
+        "recall_at_5": 0.6973684210526315,
+        "mrr": 0.6929824561403508,
+        "gold_found_in_top10": 41
+      },
+      "semantic": {
+        "questions": 38,
+        "recall_at_10": 0.9545112781954888,
+        "recall_at_5": 0.9342105263157895,
+        "mrr": 0.9868421052631579,
+        "gold_found_in_top10": 71
+      },
+      "fusion": {
+        "questions": 38,
+        "recall_at_10": 0.9545112781954888,
+        "recall_at_5": 0.9342105263157895,
+        "mrr": 0.9868421052631579,
+        "gold_found_in_top10": 71
+      },
+      "full_pipeline": {
+        "questions": 38,
+        "recall_at_10": 0.9270989974937344,
+        "recall_at_5": 0.9052631578947368,
+        "mrr": 0.8991228070175438,
+        "gold_found_in_top10": 65
+      },
+      "agent_loop": {
+        "questions": 38,
+        "recall_at_10": 0.9270989974937344,
+        "recall_at_5": 0.9052631578947368,
+        "mrr": 0.8991228070175438,
+        "gold_found_in_top10": 65
+      }
+    },
+    "by_kind": {
+      "attachment": {
+        "questions": 6,
+        "agent_recall_at_10": 1.0
+      },
+      "followup": {
+        "questions": 6,
+        "agent_recall_at_10": 1.0
+      },
+      "multi": {
+        "questions": 4,
+        "agent_recall_at_10": 0.7395833333333334
+      },
+      "single": {
+        "questions": 16,
+        "agent_recall_at_10": 1.0
+      },
+      "time": {
+        "questions": 6,
+        "agent_recall_at_10": 0.7119047619047619
+      }
+    },
+    "cost_and_speed": {
+      "turns": 44,
+      "mean_llm_calls": 2.340909090909091,
+      "turns_at_cap": 0,
+      "median_seconds": 8.091924299951643,
+      "p95_seconds": 23.772069499944337,
+      "mean_input_tokens": 8982.704545454546,
+      "mean_output_tokens": 238.4318181818182,
+      "mean_cost_usd_ASSUMED_PRICE": 0.0020826590909090907
+    },
+    "privacy": {
+      "largest_request_chars": 38469,
+      "largest_single_message_chars": 23256,
+      "past_cap_text_found_in_a_request": 0
+    },
+    "answer_check": {
+      "checked": 11,
+      "correct": 11
+    }
+  },
+  "questions": [
+    {
+      "id": "q01",
+      "kind": "single",
+      "gold_count": 1,
+      "metrics": {
+        "agent_loop": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "keyword": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "semantic": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "fusion": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "full_pipeline": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        }
+      },
+      "first_search_args": {
+        "query": "Brightwave interview",
+        "alternative_phrasings": [
+          "Brightwave interview schedule",
+          "Brightwave recruiter interview"
+        ],
+        "sources": [
+          "gmail"
+        ],
+        "since": null,
+        "anchor_item": null,
+        "anchor_relation": null,
+        "read_attachment": false
+      },
+      "turns": [
+        {
+          "text": "When is my interview with Brightwave?",
+          "seconds": 10.196815599920228,
+          "llm_calls": 2,
+          "searches": 1,
+          "widened": 0,
+          "input_tokens": 7575,
+          "output_tokens": 111,
+          "request_chars": [
+            4597,
+            17547
+          ],
+          "largest_message_chars": 12505,
+          "first_search_args": {
+            "query": "Brightwave interview",
+            "alternative_phrasings": [
+              "Brightwave interview schedule",
+              "Brightwave recruiter interview"
+            ],
+            "sources": [
+              "gmail"
+            ],
+            "since": null,
+            "anchor_item": null,
+            "anchor_relation": null,
+            "read_attachment": false
+          },
+          "found_ids": [
+            "41f4c73d-c13d-43fb-9939-a25e83e8daf4",
+            "2aa3180f-f5b9-4c6e-8491-3e7465590d97",
+            "4d21ab0d-d331-49b0-9ffd-739f71f00a6e",
+            "e3b8801f-efb6-432c-8be2-839eabbca765",
+            "d58c2c77-c552-4d7d-8ddd-3ba2fee65689",
+            "6020af3b-1216-464e-b7f0-5f5b13d3e95e",
+            "8cb2c1f8-1e73-45b8-b83e-e25bedde2cfd",
+            "7cfc7ed6-8dd0-4087-87f4-28df5a312c9b",
+            "d3c1f795-596a-400f-9477-f51f6922763f",
+            "2c406b60-28b8-42d5-ba2a-3dd857c0ce28"
+          ],
+          "answer": "Your Brightwave Analytics interview is **Tuesday, November 3, 2026, at 11:00 AM IST**, by Google Meet. The link will arrive the morning of the interview. (✉ Shehzaad Khan · 26 Oct)",
+          "no_results": false,
+          "privacy_violations": 0
+        }
+      ],
+      "answer_ok": true
+    },
+    {
+      "id": "q02",
+      "kind": "single",
+      "gold_count": 2,
+      "metrics": {
+        "agent_loop": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 2
+        },
+        "keyword": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 0.3333333333333333,
+          "found10": 2
+        },
+        "semantic": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 2
+        },
+        "fusion": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 2
+        },
+        "full_pipeline": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 2
+        }
+      },
+      "first_search_args": {
+        "query": "2-Step Verification turned off",
+        "alternative_phrasings": [
+          "2-step verification disabled",
+          "Google verification off email"
+        ],
+        "sources": [
+          "gmail"
+        ],
+        "since": null,
+        "anchor_item": null,
+        "anchor_relation": null,
+        "read_attachment": false
+      },
+      "turns": [
+        {
+          "text": "Which email said 2-Step Verification was turned off?",
+          "seconds": 7.379856700077653,
+          "llm_calls": 2,
+          "searches": 1,
+          "widened": 0,
+          "input_tokens": 5245,
+          "output_tokens": 132,
+          "request_chars": [
+            4612,
+            11163
+          ],
+          "largest_message_chars": 6098,
+          "first_search_args": {
+            "query": "2-Step Verification turned off",
+            "alternative_phrasings": [
+              "2-step verification disabled",
+              "Google verification off email"
+            ],
+            "sources": [
+              "gmail"
+            ],
+            "since": null,
+            "anchor_item": null,
+            "anchor_relation": null,
+            "read_attachment": false
+          },
+          "found_ids": [
+            "5168745b-1ad0-451b-8948-0c7d502c28c5",
+            "c0c19902-131c-4fc1-b2fb-fe4226acbe4d",
+            "d5fe3240-e98d-4fc6-8f0f-c729a75e1b69",
+            "e8fa8c3e-18bc-4058-92eb-0b739febcb65",
+            "05426449-3554-4809-b7a5-aae6ce41a1e8",
+            "08eff1d0-0b4f-40fb-8117-f1ad6098ceea",
+            "5c516561-5129-456b-9818-10174cc88d8a",
+            "247cdb4a-afc2-4436-ab1a-ff4fd92c065b",
+            "63c6701a-cb9d-40dd-8e92-af23d6819cd8",
+            "d0063135-d91a-4e43-aa66-f6fceee79537"
+          ],
+          "answer": "Google sent the **“2-Step Verification turned off”** email from **no-reply@accounts.google.com** on **March 23, 2026**. I found two copies, at **11:45 and 11:47**. (✉ Google · 23 Mar, ✉ Google · 23 Mar)",
+          "no_results": false,
+          "privacy_violations": 0
+        }
+      ]
+    },
+    {
+      "id": "q03",
+      "kind": "single",
+      "gold_count": 1,
+      "metrics": {
+        "agent_loop": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "keyword": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "semantic": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "fusion": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "full_pipeline": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        }
+      },
+      "first_search_args": {
+        "query": "Flipkart internship",
+        "alternative_phrasings": [
+          "Flipkart intern offer",
+          "Flipkart internship email"
+        ],
+        "sources": [
+          "gmail"
+        ],
+        "since": null,
+        "anchor_item": null,
+        "anchor_relation": null,
+        "read_attachment": false
+      },
+      "turns": [
+        {
+          "text": "Find the Flipkart internship email",
+          "seconds": 6.437853999901563,
+          "llm_calls": 2,
+          "searches": 1,
+          "widened": 0,
+          "input_tokens": 7121,
+          "output_tokens": 148,
+          "request_chars": [
+            4594,
+            14977
+          ],
+          "largest_message_chars": 9952,
+          "first_search_args": {
+            "query": "Flipkart internship",
+            "alternative_phrasings": [
+              "Flipkart intern offer",
+              "Flipkart internship email"
+            ],
+            "sources": [
+              "gmail"
+            ],
+            "since": null,
+            "anchor_item": null,
+            "anchor_relation": null,
+            "read_attachment": false
+          },
+          "found_ids": [
+            "915a7e6e-2d80-410e-80dc-1ace51762534",
+            "4d21ab0d-d331-49b0-9ffd-739f71f00a6e",
+            "2aa3180f-f5b9-4c6e-8491-3e7465590d97",
+            "41f4c73d-c13d-43fb-9939-a25e83e8daf4",
+            "79448568-827a-4a0b-9782-45c32ab6905b",
+            "462fd5cc-185b-4830-9764-e731155ccb33",
+            "e3b8801f-efb6-432c-8be2-839eabbca765",
+            "7ec11512-76ed-4122-8fb5-2141a6c6e4d5",
+            "63c6701a-cb9d-40dd-8e92-af23d6819cd8",
+            "d0063135-d91a-4e43-aa66-f6fceee79537"
+          ],
+          "answer": "I found **“Internship from flipkart,”** sent by Mohammed Mir Fazlai Ali on **April 22, 2026**. The preview says, “Glad to announce we've started a program.” (✉ Mohammed Mir Fazlai Ali · 22 Apr)",
+          "no_results": false,
+          "privacy_violations": 0
+        }
+      ]
+    },
+    {
+      "id": "q04",
+      "kind": "single",
+      "gold_count": 1,
+      "metrics": {
+        "agent_loop": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "keyword": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "semantic": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "fusion": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "full_pipeline": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        }
+      },
+      "first_search_args": {
+        "query": "Neon onboarding feedback",
+        "alternative_phrasings": [
+          "Neon onboarding survey",
+          "Neon feedback request"
+        ],
+        "sources": [
+          "gmail"
+        ],
+        "since": null,
+        "anchor_item": null,
+        "anchor_relation": null,
+        "read_attachment": false
+      },
+      "turns": [
+        {
+          "text": "Neon asked me for onboarding feedback, find that email",
+          "seconds": 6.808567799977027,
+          "llm_calls": 2,
+          "searches": 1,
+          "widened": 0,
+          "input_tokens": 7895,
+          "output_tokens": 135,
+          "request_chars": [
+            4614,
+            20030
+          ],
+          "largest_message_chars": 14983,
+          "first_search_args": {
+            "query": "Neon onboarding feedback",
+            "alternative_phrasings": [
+              "Neon onboarding survey",
+              "Neon feedback request"
+            ],
+            "sources": [
+              "gmail"
+            ],
+            "since": null,
+            "anchor_item": null,
+            "anchor_relation": null,
+            "read_attachment": false
+          },
+          "found_ids": [
+            "e3b8801f-efb6-432c-8be2-839eabbca765",
+            "2c406b60-28b8-42d5-ba2a-3dd857c0ce28",
+            "4d21ab0d-d331-49b0-9ffd-739f71f00a6e",
+            "1354d524-8b99-40a8-9c62-0ceb2645edf1",
+            "6020af3b-1216-464e-b7f0-5f5b13d3e95e",
+            "36513afe-d13f-4afa-9188-b1a3ae339e51",
+            "412168e7-0f1d-467c-b0f6-3d4cfb38c419",
+            "a19970de-9508-4442-a2b9-f910cad120bc",
+            "03f9f1ea-ae80-404d-8832-828b27ccf2ae",
+            "885c4edb-f7bd-4a1b-bf44-a303f50db20e"
+          ],
+          "answer": "Neon’s onboarding feedback email is **“Neon <> Feedback on onboarding,”** from **Bryan Clark (bryan@neon.tech)**, sent **April 3, 2026**. He introduced himself as Neon’s product lead and invited you to share feedback—good or bad. (✉ Bryan Clark · 3 Apr)",
+          "no_results": false,
+          "privacy_violations": 0
+        }
+      ]
+    },
+    {
+      "id": "q05",
+      "kind": "single",
+      "gold_count": 1,
+      "metrics": {
+        "agent_loop": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "keyword": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "semantic": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "fusion": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "full_pipeline": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        }
+      },
+      "first_search_args": {
+        "query": "Gamma PDF ready",
+        "alternative_phrasings": [
+          "Gamma export PDF email"
+        ],
+        "sources": [
+          "gmail"
+        ],
+        "since": null,
+        "anchor_item": null,
+        "anchor_relation": null,
+        "read_attachment": false
+      },
+      "turns": [
+        {
+          "text": "The email saying my Gamma PDF is ready",
+          "seconds": 8.267798500019126,
+          "llm_calls": 2,
+          "searches": 1,
+          "widened": 0,
+          "input_tokens": 9571,
+          "output_tokens": 102,
+          "request_chars": [
+            4598,
+            19727
+          ],
+          "largest_message_chars": 14731,
+          "first_search_args": {
+            "query": "Gamma PDF ready",
+            "alternative_phrasings": [
+              "Gamma export PDF email"
+            ],
+            "sources": [
+              "gmail"
+            ],
+            "since": null,
+            "anchor_item": null,
+            "anchor_relation": null,
+            "read_attachment": false
+          },
+          "found_ids": [
+            "3b3f2686-d967-40e0-9dae-108f275316f8",
+            "8cb2c1f8-1e73-45b8-b83e-e25bedde2cfd",
+            "7cfc7ed6-8dd0-4087-87f4-28df5a312c9b",
+            "8a1877fa-3346-4761-90cd-e7bc916f3d69",
+            "a5a64b3d-fb2e-4821-a367-1029a124deb8",
+            "5aa1c6e1-b349-46a9-9ecb-47af4f05b610",
+            "d3c1f795-596a-400f-9477-f51f6922763f",
+            "be001a8c-2a5d-4c14-8a44-8aaaf24838cd",
+            "c27f097b-4f4b-4fbd-8b56-4d7b31c7ce43",
+            "848bf878-db53-4a20-8a35-df4f9934b65f"
+          ],
+          "answer": "The email **“Your Gamma PDF is ready”** was sent by Gamma on **Wednesday, April 1, 2026, at 6:58 AM**. (✉ Gamma · 1 Apr)",
+          "no_results": false,
+          "privacy_violations": 0
+        }
+      ]
+    },
+    {
+      "id": "q06",
+      "kind": "single",
+      "gold_count": 1,
+      "metrics": {
+        "agent_loop": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "keyword": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "semantic": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "fusion": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "full_pipeline": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        }
+      },
+      "first_search_args": {
+        "query": "Komprise placement opportunity forwarded",
+        "alternative_phrasings": [
+          "Komprise placement email",
+          "Komprise opportunity"
+        ],
+        "sources": [
+          "gmail"
+        ],
+        "since": null,
+        "anchor_item": null,
+        "anchor_relation": null,
+        "read_attachment": false
+      },
+      "turns": [
+        {
+          "text": "The email forwarded about the Komprise placement opportunity",
+          "seconds": 7.035452299984172,
+          "llm_calls": 2,
+          "searches": 1,
+          "widened": 0,
+          "input_tokens": 7417,
+          "output_tokens": 150,
+          "request_chars": [
+            4620,
+            15857
+          ],
+          "largest_message_chars": 10787,
+          "first_search_args": {
+            "query": "Komprise placement opportunity forwarded",
+            "alternative_phrasings": [
+              "Komprise placement email",
+              "Komprise opportunity"
+            ],
+            "sources": [
+              "gmail"
+            ],
+            "since": null,
+            "anchor_item": null,
+            "anchor_relation": null,
+            "read_attachment": false
+          },
+          "found_ids": [
+            "4d21ab0d-d331-49b0-9ffd-739f71f00a6e",
+            "5c516561-5129-456b-9818-10174cc88d8a",
+            "d0063135-d91a-4e43-aa66-f6fceee79537",
+            "e9a9b3b6-39dc-45fd-b8ca-9f83481ede10",
+            "7ec11512-76ed-4122-8fb5-2141a6c6e4d5",
+            "63c6701a-cb9d-40dd-8e92-af23d6819cd8",
+            "e3b8801f-efb6-432c-8be2-839eabbca765",
+            "8cb2c1f8-1e73-45b8-b83e-e25bedde2cfd",
+            "79448568-827a-4a0b-9782-45c32ab6905b",
+            "dee0b3b1-ce08-4516-af8c-56d462690cd6"
+          ],
+          "answer": "The forwarded email from **Shehzaad Khan** advertised a Komprise India Private Limited internship for a **Software Development Engineer** in **Bangalore**, with a stipend of **₹50,000/month**. It listed an application deadline of **12 August 2026 at 9:00 a.m.** and a recruitment drive on **17 August 2026**. (✉ Shehzaad Khan · 1 Sep)",
+          "no_results": false,
+          "privacy_violations": 0
+        }
+      ]
+    },
+    {
+      "id": "q07",
+      "kind": "single",
+      "gold_count": 1,
+      "metrics": {
+        "agent_loop": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "keyword": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "semantic": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "fusion": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "full_pipeline": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        }
+      },
+      "first_search_args": {
+        "query": "Orbit Cloud Hosting invoice",
+        "alternative_phrasings": [
+          "Orbit Cloud billing receipt"
+        ],
+        "sources": [
+          "gmail"
+        ],
+        "since": null,
+        "anchor_item": null,
+        "anchor_relation": null,
+        "read_attachment": false
+      },
+      "turns": [
+        {
+          "text": "The Orbit Cloud Hosting invoice email",
+          "seconds": 7.2704948000609875,
+          "llm_calls": 2,
+          "searches": 1,
+          "widened": 0,
+          "input_tokens": 13098,
+          "output_tokens": 211,
+          "request_chars": [
+            4597,
+            28268
+          ],
+          "largest_message_chars": 23256,
+          "first_search_args": {
+            "query": "Orbit Cloud Hosting invoice",
+            "alternative_phrasings": [
+              "Orbit Cloud billing receipt"
+            ],
+            "sources": [
+              "gmail"
+            ],
+            "since": null,
+            "anchor_item": null,
+            "anchor_relation": null,
+            "read_attachment": false
+          },
+          "found_ids": [
+            "ba36f763-4196-4832-9d45-88dd7d1278a8",
+            "79448568-827a-4a0b-9782-45c32ab6905b",
+            "462fd5cc-185b-4830-9764-e731155ccb33",
+            "7dea7319-e556-48db-a726-2c7401556681",
+            "8cb2c1f8-1e73-45b8-b83e-e25bedde2cfd",
+            "5aa1c6e1-b349-46a9-9ecb-47af4f05b610",
+            "4b783ec0-b390-4741-82e2-158118036117",
+            "e3b8801f-efb6-432c-8be2-839eabbca765",
+            "a5a64b3d-fb2e-4821-a367-1029a124deb8",
+            "d3c1f795-596a-400f-9477-f51f6922763f"
+          ],
+          "answer": "The **Orbit Cloud Hosting invoice email** arrived **Monday, Oct 26, 2026**, with subject **“Invoice INV-2026-0417 - Orbit Cloud Hosting.”** It says the attached invoice is for the **Starter VPS plan** and asks you to pay by the due date shown on the invoice to avoid a late fee. (✉ Shehzaad Khan · 26 Oct)",
+          "no_results": false,
+          "privacy_violations": 0
+        }
+      ]
+    },
+    {
+      "id": "q08",
+      "kind": "single",
+      "gold_count": 1,
+      "metrics": {
+        "agent_loop": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "keyword": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "semantic": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "fusion": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "full_pipeline": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        }
+      },
+      "first_search_args": {
+        "query": "hackathon registration confirmation",
+        "alternative_phrasings": [
+          "hackathon signup email",
+          "hackathon registration received"
+        ],
+        "sources": [
+          "gmail"
+        ],
+        "since": null,
+        "anchor_item": null,
+        "anchor_relation": null,
+        "read_attachment": false
+      },
+      "turns": [
+        {
+          "text": "The hackathon registration confirmation email",
+          "seconds": 9.159624199965037,
+          "llm_calls": 2,
+          "searches": 1,
+          "widened": 0,
+          "input_tokens": 6191,
+          "output_tokens": 255,
+          "request_chars": [
+            4605,
+            14690
+          ],
+          "largest_message_chars": 9631,
+          "first_search_args": {
+            "query": "hackathon registration confirmation",
+            "alternative_phrasings": [
+              "hackathon signup email",
+              "hackathon registration received"
+            ],
+            "sources": [
+              "gmail"
+            ],
+            "since": null,
+            "anchor_item": null,
+            "anchor_relation": null,
+            "read_attachment": false
+          },
+          "found_ids": [
+            "0502cb46-5141-4e1c-ad5e-3510f6f53e19",
+            "4d21ab0d-d331-49b0-9ffd-739f71f00a6e",
+            "5168745b-1ad0-451b-8948-0c7d502c28c5",
+            "c0c19902-131c-4fc1-b2fb-fe4226acbe4d",
+            "08eff1d0-0b4f-40fb-8117-f1ad6098ceea",
+            "05426449-3554-4809-b7a5-aae6ce41a1e8",
+            "5c516561-5129-456b-9818-10174cc88d8a",
+            "eb529586-f2e8-47e8-b0c3-480695483c23",
+            "d5fe3240-e98d-4fc6-8f0f-c729a75e1b69",
+            "e8fa8c3e-18bc-4058-92eb-0b739febcb65"
+          ],
+          "answer": "I found it: **“Kernel Quest 2026 – registration confirmed,”** from Shehzaad Khan, sent **Monday, October 26**. It confirms your hackathon registration and says the attached confirmation has your team details, venue, date, and reporting time. (✉ Shehzaad Khan · 26 Oct)",
+          "no_results": false,
+          "privacy_violations": 0
+        }
+      ]
+    },
+    {
+      "id": "q09",
+      "kind": "single",
+      "gold_count": 1,
+      "metrics": {
+        "agent_loop": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "keyword": {
+          "recall10": 0.0,
+          "recall5": 0.0,
+          "rr": 0.0,
+          "found10": 0
+        },
+        "semantic": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "fusion": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "full_pipeline": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        }
+      },
+      "first_search_args": {
+        "query": "operating system scheduling algorithms",
+        "alternative_phrasings": [
+          "CPU scheduling algorithms operating systems",
+          "process scheduling OS"
+        ],
+        "sources": [
+          "chrome"
+        ],
+        "since": null,
+        "anchor_item": null,
+        "anchor_relation": null,
+        "read_attachment": false
+      },
+      "turns": [
+        {
+          "text": "The page about operating system scheduling algorithms",
+          "seconds": 4.650363599997945,
+          "llm_calls": 2,
+          "searches": 1,
+          "widened": 0,
+          "input_tokens": 4526,
+          "output_tokens": 98,
+          "request_chars": [
+            4613,
+            9305
+          ],
+          "largest_message_chars": 4223,
+          "first_search_args": {
+            "query": "operating system scheduling algorithms",
+            "alternative_phrasings": [
+              "CPU scheduling algorithms operating systems",
+              "process scheduling OS"
+            ],
+            "sources": [
+              "chrome"
+            ],
+            "since": null,
+            "anchor_item": null,
+            "anchor_relation": null,
+            "read_attachment": false
+          },
+          "found_ids": [
+            "cd69f4a7-c56b-431f-b925-4c976be1dcb9",
+            "e8165ee7-ee05-4c19-ac1d-f76d2881b34b",
+            "960d1214-d3f2-4867-a3bc-34b95d3fa9a2",
+            "441bb910-b515-49b2-a011-587291b95eb6",
+            "6c76b59f-33a8-4aa6-be81-509fa44c36f6",
+            "0371182d-4216-4312-af21-793387d081dc",
+            "c093598d-76c2-4b6f-843f-3aa3fe83648c",
+            "df492ca7-a3d4-4aa5-a96f-60fc4c53619f",
+            "feb5fa7b-30f6-4905-a9b4-ede476698586",
+            "a55dee55-2c5a-4918-a4a3-67bf1bfa7b4c"
+          ],
+          "answer": "You visited **“OS Scheduling Algorithms”** on test.echo.local on **March 31, 2026**. (🌐 test.echo.local · 31 Mar)",
+          "no_results": false,
+          "privacy_violations": 0
+        }
+      ]
+    },
+    {
+      "id": "q10",
+      "kind": "single",
+      "gold_count": 1,
+      "metrics": {
+        "agent_loop": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "keyword": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "semantic": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "fusion": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "full_pipeline": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        }
+      },
+      "first_search_args": {
+        "query": "Wikipedia James Webb Space Telescope",
+        "alternative_phrasings": [
+          "JWST Wikipedia page",
+          "James Webb telescope"
+        ],
+        "sources": [
+          "chrome"
+        ],
+        "since": null,
+        "anchor_item": null,
+        "anchor_relation": null,
+        "read_attachment": false
+      },
+      "turns": [
+        {
+          "text": "The Wikipedia page on the James Webb space telescope",
+          "seconds": 5.4941735999891534,
+          "llm_calls": 2,
+          "searches": 1,
+          "widened": 0,
+          "input_tokens": 4162,
+          "output_tokens": 201,
+          "request_chars": [
+            4612,
+            7250
+          ],
+          "largest_message_chars": 4002,
+          "first_search_args": {
+            "query": "Wikipedia James Webb Space Telescope",
+            "alternative_phrasings": [
+              "JWST Wikipedia page",
+              "James Webb telescope"
+            ],
+            "sources": [
+              "chrome"
+            ],
+            "since": null,
+            "anchor_item": null,
+            "anchor_relation": null,
+            "read_attachment": false
+          },
+          "found_ids": [
+            "67b47b9f-4864-4a13-97de-6d7641024b2f",
+            "cd69f4a7-c56b-431f-b925-4c976be1dcb9",
+            "617676f8-13a7-4c13-a6e4-2cc378df5e4c",
+            "960d1214-d3f2-4867-a3bc-34b95d3fa9a2",
+            "0371182d-4216-4312-af21-793387d081dc",
+            "df492ca7-a3d4-4aa5-a96f-60fc4c53619f",
+            "feb5fa7b-30f6-4905-a9b4-ede476698586",
+            "a55dee55-2c5a-4918-a4a3-67bf1bfa7b4c",
+            "1e11eed7-2742-4621-81c3-135e0ba55984",
+            "680380b2-9575-4cc4-bc60-a07226fdf21a"
+          ],
+          "answer": "You visited the **James Webb Space Telescope** page on Wikipedia on **July 10, 2026**. (🌐 en.wikipedia.org · 10 Jul) What would you like to know about it?",
+          "no_results": false,
+          "privacy_violations": 0
+        }
+      ]
+    },
+    {
+      "id": "q11",
+      "kind": "single",
+      "gold_count": 1,
+      "metrics": {
+        "agent_loop": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "keyword": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "semantic": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "fusion": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "full_pipeline": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        }
+      },
+      "first_search_args": {
+        "query": "campus placements batch 2027",
+        "alternative_phrasings": [
+          "2027 placement page campus recruitment"
+        ],
+        "sources": [
+          "chrome"
+        ],
+        "since": null,
+        "anchor_item": null,
+        "anchor_relation": null,
+        "read_attachment": false
+      },
+      "turns": [
+        {
+          "text": "The campus placements page for batch of 2027",
+          "seconds": 5.478521300014108,
+          "llm_calls": 2,
+          "searches": 1,
+          "widened": 0,
+          "input_tokens": 5234,
+          "output_tokens": 272,
+          "request_chars": [
+            4604,
+            12017
+          ],
+          "largest_message_chars": 6985,
+          "first_search_args": {
+            "query": "campus placements batch 2027",
+            "alternative_phrasings": [
+              "2027 placement page campus recruitment"
+            ],
+            "sources": [
+              "chrome"
+            ],
+            "since": null,
+            "anchor_item": null,
+            "anchor_relation": null,
+            "read_attachment": false
+          },
+          "found_ids": [
+            "c093598d-76c2-4b6f-843f-3aa3fe83648c",
+            "cd69f4a7-c56b-431f-b925-4c976be1dcb9",
+            "960d1214-d3f2-4867-a3bc-34b95d3fa9a2",
+            "f3f369de-4ace-436c-aa94-fdc028da106a",
+            "441bb910-b515-49b2-a011-587291b95eb6",
+            "6c76b59f-33a8-4aa6-be81-509fa44c36f6",
+            "c5885a40-0d2f-45f2-be88-d1679fbab052",
+            "d207fc87-5aaa-4e30-bf09-7df7aa3b5e17",
+            "e19bffd2-4d98-490d-bdcf-25e14ac7492e",
+            "7d9a24b0-0e0d-4d2a-a3a9-49a957bd525c"
+          ],
+          "answer": "I found **“Société Générale: Campus Placements | Batch of 2027 – PES University”** on mail.google.com, dated **September 1, 2026**. (🌐 mail.google.com · 1 Sep) What would you like to know about it?",
+          "no_results": false,
+          "privacy_violations": 0
+        }
+      ]
+    },
+    {
+      "id": "q12",
+      "kind": "single",
+      "gold_count": 1,
+      "metrics": {
+        "agent_loop": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "keyword": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "semantic": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "fusion": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "full_pipeline": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        }
+      },
+      "first_search_args": {
+        "query": "Supabase projects page",
+        "alternative_phrasings": [
+          "Supabase dashboard projects"
+        ],
+        "sources": [
+          "chrome"
+        ],
+        "since": null,
+        "anchor_item": null,
+        "anchor_relation": null,
+        "read_attachment": false
+      },
+      "turns": [
+        {
+          "text": "My Supabase projects page",
+          "seconds": 4.972846299991943,
+          "llm_calls": 2,
+          "searches": 1,
+          "widened": 0,
+          "input_tokens": 5903,
+          "output_tokens": 197,
+          "request_chars": [
+            4585,
+            14467
+          ],
+          "largest_message_chars": 9471,
+          "first_search_args": {
+            "query": "Supabase projects page",
+            "alternative_phrasings": [
+              "Supabase dashboard projects"
+            ],
+            "sources": [
+              "chrome"
+            ],
+            "since": null,
+            "anchor_item": null,
+            "anchor_relation": null,
+            "read_attachment": false
+          },
+          "found_ids": [
+            "8a084f4a-da7b-4169-beaa-7e1cd7037df5",
+            "c3450c4e-9dfd-41f1-bad4-c40c722d2ecb",
+            "e8165ee7-ee05-4c19-ac1d-f76d2881b34b",
+            "960d1214-d3f2-4867-a3bc-34b95d3fa9a2",
+            "441bb910-b515-49b2-a011-587291b95eb6",
+            "6c76b59f-33a8-4aa6-be81-509fa44c36f6",
+            "0371182d-4216-4312-af21-793387d081dc",
+            "a55dee55-2c5a-4918-a4a3-67bf1bfa7b4c",
+            "c5885a40-0d2f-45f2-be88-d1679fbab052",
+            "e19bffd2-4d98-490d-bdcf-25e14ac7492e"
+          ],
+          "answer": "Your Supabase projects page shows **Throne Of Art** in the **Shehzaad-khan’s Org** organization. It’s on the **Free** plan and marked **paused**; the project region is **ap-southeast-2**. You viewed it on **October 16**. (🌐 supabase.com · 16 Oct)",
+          "no_results": false,
+          "privacy_violations": 0
+        }
+      ]
+    },
+    {
+      "id": "q13",
+      "kind": "single",
+      "gold_count": 1,
+      "metrics": {
+        "agent_loop": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "keyword": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "semantic": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "fusion": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "full_pipeline": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        }
+      },
+      "first_search_args": {
+        "query": "long talk large language models",
+        "alternative_phrasings": [
+          "LLM lecture long video",
+          "large language model talk"
+        ],
+        "sources": [
+          "youtube"
+        ],
+        "since": null,
+        "anchor_item": null,
+        "anchor_relation": null,
+        "read_attachment": false
+      },
+      "turns": [
+        {
+          "text": "The long talk I watched about large language models",
+          "seconds": 4.8777888000477105,
+          "llm_calls": 2,
+          "searches": 1,
+          "widened": 0,
+          "input_tokens": 6888,
+          "output_tokens": 141,
+          "request_chars": [
+            4611,
+            17515
+          ],
+          "largest_message_chars": 12458,
+          "first_search_args": {
+            "query": "long talk large language models",
+            "alternative_phrasings": [
+              "LLM lecture long video",
+              "large language model talk"
+            ],
+            "sources": [
+              "youtube"
+            ],
+            "since": null,
+            "anchor_item": null,
+            "anchor_relation": null,
+            "read_attachment": false
+          },
+          "found_ids": [
+            "90d1246b-a57d-4eb6-bbe3-f0ee4e14b1b6",
+            "53a3ae21-8016-4909-9174-979a4b08966a",
+            "26b4ae78-a6c2-486f-b8c9-00bdd782f8f2",
+            "48c87a3a-ff4c-450a-a586-c2f46a32bf69",
+            "cc178c11-1fdf-4f1e-8231-0cd22f7ca10c",
+            "dcc01b7a-6226-44a4-b44e-1bad7b61fcb0",
+            "a1820f00-0223-4df2-8aee-6ac5a89ca522"
+          ],
+          "answer": "You watched **“[1hr Talk] Intro to Large Language Models”** by **Andrej Karpathy** on YouTube on **August 19, 2026**. It’s a one-hour introduction covering how LLMs work and are trained, their future, and security topics like jailbreaks and prompt injection. (▶ Andrej Karpathy · 19 Aug)",
+          "no_results": false,
+          "privacy_violations": 0
+        }
+      ]
+    },
+    {
+      "id": "q14",
+      "kind": "single",
+      "gold_count": 1,
+      "metrics": {
+        "agent_loop": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "keyword": {
+          "recall10": 0.0,
+          "recall5": 0.0,
+          "rr": 0.0,
+          "found10": 0
+        },
+        "semantic": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "fusion": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "full_pipeline": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        }
+      },
+      "first_search_args": {
+        "query": "Rick Astley music video",
+        "alternative_phrasings": [
+          "Never Gonna Give You Up video"
+        ],
+        "sources": [
+          "youtube"
+        ],
+        "since": null,
+        "anchor_item": null,
+        "anchor_relation": null,
+        "read_attachment": false
+      },
+      "turns": [
+        {
+          "text": "The Rick Astley music video",
+          "seconds": 5.472539699985646,
+          "llm_calls": 2,
+          "searches": 1,
+          "widened": 0,
+          "input_tokens": 6797,
+          "output_tokens": 147,
+          "request_chars": [
+            4587,
+            18825
+          ],
+          "largest_message_chars": 11918,
+          "first_search_args": {
+            "query": "Rick Astley music video",
+            "alternative_phrasings": [
+              "Never Gonna Give You Up video"
+            ],
+            "sources": [
+              "youtube"
+            ],
+            "since": null,
+            "anchor_item": null,
+            "anchor_relation": null,
+            "read_attachment": false
+          },
+          "found_ids": [
+            "d998da84-0607-4bb5-8231-8b32d3f3f755",
+            "7656a205-e2e3-4302-9506-f98f754c530e",
+            "e63fc145-61c9-4e9c-9e84-558917bcdba1",
+            "26b4ae78-a6c2-486f-b8c9-00bdd782f8f2",
+            "48c87a3a-ff4c-450a-a586-c2f46a32bf69",
+            "cc178c11-1fdf-4f1e-8231-0cd22f7ca10c",
+            "dcc01b7a-6226-44a4-b44e-1bad7b61fcb0",
+            "a1820f00-0223-4df2-8aee-6ac5a89ca522"
+          ],
+          "answer": "The Rick Astley video you watched was **“Never Gonna Give You Up” (Official Video, 4K Remaster)** on Rick Astley’s YouTube channel, on **March 31, 2026**. (▶ Rick Astley · 31 Mar)",
+          "no_results": false,
+          "privacy_violations": 0
+        }
+      ]
+    },
+    {
+      "id": "q15",
+      "kind": "single",
+      "gold_count": 1,
+      "metrics": {
+        "agent_loop": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "keyword": {
+          "recall10": 0.0,
+          "recall5": 0.0,
+          "rr": 0.0,
+          "found10": 0
+        },
+        "semantic": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "fusion": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "full_pipeline": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        }
+      },
+      "first_search_args": {
+        "query": "Kung Fu Panda Dragon Warrior video",
+        "alternative_phrasings": [
+          "Kung Fu Panda Dragon Warrior"
+        ],
+        "sources": [
+          "youtube"
+        ],
+        "since": null,
+        "anchor_item": null,
+        "anchor_relation": null,
+        "read_attachment": false
+      },
+      "turns": [
+        {
+          "text": "The Kung Fu Panda dragon warrior video",
+          "seconds": 5.267960700090043,
+          "llm_calls": 2,
+          "searches": 1,
+          "widened": 0,
+          "input_tokens": 6045,
+          "output_tokens": 173,
+          "request_chars": [
+            4598,
+            14090
+          ],
+          "largest_message_chars": 9067,
+          "first_search_args": {
+            "query": "Kung Fu Panda Dragon Warrior video",
+            "alternative_phrasings": [
+              "Kung Fu Panda Dragon Warrior"
+            ],
+            "sources": [
+              "youtube"
+            ],
+            "since": null,
+            "anchor_item": null,
+            "anchor_relation": null,
+            "read_attachment": false
+          },
+          "found_ids": [
+            "a1820f00-0223-4df2-8aee-6ac5a89ca522",
+            "7656a205-e2e3-4302-9506-f98f754c530e",
+            "e63fc145-61c9-4e9c-9e84-558917bcdba1",
+            "26b4ae78-a6c2-486f-b8c9-00bdd782f8f2",
+            "48c87a3a-ff4c-450a-a586-c2f46a32bf69",
+            "cc178c11-1fdf-4f1e-8231-0cd22f7ca10c",
+            "dcc01b7a-6226-44a4-b44e-1bad7b61fcb0"
+          ],
+          "answer": "The video was **“Who Will Be the Dragon Warrior? 🐉 | Kung Fu Panda | Adventure & Play”** from the **Mini Moments - Adventure & Play** YouTube channel, watched **March 31, 2026**. It’s a clip about the Dragon Warrior being chosen. (▶ Mini Moments - Adventure & Play · 31 Mar)",
+          "no_results": false,
+          "privacy_violations": 0
+        }
+      ]
+    },
+    {
+      "id": "q20",
+      "kind": "single",
+      "gold_count": 2,
+      "metrics": {
+        "agent_loop": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 2
+        },
+        "keyword": {
+          "recall10": 0.0,
+          "recall5": 0.0,
+          "rr": 0.0,
+          "found10": 0
+        },
+        "semantic": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 2
+        },
+        "fusion": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 2
+        },
+        "full_pipeline": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 2
+        }
+      },
+      "first_search_args": {
+        "query": "Brightwave Analytics job",
+        "alternative_phrasings": [
+          "Brightwave Analytics employment",
+          "Brightwave job application"
+        ],
+        "sources": [
+          "gmail"
+        ],
+        "since": null,
+        "anchor_item": null,
+        "anchor_relation": null,
+        "read_attachment": false
+      },
+      "turns": [
+        {
+          "text": "All the emails about the Brightwave Analytics job",
+          "seconds": 8.0652755999472,
+          "llm_calls": 2,
+          "searches": 1,
+          "widened": 0,
+          "input_tokens": 9327,
+          "output_tokens": 334,
+          "request_chars": [
+            4609,
+            19517
+          ],
+          "largest_message_chars": 14461,
+          "first_search_args": {
+            "query": "Brightwave Analytics job",
+            "alternative_phrasings": [
+              "Brightwave Analytics employment",
+              "Brightwave job application"
+            ],
+            "sources": [
+              "gmail"
+            ],
+            "since": null,
+            "anchor_item": null,
+            "anchor_relation": null,
+            "read_attachment": false
+          },
+          "found_ids": [
+            "2aa3180f-f5b9-4c6e-8491-3e7465590d97",
+            "41f4c73d-c13d-43fb-9939-a25e83e8daf4",
+            "4d21ab0d-d331-49b0-9ffd-739f71f00a6e",
+            "79448568-827a-4a0b-9782-45c32ab6905b",
+            "e3b8801f-efb6-432c-8be2-839eabbca765",
+            "462fd5cc-185b-4830-9764-e731155ccb33",
+            "5aa1c6e1-b349-46a9-9ecb-47af4f05b610",
+            "a5a64b3d-fb2e-4821-a367-1029a124deb8",
+            "7cfc7ed6-8dd0-4087-87f4-28df5a312c9b",
+            "2c406b60-28b8-42d5-ba2a-3dd857c0ce28"
+          ],
+          "answer": "I found **two emails** about the Brightwave Analytics **Data Engineer Intern** role:\n\n- **Interview schedule:** An invitation for a video interview on **Tuesday, 3 November 2026 at 11:00 AM IST**. It includes a 30-minute SQL/data-modelling round and a 30-minute discussion of a project from your résumé. (✉ Shehzaad Khan · 26 Oct)\n- **Internship offer:** A message congratulating you on the offer, with a formal offer letter attached. It asks you to return a signed copy by the date in the letter; the email says the letter lists the stipend, joining date, and reporting manager. (✉ Shehzaad Khan · 26 Oct)\n\nBoth emails are dated **26 October 2026**. They’re from Shehzaad Khan’s address, and signed by Priya Menon of Talent Acquisition. (✉ Shehzaad Khan · 26 Oct, ✉ Shehzaad Khan · 26 Oct)",
+          "no_results": false,
+          "privacy_violations": 0
+        }
+      ]
+    },
+    {
+      "id": "q16",
+      "kind": "multi",
+      "gold_count": 8,
+      "metrics": {
+        "agent_loop": {
+          "recall10": 0.875,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 7
+        },
+        "keyword": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 8
+        },
+        "semantic": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 8
+        },
+        "fusion": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 8
+        },
+        "full_pipeline": {
+          "recall10": 0.875,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 7
+        }
+      },
+      "first_search_args": {
+        "query": "Komprise",
+        "alternative_phrasings": [
+          "Komprise company",
+          "Komprise storage"
+        ],
+        "sources": null,
+        "since": null,
+        "anchor_item": null,
+        "anchor_relation": null,
+        "read_attachment": false
+      },
+      "turns": [
+        {
+          "text": "Everything I saved about Komprise",
+          "seconds": 23.772069499944337,
+          "llm_calls": 4,
+          "searches": 3,
+          "widened": 0,
+          "input_tokens": 20257,
+          "output_tokens": 966,
+          "request_chars": [
+            4593,
+            12111,
+            24762,
+            29076
+          ],
+          "largest_message_chars": 9687,
+          "first_search_args": {
+            "query": "Komprise",
+            "alternative_phrasings": [
+              "Komprise company",
+              "Komprise storage"
+            ],
+            "sources": null,
+            "since": null,
+            "anchor_item": null,
+            "anchor_relation": null,
+            "read_attachment": false
+          },
+          "found_ids": [
+            "441bb910-b515-49b2-a011-587291b95eb6",
+            "12a45139-eeba-414c-a68a-e0f666d7a5e9",
+            "53a3ae21-8016-4909-9174-979a4b08966a",
+            "e8165ee7-ee05-4c19-ac1d-f76d2881b34b",
+            "7656a205-e2e3-4302-9506-f98f754c530e",
+            "f3f369de-4ace-436c-aa94-fdc028da106a",
+            "cd69f4a7-c56b-431f-b925-4c976be1dcb9",
+            "617676f8-13a7-4c13-a6e4-2cc378df5e4c",
+            "960d1214-d3f2-4867-a3bc-34b95d3fa9a2",
+            "6c76b59f-33a8-4aa6-be81-509fa44c36f6",
+            "4d21ab0d-d331-49b0-9ffd-739f71f00a6e",
+            "e9a9b3b6-39dc-45fd-b8ca-9f83481ede10",
+            "7ec11512-76ed-4122-8fb5-2141a6c6e4d5",
+            "63c6701a-cb9d-40dd-8e92-af23d6819cd8",
+            "d0063135-d91a-4e43-aa66-f6fceee79537",
+            "d42abcb7-a505-49ec-af46-c3153c059713",
+            "c27f097b-4f4b-4fbd-8b56-4d7b31c7ce43",
+            "5aa1c6e1-b349-46a9-9ecb-47af4f05b610",
+            "e3b8801f-efb6-432c-8be2-839eabbca765",
+            "dee0b3b1-ce08-4516-af8c-56d462690cd6",
+            "0371182d-4216-4312-af21-793387d081dc",
+            "c093598d-76c2-4b6f-843f-3aa3fe83648c"
+          ],
+          "answer": "You saved **six Komprise-related pages/videos**, plus a **placement-drive email**.\n\n- **Company and product:** Komprise’s site describes an enterprise platform for discovering, classifying and preparing unstructured data for AI. Its Intelligent Data Management offering includes metadata extraction, sensitive-data detection, storage tiering, ransomware-risk reduction and cloud migration; it says tiering can reduce storage costs by up to 70%. The page also notes integrations with AWS, Azure, Google Cloud, NetApp and Pure Storage. (🌐 komprise.com · 1 Sep)\n- **How unstructured-data management works:** Komprise’s glossary covers data tiering, unified metadata and discovery, migration, governance and AI-data preparation. (🌐 komprise.com · 1 Sep)\n- **Videos:** You saved an Angelbeat video about managing file and object data at scale, including a Pfizer case study; a Komprise video on Storage as a Service and Intelligent Data Management, featuring Field CTO Benjamin Henry; and a short video where CEO and cofounder Kumar Goswami discusses sensitive-data detection and AI workflows. (▶ Angelbeat Events · 1 Sep, ▶ Komprise · 1 Sep, ▶ Komprise · 1 Sep)\n- **Careers:** Komprise’s careers page describes its Silicon Valley and Bangalore hubs, engineering and support work, remote-friendly roles and employment types. It lists **india_careers@komprise.com** for India candidates. (🌐 komprise.com · 1 Sep)\n- **Placement opportunity:** An email forwarded to you on **September 1, 2026** describes a Komprise India internship drive for a **Software Development Engineer** in **Bangalore**, with a **₹50,000/month** stipend. It lists a **12 August 2026** application deadline, a **17 August 2026** drive date, a minimum **7 UG CGPA**, no active backlogs, and B.Tech CSE eligibility. (✉ Shehzaad Khan · 1 Sep)\n\nThe pages and videos were saved on **September 1, 2026**. (🌐 komprise.com · 1 Sep, ▶ Angelbeat Events · 1 Sep, ▶ Komprise · 1 Sep, 🌐 komprise.com · 1 Sep, ▶ Komprise · 1 Sep, 🌐 komprise.com · 1 Sep)",
+          "no_results": false,
+          "privacy_violations": 0
+        }
+      ]
+    },
+    {
+      "id": "q17",
+      "kind": "multi",
+      "gold_count": 4,
+      "metrics": {
+        "agent_loop": {
+          "recall10": 0.75,
+          "recall5": 0.5,
+          "rr": 1.0,
+          "found10": 3
+        },
+        "keyword": {
+          "recall10": 0.0,
+          "recall5": 0.0,
+          "rr": 0.0,
+          "found10": 0
+        },
+        "semantic": {
+          "recall10": 1.0,
+          "recall5": 0.5,
+          "rr": 1.0,
+          "found10": 4
+        },
+        "fusion": {
+          "recall10": 1.0,
+          "recall5": 0.5,
+          "rr": 1.0,
+          "found10": 4
+        },
+        "full_pipeline": {
+          "recall10": 0.75,
+          "recall5": 0.5,
+          "rr": 1.0,
+          "found10": 3
+        }
+      },
+      "first_search_args": {
+        "query": "operating systems study material",
+        "alternative_phrasings": [
+          "OS study notes",
+          "operating system course resources"
+        ],
+        "sources": null,
+        "since": null,
+        "anchor_item": null,
+        "anchor_relation": null,
+        "read_attachment": false
+      },
+      "turns": [
+        {
+          "text": "My study material on operating systems",
+          "seconds": 9.627095300005749,
+          "llm_calls": 2,
+          "searches": 1,
+          "widened": 0,
+          "input_tokens": 4438,
+          "output_tokens": 201,
+          "request_chars": [
+            4598,
+            8876
+          ],
+          "largest_message_chars": 4002,
+          "first_search_args": {
+            "query": "operating systems study material",
+            "alternative_phrasings": [
+              "OS study notes",
+              "operating system course resources"
+            ],
+            "sources": null,
+            "since": null,
+            "anchor_item": null,
+            "anchor_relation": null,
+            "read_attachment": false
+          },
+          "found_ids": [
+            "cd69f4a7-c56b-431f-b925-4c976be1dcb9",
+            "617676f8-13a7-4c13-a6e4-2cc378df5e4c",
+            "feb5fa7b-30f6-4905-a9b4-ede476698586",
+            "960d1214-d3f2-4867-a3bc-34b95d3fa9a2",
+            "12a45139-eeba-414c-a68a-e0f666d7a5e9",
+            "441bb910-b515-49b2-a011-587291b95eb6",
+            "53a3ae21-8016-4909-9174-979a4b08966a",
+            "27b8a5b4-30fd-42a9-a4d1-335acb8414a1",
+            "6c76b59f-33a8-4aa6-be81-509fa44c36f6",
+            "c093598d-76c2-4b6f-843f-3aa3fe83648c"
+          ],
+          "answer": "You visited two operating-systems study pages on **March 31, 2026**: **“OS Scheduling Algorithms”** on test.echo.local and **“Operating System Tutorial”** on GeeksforGeeks. (🌐 test.echo.local · 31 Mar, 🌐 geeksforgeeks.org · 31 Mar)",
+          "no_results": false,
+          "privacy_violations": 0
+        }
+      ]
+    },
+    {
+      "id": "q18",
+      "kind": "multi",
+      "gold_count": 6,
+      "metrics": {
+        "agent_loop": {
+          "recall10": 0.3333333333333333,
+          "recall5": 0.2,
+          "rr": 0.5,
+          "found10": 2
+        },
+        "keyword": {
+          "recall10": 0.0,
+          "recall5": 0.0,
+          "rr": 0.0,
+          "found10": 0
+        },
+        "semantic": {
+          "recall10": 1.0,
+          "recall5": 0.6,
+          "rr": 1.0,
+          "found10": 6
+        },
+        "fusion": {
+          "recall10": 1.0,
+          "recall5": 0.6,
+          "rr": 1.0,
+          "found10": 6
+        },
+        "full_pipeline": {
+          "recall10": 0.3333333333333333,
+          "recall5": 0.2,
+          "rr": 0.5,
+          "found10": 2
+        }
+      },
+      "first_search_args": {
+        "query": "job internship opportunities",
+        "alternative_phrasings": [
+          "career openings internships",
+          "jobs hiring internship"
+        ],
+        "sources": null,
+        "since": null,
+        "anchor_item": null,
+        "anchor_relation": null,
+        "read_attachment": false
+      },
+      "turns": [
+        {
+          "text": "Job and internship opportunities I came across",
+          "seconds": 30.22771309991367,
+          "llm_calls": 5,
+          "searches": 4,
+          "widened": 0,
+          "input_tokens": 25686,
+          "output_tokens": 878,
+          "request_chars": [
+            4606,
+            10213,
+            16233,
+            29349,
+            38469
+          ],
+          "largest_message_chars": 10303,
+          "first_search_args": {
+            "query": "job internship opportunities",
+            "alternative_phrasings": [
+              "career openings internships",
+              "jobs hiring internship"
+            ],
+            "sources": null,
+            "since": null,
+            "anchor_item": null,
+            "anchor_relation": null,
+            "read_attachment": false
+          },
+          "found_ids": [
+            "cd69f4a7-c56b-431f-b925-4c976be1dcb9",
+            "960d1214-d3f2-4867-a3bc-34b95d3fa9a2",
+            "f3f369de-4ace-436c-aa94-fdc028da106a",
+            "441bb910-b515-49b2-a011-587291b95eb6",
+            "7656a205-e2e3-4302-9506-f98f754c530e",
+            "53a3ae21-8016-4909-9174-979a4b08966a",
+            "6c76b59f-33a8-4aa6-be81-509fa44c36f6",
+            "0371182d-4216-4312-af21-793387d081dc",
+            "c093598d-76c2-4b6f-843f-3aa3fe83648c",
+            "a55dee55-2c5a-4918-a4a3-67bf1bfa7b4c",
+            "e8165ee7-ee05-4c19-ac1d-f76d2881b34b",
+            "12a45139-eeba-414c-a68a-e0f666d7a5e9",
+            "4d21ab0d-d331-49b0-9ffd-739f71f00a6e",
+            "2aa3180f-f5b9-4c6e-8491-3e7465590d97",
+            "41f4c73d-c13d-43fb-9939-a25e83e8daf4",
+            "46320e1b-2650-40f5-9b0d-29c77ac55c1a",
+            "8a1877fa-3346-4761-90cd-e7bc916f3d69",
+            "e3b8801f-efb6-432c-8be2-839eabbca765",
+            "471c0e24-79c6-4d5f-8312-e55cb4421625",
+            "4b783ec0-b390-4741-82e2-158118036117",
+            "6020af3b-1216-464e-b7f0-5f5b13d3e95e",
+            "7cfc7ed6-8dd0-4087-87f4-28df5a312c9b",
+            "4fd914d4-e8cc-463f-a5ef-5ffef9165286",
+            "0502cb46-5141-4e1c-ad5e-3510f6f53e19",
+            "3df49992-27e1-4425-8eaa-a0b4f17b54b4",
+            "885c4edb-f7bd-4a1b-bf44-a303f50db20e"
+          ],
+          "answer": "You came across a few opportunities, including a **Brightwave Analytics Data Engineer Intern** role and a **Komprise software engineering internship**.\n\n- **Brightwave Analytics:** You received an interview invitation for **3 November 2026 at 11:00 AM IST**. The interview includes SQL/data modelling and a discussion of a resume project. You also have an internship offer email; it says the attached letter has the stipend, start date, and reporting manager, and asks you to return a signed copy by the date in the letter. (✉ Shehzaad Khan · 26 Oct, ✉ Shehzaad Khan · 26 Oct)\n- **Komprise India:** A PES University placement email advertised a **Software Development Engineer internship in Bangalore**, with a **₹50,000/month stipend**. It listed **12 August 2026** as the application deadline and **17 August 2026** for the drive. (✉ Shehzaad Khan · 1 Sep)\n- **Other leads:** You viewed a Komprise careers page listing several employment types, including internships, and a Société Générale campus placements page for the **Batch of 2027**. I found no specific role details for Société Générale in the saved item. (🌐 komprise.com · 1 Sep, 🌐 mail.google.com · 1 Sep)\n- You also visited an **Infosys recruitment** page, though the saved snippet only shows a feedback form, not a specific opening. (🌐 surveys.infosysapps.com · 10 Jul)",
+          "no_results": false,
+          "privacy_violations": 0
+        }
+      ]
+    },
+    {
+      "id": "q19",
+      "kind": "multi",
+      "gold_count": 5,
+      "metrics": {
+        "agent_loop": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 5
+        },
+        "keyword": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 5
+        },
+        "semantic": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 5
+        },
+        "fusion": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 5
+        },
+        "full_pipeline": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 5
+        }
+      },
+      "first_search_args": {
+        "query": "unstructured data",
+        "alternative_phrasings": [
+          "unstructured data analytics",
+          "unstructured information"
+        ],
+        "sources": null,
+        "since": null,
+        "anchor_item": null,
+        "anchor_relation": null,
+        "read_attachment": false
+      },
+      "turns": [
+        {
+          "text": "What did I read and watch about unstructured data?",
+          "seconds": 8.403351700049825,
+          "llm_calls": 2,
+          "searches": 1,
+          "widened": 0,
+          "input_tokens": 6521,
+          "output_tokens": 240,
+          "request_chars": [
+            4610,
+            14394
+          ],
+          "largest_message_chars": 9357,
+          "first_search_args": {
+            "query": "unstructured data",
+            "alternative_phrasings": [
+              "unstructured data analytics",
+              "unstructured information"
+            ],
+            "sources": null,
+            "since": null,
+            "anchor_item": null,
+            "anchor_relation": null,
+            "read_attachment": false
+          },
+          "found_ids": [
+            "e8165ee7-ee05-4c19-ac1d-f76d2881b34b",
+            "12a45139-eeba-414c-a68a-e0f666d7a5e9",
+            "441bb910-b515-49b2-a011-587291b95eb6",
+            "7656a205-e2e3-4302-9506-f98f754c530e",
+            "53a3ae21-8016-4909-9174-979a4b08966a",
+            "cd69f4a7-c56b-431f-b925-4c976be1dcb9",
+            "f3f369de-4ace-436c-aa94-fdc028da106a",
+            "5aa1c6e1-b349-46a9-9ecb-47af4f05b610",
+            "d3c1f795-596a-400f-9477-f51f6922763f",
+            "be001a8c-2a5d-4c14-8a44-8aaaf24838cd"
+          ],
+          "answer": "You read several Komprise pages and watched three videos about managing unstructured data, all on **September 1, 2026**.\n\n- **What you read:** Komprise’s glossary described managing files, images, videos, logs, and sensor data through classification, lifecycle management, migration, governance, and AI data preparation. Its platform page covered discovering and preparing unstructured data for AI, detecting sensitive data, and reducing storage costs. (🌐 komprise.com · 1 Sep, 🌐 komprise.com · 1 Sep)\n- **What you watched:** Komprise’s video about unstructured data management for AI; a best-practices video on storage-as-a-service and data management; and an Angelbeat video about managing file and object data at scale, including a Pfizer case study. (▶ Komprise · 1 Sep, ▶ Komprise · 1 Sep, ▶ Angelbeat Events · 1 Sep)",
+          "no_results": false,
+          "privacy_violations": 0
+        }
+      ]
+    },
+    {
+      "id": "q21",
+      "kind": "time",
+      "gold_count": 5,
+      "metrics": {
+        "agent_loop": {
+          "recall10": 0.2,
+          "recall5": 0.2,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "keyword": {
+          "recall10": 0.0,
+          "recall5": 0.0,
+          "rr": 0.0,
+          "found10": 0
+        },
+        "semantic": {
+          "recall10": 0.2,
+          "recall5": 0.2,
+          "rr": 0.5,
+          "found10": 1
+        },
+        "fusion": {
+          "recall10": 0.2,
+          "recall5": 0.2,
+          "rr": 0.5,
+          "found10": 1
+        },
+        "full_pipeline": {
+          "recall10": 0.2,
+          "recall5": 0.2,
+          "rr": 1.0,
+          "found10": 1
+        }
+      },
+      "first_search_args": {
+        "query": "Brightwave interview email",
+        "alternative_phrasings": [
+          "Brightwave interview"
+        ],
+        "sources": [
+          "gmail"
+        ],
+        "since": null,
+        "anchor_item": null,
+        "anchor_relation": null,
+        "read_attachment": false
+      },
+      "turns": [
+        {
+          "text": "Which emails did I get after the Brightwave interview email?",
+          "seconds": 9.457950200070627,
+          "llm_calls": 3,
+          "searches": 2,
+          "widened": 0,
+          "input_tokens": 15685,
+          "output_tokens": 239,
+          "request_chars": [
+            4620,
+            18588,
+            22253
+          ],
+          "largest_message_chars": 13561,
+          "first_search_args": {
+            "query": "Brightwave interview email",
+            "alternative_phrasings": [
+              "Brightwave interview"
+            ],
+            "sources": [
+              "gmail"
+            ],
+            "since": null,
+            "anchor_item": null,
+            "anchor_relation": null,
+            "read_attachment": false
+          },
+          "found_ids": [
+            "2aa3180f-f5b9-4c6e-8491-3e7465590d97",
+            "41f4c73d-c13d-43fb-9939-a25e83e8daf4",
+            "4d21ab0d-d331-49b0-9ffd-739f71f00a6e",
+            "5c516561-5129-456b-9818-10174cc88d8a",
+            "e3b8801f-efb6-432c-8be2-839eabbca765",
+            "8cb2c1f8-1e73-45b8-b83e-e25bedde2cfd",
+            "79448568-827a-4a0b-9782-45c32ab6905b",
+            "462fd5cc-185b-4830-9764-e731155ccb33",
+            "d3c1f795-596a-400f-9477-f51f6922763f",
+            "7cfc7ed6-8dd0-4087-87f4-28df5a312c9b",
+            "0502cb46-5141-4e1c-ad5e-3510f6f53e19"
+          ],
+          "answer": "After the Brightwave interview email, I found two emails: an **internship offer from Brightwave Analytics** and a **Kernel Quest 2026 registration confirmation**. (✉ Shehzaad Khan · 26 Oct, ✉ Shehzaad Khan · 26 Oct)",
+          "no_results": false,
+          "privacy_violations": 0
+        }
+      ]
+    },
+    {
+      "id": "q22",
+      "kind": "time",
+      "gold_count": 6,
+      "metrics": {
+        "agent_loop": {
+          "recall10": 0.5,
+          "recall5": 0.6,
+          "rr": 1.0,
+          "found10": 3
+        },
+        "keyword": {
+          "recall10": 0.0,
+          "recall5": 0.0,
+          "rr": 0.0,
+          "found10": 0
+        },
+        "semantic": {
+          "recall10": 0.5,
+          "recall5": 0.6,
+          "rr": 1.0,
+          "found10": 3
+        },
+        "fusion": {
+          "recall10": 0.5,
+          "recall5": 0.6,
+          "rr": 1.0,
+          "found10": 3
+        },
+        "full_pipeline": {
+          "recall10": 0.5,
+          "recall5": 0.6,
+          "rr": 1.0,
+          "found10": 3
+        }
+      },
+      "first_search_args": {
+        "query": "emails received October 26 2026",
+        "alternative_phrasings": [
+          "email inbox today"
+        ],
+        "sources": [
+          "gmail"
+        ],
+        "since": "2026-10-26",
+        "anchor_item": null,
+        "anchor_relation": null,
+        "read_attachment": false
+      },
+      "turns": [
+        {
+          "text": "Which emails did I receive today?",
+          "seconds": 4.113424799987115,
+          "llm_calls": 2,
+          "searches": 1,
+          "widened": 0,
+          "input_tokens": 3866,
+          "output_tokens": 204,
+          "request_chars": [
+            4593,
+            6435
+          ],
+          "largest_message_chars": 4002,
+          "first_search_args": {
+            "query": "emails received October 26 2026",
+            "alternative_phrasings": [
+              "email inbox today"
+            ],
+            "sources": [
+              "gmail"
+            ],
+            "since": "2026-10-26",
+            "anchor_item": null,
+            "anchor_relation": null,
+            "read_attachment": false
+          },
+          "found_ids": [
+            "2aa3180f-f5b9-4c6e-8491-3e7465590d97",
+            "0502cb46-5141-4e1c-ad5e-3510f6f53e19",
+            "ba36f763-4196-4832-9d45-88dd7d1278a8"
+          ],
+          "answer": "You received **three emails today, Monday, October 26**:\n\n- **“Offer of internship - Brightwave Analytics”** — a Data Engineer Intern offer; the email asks you to sign and return the attached letter by its deadline. (✉ Shehzaad Khan · 26 Oct)\n- **“Kernel Quest 2026 - registration confirmed”** — confirms your hackathon registration; team details and event information are attached. (✉ Shehzaad Khan · 26 Oct)\n- **“Invoice INV-2026-0417 - Orbit Cloud Hosting”** — an invoice for your Starter VPS plan, with payment due by the date on the attachment. (✉ Shehzaad Khan · 26 Oct)",
+          "no_results": false,
+          "privacy_violations": 0
+        }
+      ]
+    },
+    {
+      "id": "q23",
+      "kind": "time",
+      "gold_count": 2,
+      "metrics": {
+        "agent_loop": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 2
+        },
+        "keyword": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 2
+        },
+        "semantic": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 2
+        },
+        "fusion": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 2
+        },
+        "full_pipeline": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 2
+        }
+      },
+      "first_search_args": {
+        "query": "security alert emails",
+        "alternative_phrasings": [
+          "account security warning",
+          "suspicious sign-in alert"
+        ],
+        "sources": [
+          "gmail"
+        ],
+        "since": "2026-10-25",
+        "anchor_item": null,
+        "anchor_relation": null,
+        "read_attachment": false
+      },
+      "turns": [
+        {
+          "text": "Security alert emails from yesterday",
+          "seconds": 4.9434446999803185,
+          "llm_calls": 2,
+          "searches": 1,
+          "widened": 0,
+          "input_tokens": 4468,
+          "output_tokens": 185,
+          "request_chars": [
+            4596,
+            8426
+          ],
+          "largest_message_chars": 4002,
+          "first_search_args": {
+            "query": "security alert emails",
+            "alternative_phrasings": [
+              "account security warning",
+              "suspicious sign-in alert"
+            ],
+            "sources": [
+              "gmail"
+            ],
+            "since": "2026-10-25",
+            "anchor_item": null,
+            "anchor_relation": null,
+            "read_attachment": false
+          },
+          "found_ids": [
+            "885e1a00-240b-4c1c-899f-76acec9ca181",
+            "e809053b-f1f4-4b9a-9486-20efe29e5eaf",
+            "2aa3180f-f5b9-4c6e-8491-3e7465590d97"
+          ],
+          "answer": "You received **two Google security alert emails yesterday, Sunday, October 25, at 12:44 p.m.** Both said you had allowed Echo access to some Google Account data and advised you to check your account activity if you didn’t authorize it. (✉ Google · 25 Oct, ✉ Google · 25 Oct)",
+          "no_results": false,
+          "privacy_violations": 0
+        }
+      ]
+    },
+    {
+      "id": "q24",
+      "kind": "time",
+      "gold_count": 1,
+      "metrics": {
+        "agent_loop": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "keyword": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "semantic": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "fusion": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "full_pipeline": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        }
+      },
+      "first_search_args": {
+        "query": "Claude Code",
+        "alternative_phrasings": [
+          "Claude Code page"
+        ],
+        "sources": [
+          "chrome"
+        ],
+        "since": "2026-10-25",
+        "anchor_item": null,
+        "anchor_relation": null,
+        "read_attachment": false
+      },
+      "turns": [
+        {
+          "text": "Which page about Claude Code did I open yesterday?",
+          "seconds": 4.720137499971315,
+          "llm_calls": 2,
+          "searches": 1,
+          "widened": 0,
+          "input_tokens": 4016,
+          "output_tokens": 99,
+          "request_chars": [
+            4610,
+            6414
+          ],
+          "largest_message_chars": 4002,
+          "first_search_args": {
+            "query": "Claude Code",
+            "alternative_phrasings": [
+              "Claude Code page"
+            ],
+            "sources": [
+              "chrome"
+            ],
+            "since": "2026-10-25",
+            "anchor_item": null,
+            "anchor_relation": null,
+            "read_attachment": false
+          },
+          "found_ids": [
+            "0371182d-4216-4312-af21-793387d081dc",
+            "617676f8-13a7-4c13-a6e4-2cc378df5e4c",
+            "d207fc87-5aaa-4e30-bf09-7df7aa3b5e17"
+          ],
+          "answer": "You opened **“Claude Code” on claude.ai** yesterday, **Sunday, October 25**, at 7:16 p.m. (🌐 claude.ai · 25 Oct)",
+          "no_results": false,
+          "privacy_violations": 0
+        }
+      ]
+    },
+    {
+      "id": "q25",
+      "kind": "time",
+      "gold_count": 7,
+      "metrics": {
+        "agent_loop": {
+          "recall10": 0.5714285714285714,
+          "recall5": 0.4,
+          "rr": 0.3333333333333333,
+          "found10": 4
+        },
+        "keyword": {
+          "recall10": 0.0,
+          "recall5": 0.0,
+          "rr": 0.0,
+          "found10": 0
+        },
+        "semantic": {
+          "recall10": 0.5714285714285714,
+          "recall5": 0.6,
+          "rr": 1.0,
+          "found10": 4
+        },
+        "fusion": {
+          "recall10": 0.5714285714285714,
+          "recall5": 0.6,
+          "rr": 1.0,
+          "found10": 4
+        },
+        "full_pipeline": {
+          "recall10": 0.5714285714285714,
+          "recall5": 0.4,
+          "rr": 0.3333333333333333,
+          "found10": 4
+        }
+      },
+      "first_search_args": {
+        "query": "browsing visited pages",
+        "alternative_phrasings": [
+          "websites opened",
+          "Chrome browsing history"
+        ],
+        "sources": [
+          "chrome"
+        ],
+        "since": "2026-10-16",
+        "anchor_item": null,
+        "anchor_relation": null,
+        "read_attachment": false
+      },
+      "turns": [
+        {
+          "text": "What did I browse on 16 October?",
+          "seconds": 9.268128099967726,
+          "llm_calls": 2,
+          "searches": 1,
+          "widened": 0,
+          "input_tokens": 5030,
+          "output_tokens": 581,
+          "request_chars": [
+            4592,
+            10011
+          ],
+          "largest_message_chars": 4982,
+          "first_search_args": {
+            "query": "browsing visited pages",
+            "alternative_phrasings": [
+              "websites opened",
+              "Chrome browsing history"
+            ],
+            "sources": [
+              "chrome"
+            ],
+            "since": "2026-10-16",
+            "anchor_item": null,
+            "anchor_relation": null,
+            "read_attachment": false
+          },
+          "found_ids": [
+            "617676f8-13a7-4c13-a6e4-2cc378df5e4c",
+            "6c76b59f-33a8-4aa6-be81-509fa44c36f6",
+            "a55dee55-2c5a-4918-a4a3-67bf1bfa7b4c",
+            "8ef91b4f-86df-44ff-be93-2a269773f063",
+            "d207fc87-5aaa-4e30-bf09-7df7aa3b5e17",
+            "8a084f4a-da7b-4169-beaa-7e1cd7037df5",
+            "25daa5e9-d280-4ad7-b2c2-a575639a5285"
+          ],
+          "answer": "On **16 October**, your captured browsing history shows:\n\n- **15:23–15:24:** Google and the **O2Plus Clinical Dashboard**. (🌐 localhost · 10 Jul, 🌐 o2plus.app · 16 Oct)\n- **15:25–15:26:** A Supabase sign-in page with ChatGPT, your Supabase projects page, and GitHub’s two-factor authentication page. (🌐 mail.google.com · 1 Sep, 🌐 127.0.0.1 · 16 Oct, 🌐 supabase.com · 16 Oct)\n- **15:35:** **J.A.R.V.I.S**. (🌐 127.0.0.1 · 16 Oct)\n- **15:41:** A Gmail message titled “Fwd: Upcoming Placement Opportunity: Komprise India Private Limited — Check Details!” (🌐 mail.google.com · 1 Sep)",
+          "no_results": false,
+          "privacy_violations": 0
+        }
+      ]
+    },
+    {
+      "id": "q26",
+      "kind": "time",
+      "gold_count": 4,
+      "metrics": {
+        "agent_loop": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 4
+        },
+        "keyword": {
+          "recall10": 0.0,
+          "recall5": 0.0,
+          "rr": 0.0,
+          "found10": 0
+        },
+        "semantic": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 4
+        },
+        "fusion": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 4
+        },
+        "full_pipeline": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 4
+        }
+      },
+      "first_search_args": {
+        "query": "2-Step Verification emails March",
+        "alternative_phrasings": [
+          "Google two-step verification",
+          "2FA verification email"
+        ],
+        "sources": [
+          "gmail"
+        ],
+        "since": null,
+        "anchor_item": null,
+        "anchor_relation": null,
+        "read_attachment": false
+      },
+      "turns": [
+        {
+          "text": "2-Step Verification emails from March",
+          "seconds": 9.309919300023466,
+          "llm_calls": 2,
+          "searches": 1,
+          "widened": 0,
+          "input_tokens": 5239,
+          "output_tokens": 336,
+          "request_chars": [
+            4597,
+            11141
+          ],
+          "largest_message_chars": 6096,
+          "first_search_args": {
+            "query": "2-Step Verification emails March",
+            "alternative_phrasings": [
+              "Google two-step verification",
+              "2FA verification email"
+            ],
+            "sources": [
+              "gmail"
+            ],
+            "since": null,
+            "anchor_item": null,
+            "anchor_relation": null,
+            "read_attachment": false
+          },
+          "found_ids": [
+            "5168745b-1ad0-451b-8948-0c7d502c28c5",
+            "c0c19902-131c-4fc1-b2fb-fe4226acbe4d",
+            "d5fe3240-e98d-4fc6-8f0f-c729a75e1b69",
+            "e8fa8c3e-18bc-4058-92eb-0b739febcb65",
+            "05426449-3554-4809-b7a5-aae6ce41a1e8",
+            "5c516561-5129-456b-9818-10174cc88d8a",
+            "08eff1d0-0b4f-40fb-8117-f1ad6098ceea",
+            "247cdb4a-afc2-4436-ab1a-ff4fd92c065b",
+            "d6fe4d4c-ed6c-4dd0-ba99-9f9be6ec882f",
+            "7ec11512-76ed-4122-8fb5-2141a6c6e4d5"
+          ],
+          "answer": "Google sent several **2-Step Verification emails on March 23**. They reported an Authenticator app being added and a phone number being added for verification, then notifications that 2-Step Verification was turned on and off. (✉ Google · 23 Mar, ✉ Google · 23 Mar, ✉ Google · 23 Mar, ✉ Google · 23 Mar, ✉ Google · 23 Mar, ✉ Google · 23 Mar)\n\nThere were **two “turned on” emails** (11:44 and 11:46) and **two “turned off” emails** (11:45 and 11:47), so the notices show changes happening close together. (✉ Google · 23 Mar, ✉ Google · 23 Mar, ✉ Google · 23 Mar, ✉ Google · 23 Mar)",
+          "no_results": false,
+          "privacy_violations": 0
+        }
+      ]
+    },
+    {
+      "id": "q27",
+      "kind": "followup",
+      "gold_count": 1,
+      "metrics": {
+        "agent_loop": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 0.5,
+          "found10": 1
+        },
+        "keyword": {
+          "recall10": 0.0,
+          "recall5": 0.0,
+          "rr": 0.0,
+          "found10": 0
+        },
+        "semantic": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "fusion": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "full_pipeline": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 0.5,
+          "found10": 1
+        }
+      },
+      "first_search_args": {
+        "query": "Brightwave interview offer afterwards",
+        "alternative_phrasings": [
+          "Brightwave job offer compensation",
+          "Brightwave offer email"
+        ],
+        "sources": [
+          "gmail"
+        ],
+        "since": null,
+        "anchor_item": null,
+        "anchor_relation": null,
+        "read_attachment": false
+      },
+      "turns": [
+        {
+          "text": "When is my interview with Brightwave?",
+          "seconds": 6.559028799994849,
+          "llm_calls": 2,
+          "searches": 1,
+          "widened": 0,
+          "input_tokens": 7570,
+          "output_tokens": 110,
+          "request_chars": [
+            4597,
+            17512
+          ],
+          "largest_message_chars": 12505,
+          "first_search_args": {
+            "query": "Brightwave interview",
+            "alternative_phrasings": [
+              "Brightwave interview schedule"
+            ],
+            "sources": [
+              "gmail"
+            ],
+            "since": null,
+            "anchor_item": null,
+            "anchor_relation": null,
+            "read_attachment": false
+          },
+          "found_ids": [
+            "41f4c73d-c13d-43fb-9939-a25e83e8daf4",
+            "2aa3180f-f5b9-4c6e-8491-3e7465590d97",
+            "4d21ab0d-d331-49b0-9ffd-739f71f00a6e",
+            "e3b8801f-efb6-432c-8be2-839eabbca765",
+            "d58c2c77-c552-4d7d-8ddd-3ba2fee65689",
+            "6020af3b-1216-464e-b7f0-5f5b13d3e95e",
+            "8cb2c1f8-1e73-45b8-b83e-e25bedde2cfd",
+            "7cfc7ed6-8dd0-4087-87f4-28df5a312c9b",
+            "d3c1f795-596a-400f-9477-f51f6922763f",
+            "2c406b60-28b8-42d5-ba2a-3dd857c0ce28"
+          ],
+          "answer": "Your Brightwave Analytics interview is **Tuesday, November 3, 2026, at 11:00 AM IST**. It’s a video call via Google Meet; the link will be sent that morning. (✉ Shehzaad Khan · 26 Oct)",
+          "no_results": false,
+          "privacy_violations": 0
+        },
+        {
+          "text": "And what did they offer me afterwards?",
+          "seconds": 20.032934400020167,
+          "llm_calls": 3,
+          "searches": 2,
+          "widened": 0,
+          "input_tokens": 11708,
+          "output_tokens": 294,
+          "request_chars": [
+            4803,
+            11394,
+            22531
+          ],
+          "largest_message_chars": 8062,
+          "first_search_args": {
+            "query": "Brightwave interview offer afterwards",
+            "alternative_phrasings": [
+              "Brightwave job offer compensation",
+              "Brightwave offer email"
+            ],
+            "sources": [
+              "gmail"
+            ],
+            "since": null,
+            "anchor_item": null,
+            "anchor_relation": null,
+            "read_attachment": false
+          },
+          "found_ids": [
+            "4d21ab0d-d331-49b0-9ffd-739f71f00a6e",
+            "2aa3180f-f5b9-4c6e-8491-3e7465590d97",
+            "d0063135-d91a-4e43-aa66-f6fceee79537",
+            "7ec11512-76ed-4122-8fb5-2141a6c6e4d5",
+            "63c6701a-cb9d-40dd-8e92-af23d6819cd8",
+            "e9a9b3b6-39dc-45fd-b8ca-9f83481ede10",
+            "d58c2c77-c552-4d7d-8ddd-3ba2fee65689",
+            "e3b8801f-efb6-432c-8be2-839eabbca765",
+            "6020af3b-1216-464e-b7f0-5f5b13d3e95e",
+            "5c516561-5129-456b-9818-10174cc88d8a",
+            "3df49992-27e1-4425-8eaa-a0b4f17b54b4",
+            "41f4c73d-c13d-43fb-9939-a25e83e8daf4",
+            "c8c3bb71-58d6-4372-ab1f-688c93674319",
+            "4b783ec0-b390-4741-82e2-158118036117",
+            "8a1877fa-3346-4761-90cd-e7bc916f3d69"
+          ],
+          "answer": "Brightwave offered you a **Data Engineer Intern** role at **₹45,000 per month**, based in **Pune** (hybrid, three days in office), starting **January 4, 2027** for six months. The reporting manager is **Ananya Rao**, and they asked you to return the signed letter by **November 20, 2026**. (✉ Shehzaad Khan · 26 Oct)",
+          "no_results": false,
+          "privacy_violations": 0
+        }
+      ],
+      "answer_ok": true
+    },
+    {
+      "id": "q28",
+      "kind": "followup",
+      "gold_count": 1,
+      "metrics": {
+        "agent_loop": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 0.5,
+          "found10": 1
+        },
+        "keyword": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "semantic": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "fusion": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "full_pipeline": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 0.5,
+          "found10": 1
+        }
+      },
+      "first_search_args": {
+        "query": "Distributed Systems syllabus textbook Shehzaad Khan",
+        "alternative_phrasings": [
+          "course syllabus evaluation scheme textbook",
+          "Distributed Systems course required book"
+        ],
+        "sources": [
+          "gmail"
+        ],
+        "since": null,
+        "anchor_item": null,
+        "anchor_relation": null,
+        "read_attachment": true
+      },
+      "turns": [
+        {
+          "text": "Find the Distributed Systems syllabus email",
+          "seconds": 8.118572999956086,
+          "llm_calls": 2,
+          "searches": 1,
+          "widened": 0,
+          "input_tokens": 11903,
+          "output_tokens": 165,
+          "request_chars": [
+            4603,
+            25592
+          ],
+          "largest_message_chars": 20530,
+          "first_search_args": {
+            "query": "Distributed Systems syllabus",
+            "alternative_phrasings": [
+              "Distributed Systems course outline",
+              "Distributed Systems class email"
+            ],
+            "sources": [
+              "gmail"
+            ],
+            "since": null,
+            "anchor_item": null,
+            "anchor_relation": null,
+            "read_attachment": false
+          },
+          "found_ids": [
+            "46320e1b-2650-40f5-9b0d-29c77ac55c1a",
+            "4d21ab0d-d331-49b0-9ffd-739f71f00a6e",
+            "79448568-827a-4a0b-9782-45c32ab6905b",
+            "8cb2c1f8-1e73-45b8-b83e-e25bedde2cfd",
+            "5aa1c6e1-b349-46a9-9ecb-47af4f05b610",
+            "be001a8c-2a5d-4c14-8a44-8aaaf24838cd",
+            "2c406b60-28b8-42d5-ba2a-3dd857c0ce28",
+            "d3c1f795-596a-400f-9477-f51f6922763f",
+            "a5a64b3d-fb2e-4821-a367-1029a124deb8",
+            "7cfc7ed6-8dd0-4087-87f4-28df5a312c9b"
+          ],
+          "answer": "Found it: **“Distributed Systems - course syllabus and evaluation scheme”** from **Shehzaad Khan**, received **October 26, 2026 at 5:58 PM**. The email says the syllabus is attached and asks you to read it before the first lab. (✉ Shehzaad Khan · 26 Oct)",
+          "no_results": false,
+          "privacy_violations": 0
+        },
+        {
+          "text": "Which textbook does it use?",
+          "seconds": 12.548070000018924,
+          "llm_calls": 2,
+          "searches": 1,
+          "widened": 0,
+          "input_tokens": 8421,
+          "output_tokens": 101,
+          "request_chars": [
+            4868,
+            15984
+          ],
+          "largest_message_chars": 10618,
+          "first_search_args": {
+            "query": "Distributed Systems syllabus textbook Shehzaad Khan",
+            "alternative_phrasings": [
+              "course syllabus evaluation scheme textbook",
+              "Distributed Systems course required book"
+            ],
+            "sources": [
+              "gmail"
+            ],
+            "since": null,
+            "anchor_item": null,
+            "anchor_relation": null,
+            "read_attachment": true
+          },
+          "found_ids": [
+            "4d21ab0d-d331-49b0-9ffd-739f71f00a6e",
+            "46320e1b-2650-40f5-9b0d-29c77ac55c1a",
+            "d58c2c77-c552-4d7d-8ddd-3ba2fee65689",
+            "d3c1f795-596a-400f-9477-f51f6922763f",
+            "c27f097b-4f4b-4fbd-8b56-4d7b31c7ce43",
+            "5aa1c6e1-b349-46a9-9ecb-47af4f05b610",
+            "7cfc7ed6-8dd0-4087-87f4-28df5a312c9b",
+            "848bf878-db53-4a20-8a35-df4f9934b65f",
+            "be001a8c-2a5d-4c14-8a44-8aaaf24838cd",
+            "a5a64b3d-fb2e-4821-a367-1029a124deb8"
+          ],
+          "answer": "The syllabus lists **_Distributed Systems: Concepts and Design_ by Coulouris** as the textbook. (✉ Shehzaad Khan · 26 Oct)",
+          "no_results": false,
+          "privacy_violations": 0
+        }
+      ],
+      "answer_ok": true
+    },
+    {
+      "id": "q29",
+      "kind": "followup",
+      "gold_count": 1,
+      "metrics": {
+        "agent_loop": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 0.5,
+          "found10": 1
+        },
+        "keyword": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "semantic": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "fusion": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "full_pipeline": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 0.5,
+          "found10": 1
+        }
+      },
+      "first_search_args": {
+        "query": "Hyderabad flight return itinerary Shehzaad Khan",
+        "alternative_phrasings": [
+          "return flight departure time",
+          "Hyderabad itinerary"
+        ],
+        "sources": [
+          "gmail"
+        ],
+        "since": null,
+        "anchor_item": null,
+        "anchor_relation": null,
+        "read_attachment": true
+      },
+      "turns": [
+        {
+          "text": "Which mail has my flight to Hyderabad?",
+          "seconds": 5.49896529992111,
+          "llm_calls": 2,
+          "searches": 1,
+          "widened": 0,
+          "input_tokens": 6384,
+          "output_tokens": 107,
+          "request_chars": [
+            4598,
+            14055
+          ],
+          "largest_message_chars": 9025,
+          "first_search_args": {
+            "query": "flight Hyderabad",
+            "alternative_phrasings": [
+              "Hyderabad flight itinerary",
+              "airline ticket Hyderabad"
+            ],
+            "sources": [
+              "gmail"
+            ],
+            "since": null,
+            "anchor_item": null,
+            "anchor_relation": null,
+            "read_attachment": false
+          },
+          "found_ids": [
+            "38adeed6-fffb-437d-8568-ee38e53545b7",
+            "4d21ab0d-d331-49b0-9ffd-739f71f00a6e",
+            "d58c2c77-c552-4d7d-8ddd-3ba2fee65689",
+            "2aa3180f-f5b9-4c6e-8491-3e7465590d97",
+            "41f4c73d-c13d-43fb-9939-a25e83e8daf4",
+            "0502cb46-5141-4e1c-ad5e-3510f6f53e19",
+            "471c0e24-79c6-4d5f-8312-e55cb4421625",
+            "ba36f763-4196-4832-9d45-88dd7d1278a8",
+            "d3c1f795-596a-400f-9477-f51f6922763f",
+            "8a1877fa-3346-4761-90cd-e7bc916f3d69"
+          ],
+          "answer": "The email is **“Your flight to Hyderabad on 14 Nov – itinerary attached,”** from Shehzaad Khan, received **October 26, 2026**. (✉ Shehzaad Khan · 26 Oct)",
+          "no_results": false,
+          "privacy_violations": 0
+        },
+        {
+          "text": "What time does the return flight leave?",
+          "seconds": 11.846607299987227,
+          "llm_calls": 2,
+          "searches": 1,
+          "widened": 0,
+          "input_tokens": 7805,
+          "output_tokens": 118,
+          "request_chars": [
+            4774,
+            19833
+          ],
+          "largest_message_chars": 12847,
+          "first_search_args": {
+            "query": "Hyderabad flight return itinerary Shehzaad Khan",
+            "alternative_phrasings": [
+              "return flight departure time",
+              "Hyderabad itinerary"
+            ],
+            "sources": [
+              "gmail"
+            ],
+            "since": null,
+            "anchor_item": null,
+            "anchor_relation": null,
+            "read_attachment": true
+          },
+          "found_ids": [
+            "4d21ab0d-d331-49b0-9ffd-739f71f00a6e",
+            "38adeed6-fffb-437d-8568-ee38e53545b7",
+            "54fe9d8f-1056-47e5-a67f-04ad0367b374",
+            "8a1877fa-3346-4761-90cd-e7bc916f3d69",
+            "41f4c73d-c13d-43fb-9939-a25e83e8daf4",
+            "0502cb46-5141-4e1c-ad5e-3510f6f53e19",
+            "5c516561-5129-456b-9818-10174cc88d8a",
+            "2aa3180f-f5b9-4c6e-8491-3e7465590d97",
+            "ba36f763-4196-4832-9d45-88dd7d1278a8",
+            "d58c2c77-c552-4d7d-8ddd-3ba2fee65689"
+          ],
+          "answer": "Your return flight, **6E 2158**, leaves on **16 November at 7:10 PM**. (✉ Shehzaad Khan · 26 Oct)",
+          "no_results": false,
+          "privacy_violations": 0
+        }
+      ],
+      "answer_ok": true
+    },
+    {
+      "id": "q30",
+      "kind": "followup",
+      "gold_count": 1,
+      "metrics": {
+        "agent_loop": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 0.5,
+          "found10": 1
+        },
+        "keyword": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "semantic": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "fusion": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "full_pipeline": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 0.5,
+          "found10": 1
+        }
+      },
+      "first_search_args": {
+        "query": "Orbit Cloud Hosting invoice due date Starter VPS",
+        "alternative_phrasings": [
+          "Orbit Cloud payment deadline invoice",
+          "Shehzaad Khan invoice"
+        ],
+        "sources": [
+          "gmail"
+        ],
+        "since": null,
+        "anchor_item": null,
+        "anchor_relation": null,
+        "read_attachment": false
+      },
+      "turns": [
+        {
+          "text": "Do I have any invoices?",
+          "seconds": 7.886882100021467,
+          "llm_calls": 2,
+          "searches": 1,
+          "widened": 0,
+          "input_tokens": 6700,
+          "output_tokens": 154,
+          "request_chars": [
+            4583,
+            12336
+          ],
+          "largest_message_chars": 7348,
+          "first_search_args": {
+            "query": "invoice invoices",
+            "alternative_phrasings": [
+              "billing invoice",
+              "invoice payment"
+            ],
+            "sources": null,
+            "since": null,
+            "anchor_item": null,
+            "anchor_relation": null,
+            "read_attachment": false
+          },
+          "found_ids": [
+            "cd69f4a7-c56b-431f-b925-4c976be1dcb9",
+            "ba36f763-4196-4832-9d45-88dd7d1278a8",
+            "0502cb46-5141-4e1c-ad5e-3510f6f53e19",
+            "4b783ec0-b390-4741-82e2-158118036117",
+            "471c0e24-79c6-4d5f-8312-e55cb4421625",
+            "7cfc7ed6-8dd0-4087-87f4-28df5a312c9b",
+            "8a1877fa-3346-4761-90cd-e7bc916f3d69",
+            "5aa1c6e1-b349-46a9-9ecb-47af4f05b610",
+            "d3c1f795-596a-400f-9477-f51f6922763f",
+            "a5a64b3d-fb2e-4821-a367-1029a124deb8"
+          ],
+          "answer": "Yes — you have an invoice email from **Orbit Cloud Hosting**, received **October 26, 2026**, for your Starter VPS plan. It says the invoice is attached and asks you to pay by the due date shown on it. (✉ Shehzaad Khan · 26 Oct)",
+          "no_results": false,
+          "privacy_violations": 0
+        },
+        {
+          "text": "When is it due?",
+          "seconds": 18.35065040003974,
+          "llm_calls": 3,
+          "searches": 2,
+          "widened": 0,
+          "input_tokens": 15730,
+          "output_tokens": 212,
+          "request_chars": [
+            4809,
+            21448,
+            25246
+          ],
+          "largest_message_chars": 16168,
+          "first_search_args": {
+            "query": "Orbit Cloud Hosting invoice due date Starter VPS",
+            "alternative_phrasings": [
+              "Orbit Cloud payment deadline invoice",
+              "Shehzaad Khan invoice"
+            ],
+            "sources": [
+              "gmail"
+            ],
+            "since": null,
+            "anchor_item": null,
+            "anchor_relation": null,
+            "read_attachment": false
+          },
+          "found_ids": [
+            "4d21ab0d-d331-49b0-9ffd-739f71f00a6e",
+            "ba36f763-4196-4832-9d45-88dd7d1278a8",
+            "54fe9d8f-1056-47e5-a67f-04ad0367b374",
+            "38adeed6-fffb-437d-8568-ee38e53545b7",
+            "8a1877fa-3346-4761-90cd-e7bc916f3d69",
+            "7dea7319-e556-48db-a726-2c7401556681",
+            "0502cb46-5141-4e1c-ad5e-3510f6f53e19",
+            "8cb2c1f8-1e73-45b8-b83e-e25bedde2cfd",
+            "46320e1b-2650-40f5-9b0d-29c77ac55c1a",
+            "2aa3180f-f5b9-4c6e-8491-3e7465590d97",
+            "247cdb4a-afc2-4436-ab1a-ff4fd92c065b"
+          ],
+          "answer": "It’s due **12 November 2026**. The invoice says the amount is **₹3,540**, with a **₹150 late fee** after the due date. (✉ Shehzaad Khan · 26 Oct)",
+          "no_results": false,
+          "privacy_violations": 0
+        }
+      ],
+      "answer_ok": true
+    },
+    {
+      "id": "q31",
+      "kind": "followup",
+      "gold_count": 4,
+      "metrics": {
+        "agent_loop": {
+          "recall10": 1.0,
+          "recall5": 0.5,
+          "rr": 0.3333333333333333,
+          "found10": 4
+        },
+        "keyword": {
+          "recall10": 0.5,
+          "recall5": 0.5,
+          "rr": 1.0,
+          "found10": 2
+        },
+        "semantic": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 4
+        },
+        "fusion": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 4
+        },
+        "full_pipeline": {
+          "recall10": 1.0,
+          "recall5": 0.5,
+          "rr": 0.3333333333333333,
+          "found10": 4
+        }
+      },
+      "first_search_args": {
+        "query": "Komprise company",
+        "alternative_phrasings": [
+          "Komprise web pages website",
+          "Komprise"
+        ],
+        "sources": [
+          "chrome"
+        ],
+        "since": null,
+        "anchor_item": null,
+        "anchor_relation": null,
+        "read_attachment": false
+      },
+      "turns": [
+        {
+          "text": "Show me videos about Komprise",
+          "seconds": 5.333236400038004,
+          "llm_calls": 2,
+          "searches": 1,
+          "widened": 0,
+          "input_tokens": 6832,
+          "output_tokens": 252,
+          "request_chars": [
+            4589,
+            17434
+          ],
+          "largest_message_chars": 12459,
+          "first_search_args": {
+            "query": "Komprise",
+            "alternative_phrasings": [
+              "Komprise videos"
+            ],
+            "sources": [
+              "youtube"
+            ],
+            "since": null,
+            "anchor_item": null,
+            "anchor_relation": null,
+            "read_attachment": false
+          },
+          "found_ids": [
+            "53a3ae21-8016-4909-9174-979a4b08966a",
+            "7656a205-e2e3-4302-9506-f98f754c530e",
+            "12a45139-eeba-414c-a68a-e0f666d7a5e9",
+            "90d1246b-a57d-4eb6-bbe3-f0ee4e14b1b6",
+            "26b4ae78-a6c2-486f-b8c9-00bdd782f8f2",
+            "48c87a3a-ff4c-450a-a586-c2f46a32bf69",
+            "cc178c11-1fdf-4f1e-8231-0cd22f7ca10c",
+            "a1820f00-0223-4df2-8aee-6ac5a89ca522",
+            "dcc01b7a-6226-44a4-b44e-1bad7b61fcb0"
+          ],
+          "answer": "Here are three Komprise-related videos you watched on YouTube on **September 1, 2026**:\n\n- **“Komprise Best Practices: Storage as a Service and Unstructured Data Management”** — Komprise Field CTO Benjamin Henry covers Storage Insights, showback reporting, and unstructured data management. (▶ Komprise · 1 Sep)\n- **“The power of unstructured data management for #AI”** — Komprise CEO Kumar Goswami discusses sensitive-data detection and unstructured data management for AI. (▶ Komprise · 1 Sep)\n- **“Unstructured Data Management with Komprise”** — an Angelbeat Events video about analyzing and managing file and object data at scale, including a Pfizer case study. (▶ Angelbeat Events · 1 Sep)",
+          "no_results": false,
+          "privacy_violations": 0
+        },
+        {
+          "text": "Any web pages from the same company?",
+          "seconds": 4.461862299940549,
+          "llm_calls": 2,
+          "searches": 1,
+          "widened": 0,
+          "input_tokens": 5040,
+          "output_tokens": 138,
+          "request_chars": [
+            5303,
+            10904
+          ],
+          "largest_message_chars": 5184,
+          "first_search_args": {
+            "query": "Komprise company",
+            "alternative_phrasings": [
+              "Komprise web pages website",
+              "Komprise"
+            ],
+            "sources": [
+              "chrome"
+            ],
+            "since": null,
+            "anchor_item": null,
+            "anchor_relation": null,
+            "read_attachment": false
+          },
+          "found_ids": [
+            "cd69f4a7-c56b-431f-b925-4c976be1dcb9",
+            "617676f8-13a7-4c13-a6e4-2cc378df5e4c",
+            "e8165ee7-ee05-4c19-ac1d-f76d2881b34b",
+            "960d1214-d3f2-4867-a3bc-34b95d3fa9a2",
+            "f3f369de-4ace-436c-aa94-fdc028da106a",
+            "441bb910-b515-49b2-a011-587291b95eb6",
+            "6c76b59f-33a8-4aa6-be81-509fa44c36f6",
+            "0371182d-4216-4312-af21-793387d081dc",
+            "c093598d-76c2-4b6f-843f-3aa3fe83648c",
+            "feb5fa7b-30f6-4905-a9b4-ede476698586"
+          ],
+          "answer": "Yes — you visited **three Komprise pages on komprise.com on September 1, 2026**: the company’s **Unstructured Data Intelligence Platform**, its **glossary page on unstructured data management**, and its **careers page**. (🌐 komprise.com · 1 Sep, 🌐 komprise.com · 1 Sep, 🌐 komprise.com · 1 Sep)",
+          "no_results": false,
+          "privacy_violations": 0
+        }
+      ]
+    },
+    {
+      "id": "q32",
+      "kind": "followup",
+      "gold_count": 1,
+      "metrics": {
+        "agent_loop": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "keyword": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "semantic": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "fusion": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "full_pipeline": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        }
+      },
+      "first_search_args": {
+        "query": "Neon onboarding feedback",
+        "alternative_phrasings": [
+          "feedback on onboarding Neon"
+        ],
+        "sources": [
+          "gmail"
+        ],
+        "since": null,
+        "anchor_item": null,
+        "anchor_relation": null,
+        "read_attachment": false
+      },
+      "turns": [
+        {
+          "text": "Show me my Neon emails",
+          "seconds": 8.472724699997343,
+          "llm_calls": 2,
+          "searches": 1,
+          "widened": 0,
+          "input_tokens": 7349,
+          "output_tokens": 516,
+          "request_chars": [
+            4582,
+            18134
+          ],
+          "largest_message_chars": 13176,
+          "first_search_args": {
+            "query": "Neon",
+            "alternative_phrasings": [
+              "Neon emails"
+            ],
+            "sources": [
+              "gmail"
+            ],
+            "since": null,
+            "anchor_item": null,
+            "anchor_relation": null,
+            "read_attachment": false
+          },
+          "found_ids": [
+            "e3b8801f-efb6-432c-8be2-839eabbca765",
+            "2c406b60-28b8-42d5-ba2a-3dd857c0ce28",
+            "412168e7-0f1d-467c-b0f6-3d4cfb38c419",
+            "885c4edb-f7bd-4a1b-bf44-a303f50db20e",
+            "6020af3b-1216-464e-b7f0-5f5b13d3e95e",
+            "03f9f1ea-ae80-404d-8832-828b27ccf2ae",
+            "1354d524-8b99-40a8-9c62-0ceb2645edf1",
+            "a19970de-9508-4442-a2b9-f910cad120bc",
+            "36513afe-d13f-4afa-9188-b1a3ae339e51",
+            "0e9ac52e-560c-4561-9ecc-767058eed75b"
+          ],
+          "answer": "Here are your **10 Neon emails**, newest first:\n\n- **May 30, 2026** — “Announcing a major product expansion for Neon” — Neon Changelog (✉ Neon Changelog · 30 May)\n- **May 23, 2026** — “10x higher snapshot limits on Paid plans, better branching tools in MCP, new skills” — Neon Changelog (✉ Neon Changelog · 23 May)\n- **May 16, 2026** — “Neon Auth gets magic links, phone sign-in, wildcard trusted domains, custom app names” — Neon Changelog (✉ Neon Changelog · 16 May)\n- **May 9, 2026** — “Everyone gets faster writes, lower tail latencies on reads. Mandatory 2FA available. snapshot billing” — Neon Changelog (✉ Neon Changelog · 9 May)\n- **May 2, 2026** — “Postgres 18 GA, organization spending limits API, us-east-1 NAT gateway and PrivateLink updates” — Neon Changelog (✉ Neon Changelog · 2 May)\n- **April 25, 2026** — “Spending Limits for all Neon accounts, Snapshot Metrics in API, Neon MCP in Kiro” — Neon Changelog (✉ Neon Changelog · 25 Apr)\n- **April 18, 2026** — “Automatic updates for large databases, storage info for snapshots, Neon in Codex” — Neon Changelog (✉ Neon Changelog · 18 Apr)\n- **April 4, 2026** — “Postgres extension updates, AI shortcuts in docs, updated GitHub Actions templates” — Neon Changelog (✉ Neon Changelog · 4 Apr)\n- **April 3, 2026** — “Neon <> Feedback on onboarding” — Bryan Clark at Neon (✉ Bryan Clark · 3 Apr)\n- **April 1, 2026** — “You're in. Here's a quick guide to help you get started with Neon” — Neon (✉ Neon · 1 Apr)",
+          "no_results": false,
+          "privacy_violations": 0
+        },
+        {
+          "text": "Which of them asked for onboarding feedback?",
+          "seconds": 6.925101600005291,
+          "llm_calls": 2,
+          "searches": 1,
+          "widened": 0,
+          "input_tokens": 7693,
+          "output_tokens": 116,
+          "request_chars": [
+            6076,
+            15141
+          ],
+          "largest_message_chars": 8653,
+          "first_search_args": {
+            "query": "Neon onboarding feedback",
+            "alternative_phrasings": [
+              "feedback on onboarding Neon"
+            ],
+            "sources": [
+              "gmail"
+            ],
+            "since": null,
+            "anchor_item": null,
+            "anchor_relation": null,
+            "read_attachment": false
+          },
+          "found_ids": [
+            "e3b8801f-efb6-432c-8be2-839eabbca765",
+            "2aa3180f-f5b9-4c6e-8491-3e7465590d97",
+            "0502cb46-5141-4e1c-ad5e-3510f6f53e19",
+            "5aa1c6e1-b349-46a9-9ecb-47af4f05b610",
+            "d3c1f795-596a-400f-9477-f51f6922763f",
+            "41f4c73d-c13d-43fb-9939-a25e83e8daf4",
+            "848bf878-db53-4a20-8a35-df4f9934b65f",
+            "8cb2c1f8-1e73-45b8-b83e-e25bedde2cfd",
+            "7cfc7ed6-8dd0-4087-87f4-28df5a312c9b",
+            "247cdb4a-afc2-4436-ab1a-ff4fd92c065b"
+          ],
+          "answer": "It was **“Neon <> Feedback on onboarding,”** sent by **Bryan Clark at Neon on April 3, 2026**. He asked you to share feedback—good or bad—about your experience after signing up. (✉ Bryan Clark · 3 Apr)",
+          "no_results": false,
+          "privacy_violations": 0
+        }
+      ]
+    },
+    {
+      "id": "q33",
+      "kind": "attachment",
+      "gold_count": 1,
+      "metrics": {
+        "agent_loop": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "keyword": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "semantic": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "fusion": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "full_pipeline": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        }
+      },
+      "first_search_args": {
+        "query": "Brightwave offer letter stipend",
+        "alternative_phrasings": [
+          "Brightwave offer stipend amount"
+        ],
+        "sources": [
+          "gmail"
+        ],
+        "since": null,
+        "anchor_item": null,
+        "anchor_relation": null,
+        "read_attachment": false
+      },
+      "turns": [
+        {
+          "text": "What stipend does the Brightwave offer letter mention?",
+          "seconds": 17.205940200015903,
+          "llm_calls": 3,
+          "searches": 2,
+          "widened": 0,
+          "input_tokens": 13859,
+          "output_tokens": 180,
+          "request_chars": [
+            4614,
+            15180,
+            21140
+          ],
+          "largest_message_chars": 10143,
+          "first_search_args": {
+            "query": "Brightwave offer letter stipend",
+            "alternative_phrasings": [
+              "Brightwave offer stipend amount"
+            ],
+            "sources": [
+              "gmail"
+            ],
+            "since": null,
+            "anchor_item": null,
+            "anchor_relation": null,
+            "read_attachment": false
+          },
+          "found_ids": [
+            "2aa3180f-f5b9-4c6e-8491-3e7465590d97",
+            "4d21ab0d-d331-49b0-9ffd-739f71f00a6e",
+            "41f4c73d-c13d-43fb-9939-a25e83e8daf4",
+            "5aa1c6e1-b349-46a9-9ecb-47af4f05b610",
+            "4b783ec0-b390-4741-82e2-158118036117",
+            "6020af3b-1216-464e-b7f0-5f5b13d3e95e",
+            "7cfc7ed6-8dd0-4087-87f4-28df5a312c9b",
+            "d3c1f795-596a-400f-9477-f51f6922763f",
+            "e3b8801f-efb6-432c-8be2-839eabbca765",
+            "848bf878-db53-4a20-8a35-df4f9934b65f",
+            "247cdb4a-afc2-4436-ab1a-ff4fd92c065b",
+            "8cb2c1f8-1e73-45b8-b83e-e25bedde2cfd"
+          ],
+          "answer": "The Brightwave offer letter lists a stipend of **₹45,000 per month**. (✉ Shehzaad Khan · 26 Oct)",
+          "no_results": false,
+          "privacy_violations": 0
+        }
+      ],
+      "answer_ok": true
+    },
+    {
+      "id": "q34",
+      "kind": "attachment",
+      "gold_count": 1,
+      "metrics": {
+        "agent_loop": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "keyword": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "semantic": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "fusion": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "full_pipeline": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        }
+      },
+      "first_search_args": {
+        "query": "Hyderabad flight seat",
+        "alternative_phrasings": [
+          "Hyderabad flight booking seat number"
+        ],
+        "sources": [
+          "gmail"
+        ],
+        "since": null,
+        "anchor_item": null,
+        "anchor_relation": null,
+        "read_attachment": false
+      },
+      "turns": [
+        {
+          "text": "Which seat did I get on the Hyderabad flight?",
+          "seconds": 16.186657899990678,
+          "llm_calls": 3,
+          "searches": 2,
+          "widened": 0,
+          "input_tokens": 14148,
+          "output_tokens": 187,
+          "request_chars": [
+            4605,
+            15023,
+            19201
+          ],
+          "largest_message_chars": 10000,
+          "first_search_args": {
+            "query": "Hyderabad flight seat",
+            "alternative_phrasings": [
+              "Hyderabad flight booking seat number"
+            ],
+            "sources": [
+              "gmail"
+            ],
+            "since": null,
+            "anchor_item": null,
+            "anchor_relation": null,
+            "read_attachment": false
+          },
+          "found_ids": [
+            "38adeed6-fffb-437d-8568-ee38e53545b7",
+            "4d21ab0d-d331-49b0-9ffd-739f71f00a6e",
+            "41f4c73d-c13d-43fb-9939-a25e83e8daf4",
+            "0502cb46-5141-4e1c-ad5e-3510f6f53e19",
+            "471c0e24-79c6-4d5f-8312-e55cb4421625",
+            "ba36f763-4196-4832-9d45-88dd7d1278a8",
+            "d3c1f795-596a-400f-9477-f51f6922763f",
+            "e0c2bbb3-c5e7-4a37-8add-5ba51c5ba4ac",
+            "a5a64b3d-fb2e-4821-a367-1029a124deb8",
+            "7cfc7ed6-8dd0-4087-87f4-28df5a312c9b",
+            "7ec11512-76ed-4122-8fb5-2141a6c6e4d5",
+            "63c6701a-cb9d-40dd-8e92-af23d6819cd8",
+            "d6fe4d4c-ed6c-4dd0-ba99-9f9be6ec882f",
+            "d0063135-d91a-4e43-aa66-f6fceee79537",
+            "e9a9b3b6-39dc-45fd-b8ca-9f83481ede10",
+            "46320e1b-2650-40f5-9b0d-29c77ac55c1a"
+          ],
+          "answer": "You got **seat 14C** on flight **6E 2147** from Bengaluru to Hyderabad on **14 November**. (✉ Shehzaad Khan · 26 Oct)",
+          "no_results": false,
+          "privacy_violations": 0
+        }
+      ],
+      "answer_ok": true
+    },
+    {
+      "id": "q35",
+      "kind": "attachment",
+      "gold_count": 1,
+      "metrics": {
+        "agent_loop": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "keyword": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "semantic": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "fusion": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "full_pipeline": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        }
+      },
+      "first_search_args": {
+        "query": "flight Hyderabad booking reference",
+        "alternative_phrasings": [
+          "Hyderabad flight confirmation PNR"
+        ],
+        "sources": [
+          "gmail"
+        ],
+        "since": null,
+        "anchor_item": null,
+        "anchor_relation": null,
+        "read_attachment": false
+      },
+      "turns": [
+        {
+          "text": "What is the booking reference of my flight to Hyderabad?",
+          "seconds": 17.421529700048268,
+          "llm_calls": 3,
+          "searches": 2,
+          "widened": 0,
+          "input_tokens": 10620,
+          "output_tokens": 206,
+          "request_chars": [
+            4616,
+            12559,
+            16649
+          ],
+          "largest_message_chars": 7515,
+          "first_search_args": {
+            "query": "flight Hyderabad booking reference",
+            "alternative_phrasings": [
+              "Hyderabad flight confirmation PNR"
+            ],
+            "sources": [
+              "gmail"
+            ],
+            "since": null,
+            "anchor_item": null,
+            "anchor_relation": null,
+            "read_attachment": false
+          },
+          "found_ids": [
+            "38adeed6-fffb-437d-8568-ee38e53545b7",
+            "4d21ab0d-d331-49b0-9ffd-739f71f00a6e",
+            "0502cb46-5141-4e1c-ad5e-3510f6f53e19",
+            "41f4c73d-c13d-43fb-9939-a25e83e8daf4",
+            "2aa3180f-f5b9-4c6e-8491-3e7465590d97",
+            "d58c2c77-c552-4d7d-8ddd-3ba2fee65689",
+            "d3c1f795-596a-400f-9477-f51f6922763f",
+            "e3b8801f-efb6-432c-8be2-839eabbca765",
+            "4b783ec0-b390-4741-82e2-158118036117",
+            "471c0e24-79c6-4d5f-8312-e55cb4421625",
+            "7ec11512-76ed-4122-8fb5-2141a6c6e4d5",
+            "63c6701a-cb9d-40dd-8e92-af23d6819cd8",
+            "5c516561-5129-456b-9818-10174cc88d8a"
+          ],
+          "answer": "Your flight to Hyderabad on **14 November** has booking reference (PNR) **QX7M2L**. (✉ Shehzaad Khan · 26 Oct)",
+          "no_results": false,
+          "privacy_violations": 0
+        }
+      ],
+      "answer_ok": true
+    },
+    {
+      "id": "q36",
+      "kind": "attachment",
+      "gold_count": 1,
+      "metrics": {
+        "agent_loop": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "keyword": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "semantic": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "fusion": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "full_pipeline": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        }
+      },
+      "first_search_args": {
+        "query": "Kernel Quest hackathon team name",
+        "alternative_phrasings": [
+          "Kernel Quest team",
+          "hackathon team name"
+        ],
+        "sources": null,
+        "since": null,
+        "anchor_item": null,
+        "anchor_relation": null,
+        "read_attachment": false
+      },
+      "turns": [
+        {
+          "text": "What is our team name for the Kernel Quest hackathon?",
+          "seconds": 23.98576040007174,
+          "llm_calls": 4,
+          "searches": 3,
+          "widened": 0,
+          "input_tokens": 18301,
+          "output_tokens": 439,
+          "request_chars": [
+            4613,
+            8445,
+            18634,
+            27999
+          ],
+          "largest_message_chars": 6303,
+          "first_search_args": {
+            "query": "Kernel Quest hackathon team name",
+            "alternative_phrasings": [
+              "Kernel Quest team",
+              "hackathon team name"
+            ],
+            "sources": null,
+            "since": null,
+            "anchor_item": null,
+            "anchor_relation": null,
+            "read_attachment": false
+          },
+          "found_ids": [
+            "0502cb46-5141-4e1c-ad5e-3510f6f53e19",
+            "cd69f4a7-c56b-431f-b925-4c976be1dcb9",
+            "617676f8-13a7-4c13-a6e4-2cc378df5e4c",
+            "960d1214-d3f2-4867-a3bc-34b95d3fa9a2",
+            "f3f369de-4ace-436c-aa94-fdc028da106a",
+            "6c76b59f-33a8-4aa6-be81-509fa44c36f6",
+            "0371182d-4216-4312-af21-793387d081dc",
+            "feb5fa7b-30f6-4905-a9b4-ede476698586",
+            "a55dee55-2c5a-4918-a4a3-67bf1bfa7b4c",
+            "1e11eed7-2742-4621-81c3-135e0ba55984",
+            "e3b8801f-efb6-432c-8be2-839eabbca765",
+            "d58c2c77-c552-4d7d-8ddd-3ba2fee65689",
+            "4b783ec0-b390-4741-82e2-158118036117",
+            "471c0e24-79c6-4d5f-8312-e55cb4421625",
+            "848bf878-db53-4a20-8a35-df4f9934b65f",
+            "7cfc7ed6-8dd0-4087-87f4-28df5a312c9b",
+            "be001a8c-2a5d-4c14-8a44-8aaaf24838cd",
+            "a5a64b3d-fb2e-4821-a367-1029a124deb8",
+            "d3c1f795-596a-400f-9477-f51f6922763f",
+            "4d21ab0d-d331-49b0-9ffd-739f71f00a6e",
+            "8cb2c1f8-1e73-45b8-b83e-e25bedde2cfd"
+          ],
+          "answer": "Your team name is **Null Pointers**. (✉ Shehzaad Khan · 26 Oct)",
+          "no_results": false,
+          "privacy_violations": 0
+        }
+      ],
+      "answer_ok": true
+    },
+    {
+      "id": "q37",
+      "kind": "attachment",
+      "gold_count": 1,
+      "metrics": {
+        "agent_loop": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "keyword": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "semantic": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "fusion": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "full_pipeline": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        }
+      },
+      "first_search_args": {
+        "query": "Orbit Cloud invoice late fee",
+        "alternative_phrasings": [
+          "Orbit Cloud billing invoice penalty"
+        ],
+        "sources": [
+          "gmail"
+        ],
+        "since": null,
+        "anchor_item": null,
+        "anchor_relation": null,
+        "read_attachment": false
+      },
+      "turns": [
+        {
+          "text": "What is the late fee on the Orbit Cloud invoice?",
+          "seconds": 18.415074199903756,
+          "llm_calls": 3,
+          "searches": 2,
+          "widened": 0,
+          "input_tokens": 16130,
+          "output_tokens": 245,
+          "request_chars": [
+            4608,
+            16858,
+            23899
+          ],
+          "largest_message_chars": 11826,
+          "first_search_args": {
+            "query": "Orbit Cloud invoice late fee",
+            "alternative_phrasings": [
+              "Orbit Cloud billing invoice penalty"
+            ],
+            "sources": [
+              "gmail"
+            ],
+            "since": null,
+            "anchor_item": null,
+            "anchor_relation": null,
+            "read_attachment": false
+          },
+          "found_ids": [
+            "ba36f763-4196-4832-9d45-88dd7d1278a8",
+            "0e9ac52e-560c-4561-9ecc-767058eed75b",
+            "4b783ec0-b390-4741-82e2-158118036117",
+            "5aa1c6e1-b349-46a9-9ecb-47af4f05b610",
+            "1354d524-8b99-40a8-9c62-0ceb2645edf1",
+            "4fd914d4-e8cc-463f-a5ef-5ffef9165286",
+            "7dea7319-e556-48db-a726-2c7401556681",
+            "0502cb46-5141-4e1c-ad5e-3510f6f53e19",
+            "54fe9d8f-1056-47e5-a67f-04ad0367b374",
+            "d3c1f795-596a-400f-9477-f51f6922763f",
+            "2aa3180f-f5b9-4c6e-8491-3e7465590d97",
+            "8a1877fa-3346-4761-90cd-e7bc916f3d69"
+          ],
+          "answer": "The late fee is **Rs 150** if the **Rs 3,540** invoice isn’t paid by **12 November 2026**. (✉ Shehzaad Khan · 26 Oct)",
+          "no_results": false,
+          "privacy_violations": 0
+        }
+      ],
+      "answer_ok": true
+    },
+    {
+      "id": "q38",
+      "kind": "attachment",
+      "gold_count": 1,
+      "metrics": {
+        "agent_loop": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "keyword": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "semantic": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "fusion": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        },
+        "full_pipeline": {
+          "recall10": 1.0,
+          "recall5": 1.0,
+          "rr": 1.0,
+          "found10": 1
+        }
+      },
+      "first_search_args": {
+        "query": "hackathon registration ID",
+        "alternative_phrasings": [
+          "hackathon registration number",
+          "hackathon event registration"
+        ],
+        "sources": null,
+        "since": null,
+        "anchor_item": null,
+        "anchor_relation": null,
+        "read_attachment": false
+      },
+      "turns": [
+        {
+          "text": "What is the registration ID for the hackathon?",
+          "seconds": 19.716418100055307,
+          "llm_calls": 3,
+          "searches": 2,
+          "widened": 0,
+          "input_tokens": 10845,
+          "output_tokens": 215,
+          "request_chars": [
+            4606,
+            9112,
+            20529
+          ],
+          "largest_message_chars": 8623,
+          "first_search_args": {
+            "query": "hackathon registration ID",
+            "alternative_phrasings": [
+              "hackathon registration number",
+              "hackathon event registration"
+            ],
+            "sources": null,
+            "since": null,
+            "anchor_item": null,
+            "anchor_relation": null,
+            "read_attachment": false
+          },
+          "found_ids": [
+            "0502cb46-5141-4e1c-ad5e-3510f6f53e19",
+            "cd69f4a7-c56b-431f-b925-4c976be1dcb9",
+            "960d1214-d3f2-4867-a3bc-34b95d3fa9a2",
+            "6c76b59f-33a8-4aa6-be81-509fa44c36f6",
+            "0371182d-4216-4312-af21-793387d081dc",
+            "feb5fa7b-30f6-4905-a9b4-ede476698586",
+            "a55dee55-2c5a-4918-a4a3-67bf1bfa7b4c",
+            "1e11eed7-2742-4621-81c3-135e0ba55984",
+            "90d1246b-a57d-4eb6-bbe3-f0ee4e14b1b6",
+            "d207fc87-5aaa-4e30-bf09-7df7aa3b5e17",
+            "4d21ab0d-d331-49b0-9ffd-739f71f00a6e",
+            "7ec11512-76ed-4122-8fb5-2141a6c6e4d5",
+            "63c6701a-cb9d-40dd-8e92-af23d6819cd8",
+            "d0063135-d91a-4e43-aa66-f6fceee79537",
+            "e9a9b3b6-39dc-45fd-b8ca-9f83481ede10",
+            "05426449-3554-4809-b7a5-aae6ce41a1e8",
+            "08eff1d0-0b4f-40fb-8117-f1ad6098ceea",
+            "d3c1f795-596a-400f-9477-f51f6922763f",
+            "79448568-827a-4a0b-9782-45c32ab6905b"
+          ],
+          "answer": "The registration ID for the Kernel Quest 2026 hackathon is **KQ26-0193**. (✉ Shehzaad Khan · 26 Oct)",
+          "no_results": false,
+          "privacy_violations": 0
+        }
+      ],
+      "answer_ok": true
+    }
+  ]
+}

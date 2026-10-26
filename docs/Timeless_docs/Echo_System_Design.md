@@ -733,8 +733,10 @@ threshold **and** leads the runner-up by the margin. Result: `'centroid'`.
   portable part (start value, tuned Thursday). The recomputed-centroid 0.55 / 0.08 is the v2.1 value; no decision re-tunes it
   for arctic-xs.
 - **Seeds (A18, built 2026-10-25):** 8 example sentences per category (`SEED_TEXTS`), centroid = the mean of their embeddings.
-  The seed-specific threshold above is not built yet: until it is measured on the local data and wired in, seeds still use
-  0.55 / 0.08, so Stage 3 fires rarely on seeds.
+  Seed-specific threshold (A18 part 2, measured and built 2026-10-26): a category still on its seed uses `SEED_MIN_SCORE` 0.55 /
+  `SEED_MIN_MARGIN` 0.05; a recomputed category keeps 0.55 / 0.08. Measured on the 78 existing `structural` rows: with the 0.08 lead
+  the seeds fired on 0 rows; at 0.05, 14 fired, all correct; no row scored below 0.585, so the score floor could not be measured and
+  stays 0.55. Through the real classifier Stage 3 fires on 24 of 78 rows with 0 wrong (`docs/review/eval/thresholds_2026-10-26.json`).
 - **Recompute (A20 + A36, built Thu–Sun):** per category, from items classified `structural`, `user_override` or `llm`
   (at least 10, `_MIN_CONFIRMED_FOR_RECOMPUTE`). Balanced: average each source's vectors first, then average the per-source
   means, so Gmail promotions do not define "misc" alone. Triggered at ENP start when `centroids.npz` is missing or > 30 days old.
@@ -1061,7 +1063,7 @@ time to today, so past days changed after the fact.
 2. **Auto-suggestion.** For each new item and each ready group: `rule_score` = share of the group's active rules that match;
    `knn_score` = mean cosine of the 3 most similar confirmed members. Today: suggest when `0.5 × rule + 0.5 × knn > 0.70`
    or any rule matched — so KNN alone can never suggest (its maximum is 0.5). Decided (A32, built Thu–Sun): suggest when any
-   rule matches, **or** (no rule match) `knn_score ≥` the **KNN bar** (start value 0.65 with arctic-xs, tuned Thursday; was
+   rule matches, **or** (no rule match) `knn_score ≥` the **KNN bar** (0.85, measured 2026-10-26 on arctic-xs: the lowest value with no non-member at or above it; the start value 0.65 passed 155 of 358 non-members; was
    ~0.60 on MiniLM). An item gets at most one suggestion per group, ever.
    - **Auto-accept the confident ones (A42, decided 2026-10-21, built 2026-10-25).** A suggestion is auto-accepted only when a rule
      matches **and** `knn_score ≥` the same KNN bar (one shared constant with A32). Two independent signals must agree; either
@@ -1082,7 +1084,7 @@ Panel wording (A42.4, his): "Echo never decides alone when it is unsure. If a ru
 confirmed both agree, the item is added and shown in your Sunday review, where one click undoes it — human-on-the-loop.
 Anything less certain waits for your yes — human-in-the-loop. Only items you confirmed ever teach the system."
 
-Example (test group "Placement prep", rule: sender `pes.edu`, arctic-xs scores, bar 0.65): the Zentrix drive mail (rule ✓,
+Example (test group "Placement prep", rule: sender `pes.edu`, arctic-xs scores, illustrative bar 0.65, the value before the 26 Oct measurement; at the measured 0.85 none of these four would pass): the Zentrix drive mail (rule ✓,
 KNN 0.659) is auto-added; the semester fee circular (rule ✓, KNN 0.552) stays `pending`; a placement podcast (no rule, KNN 0.739)
 stays `pending`; an OS lecture video (no rule, KNN 0.632) is not suggested.
 
@@ -1375,7 +1377,7 @@ Thursday, in this order (A31.3 guardrails):
    `fit_to_window` with the per-source token budgets (A16). Model chosen 2026-10-21.
 7. B5 full re-embed: `preprocessed = FALSE` on every row, empty FAISS index, ENP re-processes (picks up A4, A12, A13, A14, A22, A24 changes).
 8. Measurements on the re-embedded data: A17 top Stage-4 domains, A18 seed threshold, A20 confirmed items per category × source,
-   the KNN bar shared by A32 and A42.1 (start 0.65), the quality gate (start 0.55). Every cutoff was tuned on MiniLM, and
+   the KNN bar shared by A32 and A42.1 (measured 2026-10-26: 0.85), the quality gate (measured: 0.55 kept). Every cutoff was tuned on MiniLM, and
    arctic-xs scores sit higher (A40 re-tune).
 
 Friday–Sunday: the remaining decided items (§24 lists them by id). Order within these days: (TBD).
@@ -1433,7 +1435,7 @@ query latency and tokens per round (A25), embed speed of arctic-xs on the real d
 | Dwell time | Foreground, focused, non-idle seconds on a page or mail |
 | Effort score | 0–1 average of attention signals; 20 % of the final rank |
 | Embeddable text | Exact string that was embedded; stored in `embedding_index`. From A16: cut to the model's 512-token window, so stored = embedded |
-| KNN bar | One cosine cutoff shared by A32 (KNN-only suggestion) and A42.1 (auto-accept); start 0.65 with arctic-xs, tuned Thursday |
+| KNN bar | One cosine cutoff shared by A32 (KNN-only suggestion) and A42.1 (auto-accept); 0.85, measured 2026-10-26 on arctic-xs |
 | Memory pill | Inline citation chip: source logo + sender/site/channel + short time |
 | Pending suggestion | A `group_suggestions` row waiting for the user's accept/reject |
 | RRF | Reciprocal Rank Fusion, `Σ 1/(60 + rank)` over the keyword and semantic lists |
@@ -1507,7 +1509,7 @@ query latency and tokens per round (A25), embed speed of arctic-xs on the real d
 | RSE | Effort ceilings | 600 s / 5 revisits / 10 interactions | `reranker.py` : `_DWELL_CEILING_SECONDS`, `_REVISIT_CEILING`, `_INTERACTION_CEILING` | §10.5 |
 | RSE | Gmail zero-dwell effort | median of Gmail items in the list | 0 | A29 |
 | RSE | CE model / input | `ms-marco-MiniLM-L-6-v2`; title + best-matching 500-char window of cleaned text | `CROSS_ENCODER_MODEL`; `RERANK_DOC_CHAR_LIMIT = 512` (title + first 512 chars) | A40.2, A40.3 |
-| RSE | Quality gate (also anchor FAISS fallback) | best cosine ≥ 0.55 (start value, tuned Thursday; just above the wrong-item 95th percentile 0.53 for arctic-xs); ≥ 2 candidates. It can only trigger widening, never prove "nothing there" | `MIN_TOP_SIMILARITY = 0.55` (`rse/config.py`, start value, not measured), `MIN_RESULT_COUNT` | §10.3, A40 |
+| RSE | Quality gate (also anchor FAISS fallback) | best cosine ≥ 0.55 (measured 2026-10-26 on 38 answerable and 12 unanswerable queries: flags none of the good ones and passes 2 of the 12 bad ones; kept); ≥ 2 candidates. It can only trigger widening, never prove "nothing there" | `MIN_TOP_SIMILARITY = 0.55` (`rse/config.py`, measured, kept), `MIN_RESULT_COUNT` | §10.3, A40 |
 | RSE | Neighbourhood | top 3, ± 5 min, 5 each | `NEIGHBOR_TOP_ITEMS`, `NEIGHBOR_WINDOW_MINUTES`, `NEIGHBORS_PER_ITEM` | §10.3 |
 | RSE | Anchor candidates | 5 | `ANCHOR_CANDIDATE_LIMIT` | §10.3 |
 | RSE | Results to answer / snippet | 10 / first 8,000 chars of text for the top 3, first 2,000 for the other 7 | `SYNTHESIS_TOP_RESULTS = 10`, `SYNTHESIS_EXCERPT_CHARS_TOP = 8000`, `SYNTHESIS_EXCERPT_CHARS_REST = 2000` | A24 |
@@ -1521,7 +1523,7 @@ query latency and tokens per round (A25), embed speed of arctic-xs on the real d
 | WBA | Habit | ≥ 3 times in 30 days | `pattern_detector.py` : `HABITUAL_MIN_OCCURRENCES`, `HABITUAL_LOOKBACK_DAYS` | §11.6 |
 | Groups | KNN start | 5 confirmed items | `group_manager.py` : `MIN_CONFIRMED_FOR_KNN = 6` | A39 |
 | Groups | KNN top-k | 3 | `KNN_TOP_K = 3` | §11.3 |
-| Groups | Suggest rule | any rule match OR (no rule match) KNN ≥ KNN bar 0.65 (start value, tuned Thursday; was ~0.60 on MiniLM) | `RULE_WEIGHT = KNN_WEIGHT = 0.5`, `AUTO_SUGGEST_THRESHOLD = 0.70` | A32, A40 |
+| Groups | Suggest rule | any rule match OR (no rule match) KNN ≥ KNN bar 0.85 (measured 2026-10-26; was ~0.60 on MiniLM) | `RULE_WEIGHT = KNN_WEIGHT = 0.5`, `AUTO_SUGGEST_THRESHOLD = 0.70` | A32, A40 |
 | Groups | Auto-accept | rule match AND KNN ≥ the same KNN bar (one shared constant); KNN-ready groups only | none | A42.1 |
 | Groups | KNN examples / readiness count | `decision = 'accepted'` rows only | all members counted | A42.3 |
 | Groups | Rule suggestion | ≥ 5 shared matches | `RULE_SUGGESTION_MIN_MATCHES = 5` | §11.4 |
@@ -1584,7 +1586,7 @@ A29 (Gmail median effort), A31 (local stores, UTC per connection), A32 (KNN-only
 threshold), A33 (pause popup), A34 (YouTube revisit check), A35 (plain tokens), A36 (centroid recompute at start), A37 (retention),
 A38 (spam skip on history path), A39 (timings, link clicks), A40.1 (arctic-xs model, query prefix, re-embed in B5), A40.3
 (cross-encoder reads the best-matching window), A42 (auto-accept confident suggestions, review label, accepted-only KNN),
-E1 (MCP server, §10.11). Re-tune on Thursday's data: quality gate (start 0.55), KNN bar (start 0.65), A18 seed cutoff.
+E1 (MCP server, §10.11). Measured 2026-10-26: quality gate 0.55 (kept), KNN bar 0.85, seed lead 0.05 (`docs/review/eval/thresholds_2026-10-26.json`).
 A25's dependency upgrade is already done (2026-10-18).
 
 **Decided, stretch (built only if time permits before the Sun 25 freeze):** A44 (automatic retry of failed ENP items, max 3
@@ -2099,7 +2101,7 @@ the project history; "—" where no date was recorded.
 | A29 | 2026-10-21 | Gmail items with 0 s reading get the median Gmail effort of the result list | Unmeasurable reading time pulled mail down |
 | A30 | 2026-10-21 | Settled by A1.1b (per-visit dwell) | Time moved to the last-opened day |
 | A31 | 2026-10-21 | Local PostgreSQL + Redis (WSL); restore test data from Neon; schema open for decided items; store UTC, show IST; plain privacy statement; no local LLM | Final review's privacy question; campus firewall risk |
-| A32 | 2026-10-21 | KNN-only suggestion threshold (the KNN bar; start 0.65 with arctic-xs, was ~0.60 on MiniLM; tuned Thursday). Every suggestion stays pending, except the A42 confident path | KNN alone could never reach 0.70 |
+| A32 | 2026-10-21 | KNN-only suggestion threshold (the KNN bar; 0.85, measured 2026-10-26; was ~0.60 on MiniLM). Every suggestion stays pending, except the A42 confident path | KNN alone could never reach 0.70 |
 | A33 | 2026-10-21 | Popup restored with the pause toggle only | No way to pause capture |
 | A34 | 2026-10-21 | YouTube revisit check at 5 s of watch | Option C could never decide |
 | A35 | 2026-10-21 | OAuth tokens stored as plain JSON | Demo shows the real token |

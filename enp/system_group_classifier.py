@@ -328,11 +328,15 @@ SEED_TEXTS: Dict[str, list[str]] = {
 
 # Stage 3 thresholds (doc §9.3). Measured 2026-10-17: against the old one-line SEED
 # centroids, realistic items scored only 0.10-0.55, so Stage 3 fired on 1 of 20 (decision A18).
-# TODO(A18 part 2): this 0.55 / 0.08 pair is still used for seed centroids. A separate,
-# lower seed threshold, measured on the restored local rows, is not built yet; see
-# docs/review/ste_open_items.md A18.
+# CENTROID_*: a category whose centroid was recomputed from real items (centroids.npz).
 CENTROID_MIN_SCORE = 0.55
 CENTROID_MIN_MARGIN = 0.08
+# SEED_*: a category still on its seed sentences (A18 part 2, measured 2026-10-26 on the 78 existing structural rows,
+# scripts/calibrate_thresholds.py). With the 0.08 lead the seeds fired on 0 rows; the lowest lead with zero wrong
+# answers is 0.05 (14 rows fire, 14 correct). No row scored below 0.585, so the score floor could not be measured
+# and stays at 0.55.
+SEED_MIN_SCORE = 0.55
+SEED_MIN_MARGIN = 0.05
 
 # category -> centroid vector; filled by initialize_centroids / recompute_centroids.
 CENTROIDS: Dict[str, np.ndarray] = {}
@@ -542,7 +546,10 @@ def stage3_centroid(embedding):
     best_cat, best_score = sorted_scores[0]
     second_score = sorted_scores[1][1]
 
-    if best_score > CENTROID_MIN_SCORE and (best_score - second_score) > CENTROID_MIN_MARGIN:
+    recomputed = best_cat in _persisted_categories
+    min_score = CENTROID_MIN_SCORE if recomputed else SEED_MIN_SCORE
+    min_margin = CENTROID_MIN_MARGIN if recomputed else SEED_MIN_MARGIN
+    if best_score > min_score and (best_score - second_score) > min_margin:
         return best_cat, "centroid", float(best_score)
 
     logger.debug(

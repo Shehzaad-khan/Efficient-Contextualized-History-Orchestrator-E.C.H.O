@@ -1,0 +1,47 @@
+{
+  "_about": "Evaluation question set, written 2026-10-26 against the test account (capstone0092). Relative-time questions (today, yesterday) are valid on 2026-10-26 only. 'gold' selects the relevant items of the LAST turn: source (gmail|chrome|youtube), title (case-insensitive substring), date (MM-DD, India time, of created_at). A selector may match several items. 'answer_any': the answer must contain at least one of these strings (only where a fact is unique). Kinds: single, multi, time, followup, attachment.",
+  "questions": [
+    {"id": "q01", "kind": "single", "turns": ["When is my interview with Brightwave?"], "gold": [{"source": "gmail", "title": "Interview schedule"}], "answer_any": ["3 November", "November 3", "Nov 3", "03 Nov"]},
+    {"id": "q02", "kind": "single", "turns": ["Which email said 2-Step Verification was turned off?"], "gold": [{"source": "gmail", "title": "2-Step Verification turned off"}]},
+    {"id": "q03", "kind": "single", "turns": ["Find the Flipkart internship email"], "gold": [{"source": "gmail", "title": "Internship from flipkart"}]},
+    {"id": "q04", "kind": "single", "turns": ["Neon asked me for onboarding feedback, find that email"], "gold": [{"source": "gmail", "title": "Feedback on onboarding"}]},
+    {"id": "q05", "kind": "single", "turns": ["The email saying my Gamma PDF is ready"], "gold": [{"source": "gmail", "title": "Your Gamma PDF is ready"}]},
+    {"id": "q06", "kind": "single", "turns": ["The email forwarded about the Komprise placement opportunity"], "gold": [{"source": "gmail", "title": "Upcoming Placement Opportunity"}]},
+    {"id": "q07", "kind": "single", "turns": ["The Orbit Cloud Hosting invoice email"], "gold": [{"source": "gmail", "title": "Invoice INV-2026-0417"}]},
+    {"id": "q08", "kind": "single", "turns": ["The hackathon registration confirmation email"], "gold": [{"source": "gmail", "title": "Kernel Quest 2026"}]},
+    {"id": "q09", "kind": "single", "turns": ["The page about operating system scheduling algorithms"], "gold": [{"source": "chrome", "title": "OS Scheduling Algorithms"}]},
+    {"id": "q10", "kind": "single", "turns": ["The Wikipedia page on the James Webb space telescope"], "gold": [{"source": "chrome", "title": "James Webb"}]},
+    {"id": "q11", "kind": "single", "turns": ["The campus placements page for batch of 2027"], "gold": [{"source": "chrome", "title": "Campus Placements"}]},
+    {"id": "q12", "kind": "single", "turns": ["My Supabase projects page"], "gold": [{"source": "chrome", "title": "Org | Supabase"}]},
+    {"id": "q13", "kind": "single", "turns": ["The long talk I watched about large language models"], "gold": [{"source": "youtube", "title": "Intro to Large Language Models"}]},
+    {"id": "q14", "kind": "single", "turns": ["The Rick Astley music video"], "gold": [{"source": "youtube", "title": "Never Gonna Give You Up"}]},
+    {"id": "q15", "kind": "single", "turns": ["The Kung Fu Panda dragon warrior video"], "gold": [{"source": "youtube", "title": "Dragon Warrior"}]},
+    {"id": "q20", "kind": "single", "turns": ["All the emails about the Brightwave Analytics job"], "gold": [{"source": "gmail", "title": "Brightwave Analytics"}]},
+
+    {"id": "q16", "kind": "multi", "turns": ["Everything I saved about Komprise"], "gold": [{"title": "Komprise"}, {"source": "youtube", "title": "power of unstructured"}]},
+    {"id": "q17", "kind": "multi", "turns": ["My study material on operating systems"], "gold": [{"source": "chrome", "title": "Operating System"}, {"source": "chrome", "title": "OS Scheduling"}, {"source": "chrome", "title": "Linux kernel"}]},
+    {"id": "q18", "kind": "multi", "turns": ["Job and internship opportunities I came across"], "gold": [{"source": "gmail", "title": "Internship from flipkart"}, {"source": "gmail", "title": "Interview schedule"}, {"source": "gmail", "title": "Offer of internship"}, {"source": "gmail", "title": "Upcoming Placement Opportunity"}, {"source": "chrome", "title": "Infosys Limited Recruitment"}, {"source": "chrome", "title": "Campus Placements"}]},
+    {"id": "q19", "kind": "multi", "turns": ["What did I read and watch about unstructured data?"], "gold": [{"source": "chrome", "title": "Unstructured Data"}, {"source": "youtube", "title": "Unstructured Data"}]},
+
+    {"id": "q21", "kind": "time", "turns": ["Which emails did I get after the Brightwave interview email?"], "gold": [{"source": "gmail", "title": "Offer of internship"}, {"source": "gmail", "title": "Distributed Systems - course"}, {"source": "gmail", "title": "Invoice INV-2026-0417"}, {"source": "gmail", "title": "flight to Hyderabad"}, {"source": "gmail", "title": "Kernel Quest 2026"}]},
+    {"id": "q22", "kind": "time", "turns": ["Which emails did I receive today?"], "gold": [{"source": "gmail", "date": "10-26"}]},
+    {"id": "q23", "kind": "time", "turns": ["Security alert emails from yesterday"], "gold": [{"source": "gmail", "title": "Security alert", "date": "10-25"}]},
+    {"id": "q24", "kind": "time", "turns": ["Which page about Claude Code did I open yesterday?"], "gold": [{"source": "chrome", "title": "Claude Code", "date": "10-25"}]},
+    {"id": "q25", "kind": "time", "turns": ["What did I browse on 16 October?"], "gold": [{"source": "chrome", "date": "10-16"}]},
+    {"id": "q26", "kind": "time", "turns": ["2-Step Verification emails from March"], "gold": [{"source": "gmail", "title": "2-Step Verification", "date": "03-23"}]},
+
+    {"id": "q27", "kind": "followup", "turns": ["When is my interview with Brightwave?", "And what did they offer me afterwards?"], "gold": [{"source": "gmail", "title": "Offer of internship"}], "answer_any": ["45,000", "45000"]},
+    {"id": "q28", "kind": "followup", "turns": ["Find the Distributed Systems syllabus email", "Which textbook does it use?"], "gold": [{"source": "gmail", "title": "Distributed Systems - course"}], "answer_any": ["Coulouris"]},
+    {"id": "q29", "kind": "followup", "turns": ["Which mail has my flight to Hyderabad?", "What time does the return flight leave?"], "gold": [{"source": "gmail", "title": "flight to Hyderabad"}], "answer_any": ["19:10", "7:10 PM", "7:10 pm"]},
+    {"id": "q30", "kind": "followup", "turns": ["Do I have any invoices?", "When is it due?"], "gold": [{"source": "gmail", "title": "Invoice INV-2026-0417"}], "answer_any": ["12 November", "November 12", "Nov 12", "12 Nov"]},
+    {"id": "q31", "kind": "followup", "turns": ["Show me videos about Komprise", "Any web pages from the same company?"], "gold": [{"source": "chrome", "title": "Komprise"}]},
+    {"id": "q32", "kind": "followup", "turns": ["Show me my Neon emails", "Which of them asked for onboarding feedback?"], "gold": [{"source": "gmail", "title": "Feedback on onboarding"}]},
+
+    {"id": "q33", "kind": "attachment", "turns": ["What stipend does the Brightwave offer letter mention?"], "gold": [{"source": "gmail", "title": "Offer of internship"}], "answer_any": ["45,000", "45000"]},
+    {"id": "q34", "kind": "attachment", "turns": ["Which seat did I get on the Hyderabad flight?"], "gold": [{"source": "gmail", "title": "flight to Hyderabad"}], "answer_any": ["14C"]},
+    {"id": "q35", "kind": "attachment", "turns": ["What is the booking reference of my flight to Hyderabad?"], "gold": [{"source": "gmail", "title": "flight to Hyderabad"}], "answer_any": ["QX7M2L"]},
+    {"id": "q36", "kind": "attachment", "turns": ["What is our team name for the Kernel Quest hackathon?"], "gold": [{"source": "gmail", "title": "Kernel Quest 2026"}], "answer_any": ["Null Pointers"]},
+    {"id": "q37", "kind": "attachment", "turns": ["What is the late fee on the Orbit Cloud invoice?"], "gold": [{"source": "gmail", "title": "Invoice INV-2026-0417"}], "answer_any": ["150"]},
+    {"id": "q38", "kind": "attachment", "turns": ["What is the registration ID for the hackathon?"], "gold": [{"source": "gmail", "title": "Kernel Quest 2026"}], "answer_any": ["KQ26-0193"]}
+  ]
+}

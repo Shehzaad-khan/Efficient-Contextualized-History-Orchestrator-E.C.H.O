@@ -10,7 +10,7 @@ USER groups answer "what personal goal does this serve?" and live here.
             items before auto-assignment activates for a group.
   Phase 2 — Auto-assignment: hybrid score = 0.5·rule_score + 0.5·knn_score;
             suggestions are created for any rule match or when KNN alone
-            reaches KNN_ONLY_THRESHOLD (currently 0.65).
+            reaches KNN_ONLY_THRESHOLD (currently 0.85).
             knn_score = mean cosine of the 3 most similar confirmed members.
             The one exception (A42): a rule match AND knn_score >= KNN_ONLY_THRESHOLD
             is added at once as 'auto_accepted' and waits in the weekly review.
@@ -67,9 +67,10 @@ logger = logging.getLogger(__name__)
 MIN_CONFIRMED_FOR_KNN = 5
 AUTO_SUGGEST_THRESHOLD = 0.70
 # One bar for two jobs: KNN alone may suggest (A32), and a rule match plus KNN at or above it
-# is auto-accepted (A42.1). Design start value for arctic-embed-xs (A40; was 0.60 on MiniLM).
-# NOT yet measured on the real data: re-measure on the local rows, then set it here.
-KNN_ONLY_THRESHOLD = 0.65
+# is auto-accepted (A42.1). Measured 2026-10-26 (scripts/calibrate_thresholds.py; 3 provisional groups, 23 members scored
+# leave-one-out against 358 non-members): the lowest bar with no non-member at or above it is 0.85 (7 of 23 members pass).
+# The design start value 0.65 would pass 155 of the 358 non-members. Was 0.60 on MiniLM, 0.65 as the arctic-embed-xs start.
+KNN_ONLY_THRESHOLD = 0.85
 KNN_TOP_K = 3
 RULE_WEIGHT = 0.5
 KNN_WEIGHT = 0.5

@@ -1,0 +1,178 @@
+{
+  "items": 127,
+  "a18_part2_seed_bar": {
+    "structural_rows": 84,
+    "excluding_6_synthetic_mails": 78,
+    "all_structural": {
+      "best_centroid_accuracy_no_threshold": 0.607,
+      "by_source": {
+        "gmail": {
+          "rows": 72,
+          "best_centroid_correct": 43
+        },
+        "chrome": {
+          "rows": 4,
+          "best_centroid_correct": 1
+        },
+        "youtube": {
+          "rows": 8,
+          "best_centroid_correct": 7
+        }
+      },
+      "at_portable_lead_0.08": {
+        "score": 0.2,
+        "margin": 0.08,
+        "fires": 0,
+        "correct": 0,
+        "of": 84
+      },
+      "best_pair_overall": {
+        "score": 0.76,
+        "margin": 0.03,
+        "fires": 1,
+        "correct": 1,
+        "of": 84
+      },
+      "score_range_best": [
+        0.585,
+        0.851
+      ]
+    },
+    "existing_rows_only": {
+      "best_centroid_accuracy_no_threshold": 0.641,
+      "by_source": {
+        "gmail": {
+          "rows": 66,
+          "best_centroid_correct": 42
+        },
+        "chrome": {
+          "rows": 4,
+          "best_centroid_correct": 1
+        },
+        "youtube": {
+          "rows": 8,
+          "best_centroid_correct": 7
+        }
+      },
+      "at_portable_lead_0.08": {
+        "score": 0.2,
+        "margin": 0.08,
+        "fires": 0,
+        "correct": 0,
+        "of": 78
+      },
+      "best_pair_overall": {
+        "score": 0.2,
+        "margin": 0.05,
+        "fires": 14,
+        "correct": 14,
+        "of": 78
+      },
+      "score_range_best": [
+        0.609,
+        0.851
+      ]
+    }
+  },
+  "a40_search_gate": {
+    "answerable_queries": 38,
+    "answerable_min": 0.558,
+    "answerable_p10": 0.662,
+    "answerable_median": 0.734,
+    "unanswerable_queries": 12,
+    "unanswerable_max": 0.573,
+    "unanswerable_median": 0.536,
+    "gate_table": {
+      "0.50": {
+        "good_flagged_weak": 0,
+        "bad_passed": 11
+      },
+      "0.55": {
+        "good_flagged_weak": 0,
+        "bad_passed": 2
+      },
+      "0.56": {
+        "good_flagged_weak": 1,
+        "bad_passed": 2
+      },
+      "0.57": {
+        "good_flagged_weak": 1,
+        "bad_passed": 2
+      },
+      "0.58": {
+        "good_flagged_weak": 1,
+        "bad_passed": 0
+      },
+      "0.60": {
+        "good_flagged_weak": 2,
+        "bad_passed": 0
+      }
+    },
+    "separable": false,
+    "midpoint": 0.565,
+    "good_queries_flagged_weak_at_0.55": 0,
+    "bad_queries_passed_at_0.55": 2
+  },
+  "a42_knn_bar": {
+    "groups": {
+      "Placement and jobs": {
+        "members": 13,
+        "member_min": 0.743,
+        "member_median": 0.812,
+        "highest_outsider": 0.778,
+        "highest_outsider_title": "Warmup Page"
+      },
+      "Operating systems study": {
+        "members": 5,
+        "member_min": 0.661,
+        "member_median": 0.861,
+        "highest_outsider": 0.848,
+        "highest_outsider_title": "Treap - Wikipedia"
+      },
+      "Data structures reading": {
+        "members": 5,
+        "member_min": 0.716,
+        "member_median": 0.762,
+        "highest_outsider": 0.773,
+        "highest_outsider_title": "Linux kernel - Wikipedia"
+      }
+    },
+    "frontier": {
+      "0.65": {
+        "members_at_or_above": 23,
+        "non_members_at_or_above": 155
+      },
+      "0.70": {
+        "members_at_or_above": 22,
+        "non_members_at_or_above": 79
+      },
+      "0.75": {
+        "members_at_or_above": 20,
+        "non_members_at_or_above": 28
+      },
+      "0.78": {
+        "members_at_or_above": 13,
+        "non_members_at_or_above": 9
+      },
+      "0.80": {
+        "members_at_or_above": 12,
+        "non_members_at_or_above": 8
+      },
+      "0.82": {
+        "members_at_or_above": 9,
+        "non_members_at_or_above": 3
+      },
+      "0.85": {
+        "members_at_or_above": 7,
+        "non_members_at_or_above": 0
+      }
+    },
+    "highest_negative_overall": 0.848,
+    "suggested_bar": 0.85,
+    "members_scored": 23,
+    "members_at_or_above_bar": 7,
+    "members_at_or_above_0.65": 23,
+    "negatives_at_or_above_0.65": 155,
+    "negatives_scored": 358
+  }
+}

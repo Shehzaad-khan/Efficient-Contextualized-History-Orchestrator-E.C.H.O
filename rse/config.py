@@ -95,7 +95,9 @@ RERANK_DOC_CHAR_LIMIT = 512
 # ── Quality evaluation ────────────────────────────────────────────────────────
 # Top candidate cosine similarity below this → result_quality 'weak'.
 # 0.55 is the design's START value for arctic-embed-xs (A40; was 0.35 on MiniLM). Unrelated text scores
-# ~0.37-0.60 with arctic-xs, so 0.35 never fired. Not yet measured on a question set (Stage 9).
+# ~0.37-0.60 with arctic-xs, so 0.35 never fired. Measured 2026-10-26 (scripts/calibrate_thresholds.py): best cosine of
+# the 38 answerable questions from 0.558 (median 0.734) vs 12 unanswerable ones up to 0.573. At 0.55 none of the 38 good
+# queries is flagged weak and 2 of 12 bad ones pass; 0.58 would flag 1 good and pass 0 bad (one query: noise). Kept.
 MIN_TOP_SIMILARITY = 0.55
 MIN_RESULT_COUNT = 2
 

@@ -171,8 +171,10 @@ Known open items:
   if the API rejects the forced first tool choice, set `FORCE_FIRST_SEARCH = False` in `rse/config.py`).
 - **D6, four frontend gaps** (backend routes exist, nothing calls them): old chats show no memory pills, no way to delete a chat,
   no form to add a group rule, no screen to pick items for a group by hand. Details in `docs/review/ste_open_items.md` D6.
-- Threshold values are start values, to be re-measured on live data: A18 part 2 (seed-centroid threshold), A40
-  (`MIN_TOP_SIMILARITY` 0.55) and A42 (`KNN_ONLY_THRESHOLD` 0.65).
+- Thresholds were measured on 2026-10-26 (`scripts/calibrate_thresholds.py`, results in `docs/review/eval/thresholds_2026-10-26.json`): A18 seeds use
+  `SEED_MIN_SCORE` 0.55 / `SEED_MIN_MARGIN` 0.05 (recomputed centroids keep 0.55 / 0.08); A40 `MIN_TOP_SIMILARITY` kept at 0.55; A42
+  `KNN_ONLY_THRESHOLD` 0.65 -> 0.85. They rest on 3 provisional user groups and 12 invented unanswerable queries (labels by the assistant, not the owner);
+  re-measure if the owner's own groups differ. The recomputed-centroid 0.55 / 0.08 bars were not re-measured (only `misc` has a recomputed centroid).
 - OCR for images and scanned PDFs is built (`pytesseract` in requirements.txt) but needs the Tesseract system binary
   (Windows: `winget install UB-Mannheim.TesseractOCR`); without it OCR stays off.
 - Weekly auto-assign is manual/OS-scheduler; monthly centroid recomputation runs at ENP
