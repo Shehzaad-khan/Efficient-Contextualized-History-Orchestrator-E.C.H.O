@@ -14,8 +14,11 @@
 \exhyphenpenalty=10000
 \emergencystretch=1.5em
 \makeatletter
-\newcommand{\authorflushleft}{\end{@IEEEauthorhalign}\hskip 0pt plus -1fill\begin{@IEEEauthorhalign}}
-\newcommand{\linebreakand}{\end{@IEEEauthorhalign}\par\noindent\mbox{}\begin{@IEEEauthorhalign}}
+\newcommand{\linebreakand}{%
+  \end{@IEEEauthorhalign}
+  \hfill\mbox{}\par
+  \mbox{}\hfill\begin{@IEEEauthorhalign}
+}
 \makeatother
 \def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
     T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
@@ -40,28 +43,33 @@
 
 \title{E.C.H.O: An Intent Aware Personal Memory System for Unified Search Across Email, Web, and Video History}
 
-\author{\authorflushleft\IEEEauthorblockN{1\textsuperscript{st} Arjun Sai N}
-\IEEEauthorblockA{\textit{Dept. of Computer Science and Engineering} \\
+\author{\IEEEauthorblockN{1\textsuperscript{st} Arjun Sai N}
+\IEEEauthorblockA{\textit{Dept. of Computer Science}\\
+\textit{and Engineering}\\
 \textit{PES University}\\
 Bengaluru, India}
 \and
 \IEEEauthorblockN{2\textsuperscript{nd} Mohammed Mir Fazlai Ali}
-\IEEEauthorblockA{\textit{Dept. of Computer Science and Engineering} \\
-\textit{PES University}\\
-Bengaluru, India}
-\linebreakand
-\IEEEauthorblockN{3\textsuperscript{rd} Mohammed Shehzaad Khan}
-\IEEEauthorblockA{\textit{Dept. of Computer Science and Engineering} \\
+\IEEEauthorblockA{\textit{Dept. of Computer Science}\\
+\textit{and Engineering}\\
 \textit{PES University}\\
 Bengaluru, India}
 \and
-\IEEEauthorblockN{4\textsuperscript{th} Mrigank Jain}
-\IEEEauthorblockA{\textit{Dept. of Computer Science and Engineering} \\
+\IEEEauthorblockN{3\textsuperscript{rd} Mohammed Shehzaad Khan}
+\IEEEauthorblockA{\textit{Dept. of Computer Science}\\
+\textit{and Engineering}\\
 \textit{PES University}\\
 Bengaluru, India}
 \linebreakand
+\IEEEauthorblockN{4\textsuperscript{th} Mrigank Jain}
+\IEEEauthorblockA{\textit{Dept. of Computer Science}\\
+\textit{and Engineering}\\
+\textit{PES University}\\
+Bengaluru, India}
+\and
 \IEEEauthorblockN{5\textsuperscript{th} Mannuru Shalima Sulthana}
-\IEEEauthorblockA{\textit{Dept. of Computer Science and Engineering} \\
+\IEEEauthorblockA{\textit{Dept. of Computer Science}\\
+\textit{and Engineering}\\
 \textit{PES University}\\
 Bengaluru, India}
 }
@@ -405,7 +413,9 @@ E.C.H.O turns email, browsing, and video history into one personal memory that c
 \section*{Acknowledgment}
 We thank the Department of Computer Science and Engineering, PES University, for its support during this capstone project.
 
-\IEEEtriggeratref{99}
+% Balances the two columns on the last page. Re-tune the two numbers (reference number, inches) if the text above changes.
+\IEEEtriggeratref{3}
+\IEEEtriggercmd{\enlargethispage{-3.7in}}
 \begin{thebibliography}{00}
 \bibitem{b1} V. Bush, ``As we may think,'' \textit{The Atlantic Monthly}, vol. 176, no. 1, pp. 101--108, Jul. 1945.
 \bibitem{b2} S. Dumais, E. Cutrell, J. J. Cadiz, G. Jancke, R. Sarin, and D. C. Robbins, ``Stuff I've seen: A system for personal information retrieval and re-use,'' in \textit{Proc. 26th Annu. Int. ACM SIGIR Conf. Research and Development in Information Retrieval}, Toronto, Canada, 2003, pp. 72--79.

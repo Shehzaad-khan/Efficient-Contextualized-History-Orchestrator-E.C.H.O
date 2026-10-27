@@ -51,7 +51,7 @@ def tex_inline_to_plain(tex: str) -> str:
     text = re.sub(r"Section~\\ref\{sec:(\w+)\}", lambda m: f"Section {SECTION_REF[m.group(1)]}", text)
     text = re.sub(r"Fig\.~\\ref\{fig:(\w+)\}", lambda m: f"Fig. {FIG_REF[m.group(1)]}", text)
     text = re.sub(r"Table~\\ref\{tab:(\w+)\}", lambda m: f"Table {TABLE_REF[m.group(1)]}", text)
-    text = re.sub(r"Eq\.~\\ref\{eq:(\w+)\}", lambda m: f"Eq. ({EQ_REF[m.group(1)]})", text)
+    text = re.sub(r"Eq\.~\\(?:eq)?ref\{eq:(\w+)\}", lambda m: f"Eq. ({EQ_REF[m.group(1)]})", text)
     text = text.replace("``", "\u201c").replace("''", "\u201d")
     text = text.replace("\\%", "%").replace("\\&", "&").replace("\\nobreakdash-", "-").replace("\\allowbreak", "")
     text = text.replace("---", "\u2014").replace("~", " ")
@@ -75,7 +75,7 @@ def plain_inline_to_tex(plain: str) -> str:
     text = re.sub(r"Section ([IVX]+)\b", lambda m: hold(f"Section~\\ref{{sec:{ROMAN_SECTION[m.group(1)]}}}") if m.group(1) in ROMAN_SECTION else m.group(0), text)
     text = re.sub(r"Fig\. (\d)\b", lambda m: hold(f"Fig.~\\ref{{fig:{NUM_FIG[m.group(1)]}}}") if m.group(1) in NUM_FIG else m.group(0), text)
     text = re.sub(r"Table ([IVX]+)\b", lambda m: hold(f"Table~\\ref{{tab:{ROMAN_TABLE[m.group(1)]}}}") if m.group(1) in ROMAN_TABLE else m.group(0), text)
-    text = re.sub(r"Eq\. \((\d)\)", lambda m: hold(f"Eq.~\\ref{{eq:{NUM_EQ[m.group(1)]}}}") if m.group(1) in NUM_EQ else m.group(0), text)
+    text = re.sub(r"Eq\. \((\d)\)", lambda m: hold(f"Eq.~\\eqref{{eq:{NUM_EQ[m.group(1)]}}}") if m.group(1) in NUM_EQ else m.group(0), text)
     for plain_name, macro in PLAIN_MACRO.items():
         text = text.replace(plain_name, hold(macro))
     text = text.replace("\u2019", "'").replace("\u2018", "'")
