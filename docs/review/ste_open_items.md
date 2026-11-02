@@ -9,7 +9,7 @@ Working file — committed to the repo from 2026-10-22 so Claude web can read it
 3. Section B needs a backup before any statement runs: a Neon snapshot or branch for Neon (B1–B3, done), a `pg_dump -Fc` of `echo_db` into `C:\Users\mdshe\echo_backups\` for the local database (B5).
 4. Section D is built after the whole review is finished.
 
-**Audit snapshot — 2026-10-26 (top-level IDs; supersedes the 2026-10-25 one):** 86 entries = **85 complete/resolved + 1 not fully complete** (E1 built later on 2026-10-26). Counting rule: A1–A45 are owner-decision entries, counted complete when the decision is recorded; their implementation follow-ups are audited separately below. B4 is informational/no action. Breakdown: A 45/45 decisions recorded; B 5/5 resolved (B5 ran 2026-10-25); C 29/29 resolved; D 5 complete (D1, D2, D3, D4, D5; D3 and D5 built 2026-10-25, D2 closed 2026-10-26 with old `.doc` dropped), D6 open; E1 built 2026-10-26. E2 (import personal history + export button) was removed from scope on 2026-10-25: the presentation uses the test account only. The one not-fully-complete top-level ID is D6 (four frontend gaps, found 2026-10-26, nothing built); E1 was the other until it was built on 2026-10-26. D6 was added 2026-10-26, so the total went from 85 to 86. A26 was built later on 2026-10-26; the top-level count is unchanged because A entries count as complete when the decision is recorded (its build status is in the A26 entry). This top-level count is not a claim that all decided features are implemented. The 2026-10-25 build work (A16/A40 + B5, A27, A28, A37, OCR, D3, D5, A42, A18 part 1, review fixes) is committed and merged to `main` (PRs #12, #13, #14); the two branches were checked after the PR #14 merge and nothing was lost.
+**Audit snapshot — 2026-10-26 (top-level IDs; supersedes the 2026-10-25 one):** 86 entries = **85 complete/resolved + 1 not fully complete** (E1 built later on 2026-10-26). Counting rule: A1–A45 are owner-decision entries, counted complete when the decision is recorded; their implementation follow-ups are audited separately below. B4 is informational/no action. Breakdown: A 45/45 decisions recorded; B 5/5 resolved (B5 ran 2026-10-25); C 29/29 resolved; D 5 complete (D1, D2, D3, D4, D5; D3 and D5 built 2026-10-25, D2 closed 2026-10-26 with old `.doc` dropped), D6 open; E1 built 2026-10-26. E2 (import personal history + export button) was removed from scope on 2026-10-25: the presentation uses the test account only. The one not-fully-complete top-level ID is D6 (four frontend gaps found 2026-10-26 plus three more added 2026-10-27, D6.5 to D6.7; nothing built); E1 was the other until it was built on 2026-10-26. D6 was added 2026-10-26, so the total went from 85 to 86. A26 was built later on 2026-10-26; the top-level count is unchanged because A entries count as complete when the decision is recorded (its build status is in the A26 entry). This top-level count is not a claim that all decided features are implemented. The 2026-10-25 build work (A16/A40 + B5, A27, A28, A37, OCR, D3, D5, A42, A18 part 1, review fixes) is committed and merged to `main` (PRs #12, #13, #14); the two branches were checked after the PR #14 merge and nothing was lost.
 
 **Decision 2026-10-25 (his): the presentation runs on the TEST ACCOUNT only.** There is no time to move to his personal account. So E2 (import personal history + export button) is out of scope, and the Mon 26 / Tue 27 Oct retest and the threshold recompute (A18, A40) use the test account's data.
 
@@ -2090,7 +2090,7 @@ The `[x] decided` marks above mean the owner's decision is recorded. They do not
   - Checked in a browser with a mocked backend (card appears, snooze sends the call and closes it); NOT yet tried against the live
     backend and database with a real regret habit.
 
-### D6. Frontend gaps found after the build — [ ] open (found 2026-10-26; all four are frontend-only changes)
+### D6. Frontend gaps found after the build — [ ] open (found 2026-10-26; D6.1 to D6.4. D6.1 and D6.2 also need a small backend change; D6.5 to D6.7 added 2026-10-27)
 Found while reviewing what the screens can actually do. Each one was checked on 2026-10-26: the backend route exists, and nothing in
 `frontend/src` calls it (also searched every remote branch for `addRule`, `assignToGroup`, `/assign` and `deleteSession`: no hits).
 - [ ] **D6.1 Old chats show plain text, no memory pills.** `save_turn` (`rse/conversation_memory.py`) stores only `final_answer` in
@@ -2109,6 +2109,26 @@ Found while reviewing what the screens can actually do. Each one was checked on 
 - [ ] **D6.4 Choosing items for a group by hand.** `POST /wellbeing/groups/{id}/assign` (`manual_assign`) and `GET .../items` exist; no
   screen lets him pick items and put them in a group. Needs an item picker (recent items or search) and an `assignToGroup` in
   `lib/api.ts`. This is a write path into `memory_user_groups` through `manual_assign`, which hard constraint 4 allows.
+
+Added 2026-10-27 by the owner while reviewing the screens (D6.5 to D6.7). Unlike D6.1 to D6.4, these need a small backend change as well.
+- [ ] **D6.5 Browse past days and weeks on Patterns.** Today the frontend calls every wellbeing route with no date, so Patterns can only
+  show today and the current week. The backend already takes `day` on `GET /wellbeing/analytics/daily` and `GET /wellbeing/sessions`, and
+  `week_end` on `GET /wellbeing/insights/weekly`; `fetchDaily`, `fetchSessions` and `fetchWeeklyInsight` in `lib/api.ts` pass none. The
+  heatmap route `GET /wellbeing/analytics/heatmap` takes only `days` and always ends today (`backend/wellbeing.py`), although
+  `activity_heatmap(start_day, end_day)` already takes both dates, so the route needs an end-date parameter. To fix: pass the dates
+  through `lib/api.ts`, add a previous/next day and week control on `PatternsPage.tsx`, and add the end-date parameter to the heatmap route.
+- [ ] **D6.6 The "time by category" card says nothing about its period.** It reads `GET /wellbeing/analytics/daily` with no date, so it
+  shows today only, while the "this week, reflected" text above it covers the week. With one item today (the Echo dashboard itself,
+  `misc`, 10 s) the card shows misc 100% and the week text shows study 40% / misc 29%, which looks contradictory. Smallest fix: rename the
+  card to say "today" (frontend only). Alternative: show the week (needs a per-week category breakdown from the backend; not checked
+  whether one exists). Becomes a period switch if D6.5 is built.
+- [ ] **D6.7 "Open source" works for Chrome items only.** The button on the Timeline (`TimelinePage.tsx`) shows only when `item.url`
+  exists, and `recent_items()` in `wba/time_aggregator.py` takes `url` from `chrome_metadata` alone. Checked 2026-10-27 on the live
+  `/wellbeing/recent`: 36 of 36 Chrome items have a URL, 0 of 55 Gmail and 0 of 9 YouTube. To fix (backend, small): build the link in
+  `recent_items()` from stored ids: YouTube `https://www.youtube.com/watch?v=<youtube_metadata.video_id>`; Gmail
+  `https://mail.google.com/mail/u/0/#all/<gmail_metadata.thread_id or email_id>`. Not tested: the Gmail link format on a real mail and
+  that `/u/0/` is the right signed-in account; if wrong, the button opens Gmail but not the exact mail. Check the same gap for the
+  source links in Recall answers.
 
 ---
 
