@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { History } from 'lucide-react'
-import { fetchSessionMessages, fetchSessions } from '../lib/api'
+import { History, Trash2 } from 'lucide-react'
+import { deleteSession, fetchSessionMessages, fetchSessions } from '../lib/api'
 import { formatWhen } from '../lib/format'
 import type { SessionMessage, SessionSummary } from '../lib/types'
 
@@ -10,7 +10,14 @@ import type { SessionMessage, SessionSummary } from '../lib/types'
  * which keeps sending that session id so the conversation continues.
  *
  * The list is fetched each time the panel opens, so it is never stale.
+ *
+ * D6.2: each chat has a delete button with a confirm step. Deleting removes only
+ * that chat's questions and replies, never the memories they cite.
  */
+
+// The panel's width (22rem) and the gap it keeps from the window's edge, in pixels.
+const PANEL_WIDTH_PX = 352
+const PANEL_EDGE_PX = 16
 
 type ListState =
   | { status: 'loading' }
@@ -21,19 +28,30 @@ interface PastChatsProps {
   activeSessionId: string | null
   disabled: boolean
   onOpen: (sessionId: string, messages: SessionMessage[]) => void
+  /** Called after a chat was deleted, so the page can close it if it is the open one. */
+  onDeleted: (sessionId: string) => void
 }
 
-export default function PastChats({ activeSessionId, disabled, onOpen }: PastChatsProps) {
+export default function PastChats({ activeSessionId, disabled, onOpen, onDeleted }: PastChatsProps) {
   const [open, setOpen] = useState(false)
   const [list, setList] = useState<ListState>({ status: 'loading' })
   const [openingId, setOpeningId] = useState<string | null>(null)
   const [openError, setOpenError] = useState(false)
+  // The chat whose delete is waiting for "Delete" / "Keep", and the one being deleted now.
+  const [confirmingId, setConfirmingId] = useState<string | null>(null)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [deleteError, setDeleteError] = useState(false)
+  // Open the panel toward the side with room: when the title row wraps, the button sits at the
+  // content's left edge and a right-aligned panel would slide under the fixed sidebar.
+  const [alignLeft, setAlignLeft] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
   const buttonRef = useRef<HTMLButtonElement>(null)
 
   const close = useCallback(() => {
     setOpen(false)
     setOpenError(false)
+    setConfirmingId(null)
+    setDeleteError(false)
   }, [])
 
   // Load the list on every open.
@@ -88,12 +106,40 @@ export default function PastChats({ activeSessionId, disabled, onOpen }: PastCha
     }
   }
 
+  async function confirmDelete(sessionId: string) {
+    if (deletingId) return
+    setDeletingId(sessionId)
+    setDeleteError(false)
+    try {
+      await deleteSession(sessionId)
+      setList((current) =>
+        current.status === 'ready'
+          ? { status: 'ready', sessions: current.sessions.filter((session) => session.session_id !== sessionId) }
+          : current,
+      )
+      setConfirmingId(null)
+      onDeleted(sessionId)
+    } catch {
+      setDeleteError(true)
+    } finally {
+      setDeletingId(null)
+    }
+  }
+
   return (
     <div ref={rootRef} className="relative">
       <button
         ref={buttonRef}
         type="button"
-        onClick={() => (open ? close() : setOpen(true))}
+        onClick={() => {
+          if (open) {
+            close()
+            return
+          }
+          const rect = rootRef.current?.getBoundingClientRect()
+          setAlignLeft(rect !== undefined && rect.left + PANEL_WIDTH_PX <= window.innerWidth - PANEL_EDGE_PX)
+          setOpen(true)
+        }}
         disabled={disabled}
         aria-expanded={open}
         aria-controls="past-chats-panel"
@@ -108,7 +154,7 @@ export default function PastChats({ activeSessionId, disabled, onOpen }: PastCha
           id="past-chats-panel"
           role="dialog"
           aria-label="Past chats"
-          className="absolute right-0 top-full z-30 mt-2 w-[min(22rem,90vw)] rounded-card border border-white/[0.08] bg-night-900 p-2 shadow-raise"
+          className={`absolute ${alignLeft ? 'left-0' : 'right-0'} top-full z-30 mt-2 w-[min(22rem,90vw)] rounded-card border border-white/[0.08] bg-night-900 p-2 shadow-raise`}
         >
           {list.status === 'loading' && <p className="px-3 py-3 font-mono text-xs text-ink-mute">loading…</p>}
           {list.status === 'error' && (
@@ -121,14 +167,52 @@ export default function PastChats({ activeSessionId, disabled, onOpen }: PastCha
             <ul className="max-h-[60vh] space-y-0.5 overflow-y-auto">
               {list.sessions.map((session) => {
                 const active = session.session_id === activeSessionId
+                const confirming = session.session_id === confirmingId
+                const deleting = session.session_id === deletingId
+                if (confirming) {
+                  return (
+                    <li key={session.session_id} className="rounded-card bg-night-800 px-3 py-2">
+                      <p className="line-clamp-1 text-[14px] leading-5 text-ink">{session.title}</p>
+                      <p className="mt-1 text-xs leading-5 text-ink-soft">
+                        Delete this chat? Its questions and answers go; your memories stay.
+                      </p>
+                      <div className="mt-2 flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void confirmDelete(session.session_id)}
+                          disabled={deleting}
+                          className="btn-ghost border-youtube/40 px-3 py-1 font-mono text-xs normal-case text-youtube disabled:opacity-50"
+                        >
+                          {deleting ? 'deleting…' : 'Delete'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setConfirmingId(null)
+                            setDeleteError(false)
+                          }}
+                          disabled={deleting}
+                          className="btn-ghost px-3 py-1 font-mono text-xs normal-case disabled:opacity-50"
+                        >
+                          Keep
+                        </button>
+                      </div>
+                      {deleteError && (
+                        <p role="alert" className="mt-2 text-xs text-ink-soft">
+                          That chat could not be deleted. Try again in a moment.
+                        </p>
+                      )}
+                    </li>
+                  )
+                }
                 return (
-                  <li key={session.session_id}>
+                  <li key={session.session_id} className="group flex items-stretch gap-1">
                     <button
                       type="button"
                       onClick={() => void openChat(session.session_id)}
                       disabled={openingId !== null}
                       aria-current={active ? 'true' : undefined}
-                      className={`w-full rounded-card px-3 py-2 text-left transition hover:bg-night-800 focus-visible:outline focus-visible:outline-1 focus-visible:outline-ember-400 disabled:opacity-60 ${
+                      className={`min-w-0 flex-1 rounded-card px-3 py-2 text-left transition hover:bg-night-800 focus-visible:outline focus-visible:outline-1 focus-visible:outline-ember-400 disabled:opacity-60 ${
                         active ? 'bg-night-800' : ''
                       }`}
                     >
@@ -137,6 +221,19 @@ export default function PastChats({ activeSessionId, disabled, onOpen }: PastCha
                         {formatWhen(session.last_active)} · {session.turns} {session.turns === 1 ? 'question' : 'questions'}
                         {active ? ' · open now' : ''}
                       </span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setConfirmingId(session.session_id)
+                        setDeleteError(false)
+                      }}
+                      disabled={openingId !== null || deletingId !== null}
+                      aria-label={`Delete chat: ${session.title}`}
+                      title="Delete chat"
+                      className="shrink-0 rounded-card px-2 text-ink-faint opacity-60 transition hover:bg-night-800 hover:text-youtube hover:opacity-100 focus-visible:opacity-100 focus-visible:outline focus-visible:outline-1 focus-visible:outline-ember-400 group-hover:opacity-100 disabled:opacity-30"
+                    >
+                      <Trash2 size={13} aria-hidden="true" />
                     </button>
                   </li>
                 )

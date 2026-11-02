@@ -9,7 +9,7 @@ backend/main.py mounts it only when ECHO_WBA_ENABLED=1.
 Endpoints (prefix /wellbeing):
     Analytics:
         GET  /analytics/daily                  — daily summary (time, categories, regret, focus)
-        GET  /analytics/heatmap                — hour × day activity matrix with regret markers
+        GET  /analytics/heatmap                — hour × day activity matrix with regret markers (days, end_day)
         GET  /recent                           — last N items across all sources
     Sessions:
         POST /sessions/rebuild                 — (re)compute sessions for a day
@@ -151,9 +151,13 @@ def analytics_daily(day: Optional[date] = Query(None, description="Defaults to t
 
 
 @router.get("/analytics/heatmap")
-def analytics_heatmap(days: int = Query(7, ge=1, le=90)):
+def analytics_heatmap(
+    days: int = Query(7, ge=1, le=90),
+    end_day: Optional[date] = Query(None, description="Last day shown (inclusive); defaults to today"),
+):
+    # D6.5: end_day lets the Patterns page step back to earlier weeks.
     try:
-        end_day = date.today()
+        end_day = end_day or date.today()
         start_day = end_day - timedelta(days=days - 1)
         return {
             "start_day": start_day.isoformat(),

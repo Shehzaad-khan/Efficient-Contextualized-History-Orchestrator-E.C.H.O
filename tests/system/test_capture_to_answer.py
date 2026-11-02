@@ -109,7 +109,7 @@ def world(sqlite_db, isolated_settings, fake_embedding_model, fake_pg, tmp_path,
     history = {}
     monkeypatch.setattr(retrieval_engine, "load_conversation_history", lambda sid: history.get(sid, []))
     monkeypatch.setattr(retrieval_engine, "save_turn",
-                        lambda sid, q, a: history.setdefault(sid, []).extend([HumanMessage(content=q), AIMessage(content=a)]))
+                        lambda sid, q, a, **pills: history.setdefault(sid, []).extend([HumanMessage(content=q), AIMessage(content=a)]))
 
     app = FastAPI()
     app.include_router(chrome_router)

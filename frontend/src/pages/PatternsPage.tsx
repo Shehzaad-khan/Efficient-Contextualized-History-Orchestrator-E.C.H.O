@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { Link } from 'react-router-dom'
-import { Check, Plus, X } from 'lucide-react'
+import { Check, ChevronLeft, ChevronRight, Plus, X } from 'lucide-react'
 import PageTitle from '../components/PageTitle'
 import Counter from '../components/Counter'
 import SourceBadge from '../components/SourceBadge'
@@ -14,21 +14,62 @@ import {
   fetchReviewQueue,
   fetchWeeklyInsight,
 } from '../lib/api'
-import { DOW_LABELS, formatDuration } from '../lib/format'
+import { DOW_LABELS, formatDuration, isoDayLabel, shiftIsoDate, todayIso } from '../lib/format'
 import type { DailySummary, GroupSuggestion, HeatmapCell, UserGroup, WeeklyInsight } from '../lib/types'
 
 const EASE_OUT = [0.22, 1, 0.36, 1] as const
 
 const GROUP_ORDER = ['study', 'work', 'entertainment', 'personal', 'misc']
 
+/* ── Period stepper — previous / next day or week (D6.5) ────────────────── */
+function PeriodStepper({
+  label,
+  value,
+  onShift,
+  atToday,
+}: {
+  label: string
+  value: string
+  onShift: (direction: -1 | 1) => void
+  atToday: boolean
+}) {
+  return (
+    <div className="flex items-center gap-1.5" role="group" aria-label={`Choose the ${label}`}>
+      <span className="meta mr-1 text-ink-faint">{label}</span>
+      <button
+        type="button"
+        onClick={() => onShift(-1)}
+        className="btn-ghost p-1.5"
+        aria-label={`Previous ${label}`}
+        title={`Previous ${label}`}
+      >
+        <ChevronLeft size={14} aria-hidden="true" />
+      </button>
+      <span className="min-w-[9.5rem] text-center font-mono text-xs text-ink-soft" aria-live="polite">
+        {value}
+      </span>
+      <button
+        type="button"
+        onClick={() => onShift(1)}
+        disabled={atToday}
+        className="btn-ghost p-1.5 disabled:opacity-30"
+        aria-label={`Next ${label}`}
+        title={atToday ? 'Nothing after today' : `Next ${label}`}
+      >
+        <ChevronRight size={14} aria-hidden="true" />
+      </button>
+    </div>
+  )
+}
+
 /* ── Category bars — thin, editorial, no chart library ─────────────────── */
-function CategoryBars({ summary }: { summary: DailySummary }) {
+function CategoryBars({ summary, dayText }: { summary: DailySummary; dayText: string }) {
   const max = Math.max(...summary.by_system_group.map((group) => group.total_seconds), 1)
   const rows = [...summary.by_system_group].sort(
     (a, b) => GROUP_ORDER.indexOf(a.group_name) - GROUP_ORDER.indexOf(b.group_name),
   )
   return (
-    <div className="space-y-3.5" role="img" aria-label="Time by category today">
+    <div className="space-y-3.5" role="img" aria-label={`Time by category, ${dayText}`}>
       {rows.map((group, index) => {
         const percent = summary.total_seconds ? Math.round((group.total_seconds / summary.total_seconds) * 100) : 0
         return (
@@ -42,7 +83,7 @@ function CategoryBars({ summary }: { summary: DailySummary }) {
             <div className="mt-1.5 h-[3px] rounded-full bg-night-700/60">
               <motion.div
                 className="h-full rounded-full bg-gradient-to-r from-ember-600 to-ember-400"
-                initial={{ width: 0 }}
+                initial={{ width: '0%' }}
                 whileInView={{ width: `${(group.total_seconds / max) * 100}%` }}
                 viewport={{ once: true }}
                 transition={{ duration: 0.9, ease: EASE_OUT, delay: 0.15 + index * 0.07 }}
@@ -142,13 +183,22 @@ function Groups({ groups, onCreate }: { groups: UserGroup[]; onCreate: (name: st
                   ? 'auto-sorting on'
                   : `${Math.max(0, 5 - (group.confirmed_count ?? group.member_count))} more to auto-sort`}
               </p>
-              <Link
-                to={`/groups/${group.group_id}/rules`}
-                className="meta mt-1 inline-block text-[9px] text-ember-400 transition hover:text-ember-300"
-                aria-label={`Rules for ${group.group_name}`}
-              >
-                rules →
-              </Link>
+              <div className="mt-1 flex justify-end gap-3">
+                <Link
+                  to={`/groups/${group.group_id}/items`}
+                  className="meta inline-block text-[9px] text-ember-400 transition hover:text-ember-300"
+                  aria-label={`Items in ${group.group_name}`}
+                >
+                  items →
+                </Link>
+                <Link
+                  to={`/groups/${group.group_id}/rules`}
+                  className="meta inline-block text-[9px] text-ember-400 transition hover:text-ember-300"
+                  aria-label={`Rules for ${group.group_name}`}
+                >
+                  rules →
+                </Link>
+              </div>
             </div>
           </li>
         ))}
@@ -239,23 +289,74 @@ function ReviewQueue({
 
 /* ── Page ───────────────────────────────────────────────────────────────── */
 export default function PatternsPage() {
+  const today = todayIso()
+  // D6.5: the day the stats and category card show, and the last day of the week the
+  // heatmap and the reflection cover. Both are local days, YYYY-MM-DD; never after today.
+  const [day, setDay] = useState(today)
+  const [weekEnd, setWeekEnd] = useState(today)
   const [summary, setSummary] = useState<DailySummary | null>(null)
   const [cells, setCells] = useState<HeatmapCell[] | null>(null)
   const [groups, setGroups] = useState<UserGroup[]>([])
   const [insight, setInsight] = useState<WeeklyInsight | null>(null)
+  const [insightLoading, setInsightLoading] = useState(true)
   const [reviewQueue, setReviewQueue] = useState<GroupSuggestion[]>([])
 
   useEffect(() => {
     let cancelled = false
-    void fetchDaily().then((data) => !cancelled && setSummary(data))
-    void fetchHeatmap(7).then((data) => !cancelled && setCells(data))
     void fetchGroups().then((data) => !cancelled && setGroups(data))
-    void fetchWeeklyInsight().then((data) => !cancelled && setInsight(data))
     void fetchReviewQueue().then((data) => !cancelled && setReviewQueue(data))
     return () => {
       cancelled = true
     }
   }, [])
+
+  // The chosen day: the stat row and the category card.
+  useEffect(() => {
+    let cancelled = false
+    setSummary(null)
+    void fetchDaily(day).then((data) => !cancelled && setSummary(data))
+    return () => {
+      cancelled = true
+    }
+  }, [day])
+
+  // The chosen week: the heatmap and the reflection (7 days ending on weekEnd).
+  useEffect(() => {
+    let cancelled = false
+    setCells(null)
+    setInsightLoading(true)
+    void fetchHeatmap(7, weekEnd).then((data) => !cancelled && setCells(data))
+    void fetchWeeklyInsight(weekEnd)
+      .then((data) => !cancelled && setInsight(data))
+      .finally(() => !cancelled && setInsightLoading(false))
+    return () => {
+      cancelled = true
+    }
+  }, [weekEnd])
+
+  /** Move by one step, never past today. */
+  function shiftDay(direction: -1 | 1) {
+    setDay((current) => {
+      const next = shiftIsoDate(current, direction)
+      return next > today ? today : next
+    })
+  }
+
+  function shiftWeek(direction: -1 | 1) {
+    setWeekEnd((current) => {
+      const next = shiftIsoDate(current, direction * 7)
+      return next > today ? today : next
+    })
+  }
+
+  function backToToday() {
+    setDay(today)
+    setWeekEnd(today)
+  }
+
+  const dayText = isoDayLabel(day)
+  const weekStart = shiftIsoDate(weekEnd, -6)
+  const weekText = weekEnd === today ? 'the last 7 days' : `${isoDayLabel(weekStart)} → ${isoDayLabel(weekEnd)}`
 
   function handleDecide(suggestionId: string, accept: boolean) {
     setReviewQueue((current) => current.filter((s) => s.suggestion_id !== suggestionId))
@@ -272,7 +373,7 @@ export default function PatternsPage() {
 
   const stats = summary
     ? [
-        { label: 'time today', value: summary.total_seconds, format: formatDuration },
+        { label: day === today ? 'time today' : `time · ${dayText}`, value: summary.total_seconds, format: formatDuration },
         { label: 'sessions', value: summary.sessions.session_count, format: (v: number) => String(Math.round(v)) },
         { label: 'avg session', value: summary.sessions.avg_session_minutes, format: (v: number) => `${Math.round(v)}m` },
         { label: 'shorts time', value: summary.shorts.shorts_seconds, format: formatDuration },
@@ -281,11 +382,22 @@ export default function PatternsPage() {
 
   return (
     <div>
-      <PageTitle eyebrow="patterns" title="Where the time went." aside={summary ? <p className="meta">{summary.day}</p> : undefined} />
+      <PageTitle eyebrow="patterns" title="Where the time went." aside={<p className="meta">{day}</p>} />
+
+      {/* Period controls (D6.5): the day drives the stats and categories, the week the heatmap and reflection */}
+      <div className="mt-8 flex flex-wrap items-center gap-x-8 gap-y-3">
+        <PeriodStepper label="day" value={dayText} onShift={shiftDay} atToday={day >= today} />
+        <PeriodStepper label="week" value={weekText} onShift={shiftWeek} atToday={weekEnd >= today} />
+        {(day !== today || weekEnd !== today) && (
+          <button type="button" onClick={backToToday} className="btn-ghost font-mono text-xs normal-case">
+            back to today
+          </button>
+        )}
+      </div>
 
       {/* Stat row — numbers count up under the lamp */}
       <motion.div
-        className="mt-10 grid grid-cols-2 gap-px overflow-hidden rounded-card border border-white/[0.06] bg-white/[0.04] sm:grid-cols-4"
+        className="mt-6 grid grid-cols-2 gap-px overflow-hidden rounded-card border border-white/[0.06] bg-white/[0.04] sm:grid-cols-4"
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5, ease: EASE_OUT, delay: 0.2 }}
@@ -307,15 +419,16 @@ export default function PatternsPage() {
         <div className="space-y-8">
           <section className="card p-6" aria-labelledby="heatmap-heading">
             <h2 id="heatmap-heading" className="meta mb-5">
-              the week, hour by hour
+              the week, hour by hour · {weekText}
             </h2>
             {cells ? <Heatmap cells={cells} /> : <div className="h-36 animate-pulse rounded bg-night-800/60" />}
             <p className="meta mt-3 text-[9px] text-ink-faint">brighter = more time · red tick = a regret you marked</p>
           </section>
 
+          {insightLoading && !insight && <div className="card h-36 animate-pulse bg-night-850/60" aria-hidden="true" />}
           {insight && (
             <motion.section
-              className="card border-ember-500/15 p-6"
+              className={`card border-ember-500/15 p-6 transition-opacity ${insightLoading ? 'opacity-50' : ''}`}
               initial={{ opacity: 0, y: 14 }}
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true }}
@@ -338,10 +451,19 @@ export default function PatternsPage() {
         {/* Right column */}
         <div className="space-y-8">
           <section className="card p-6" aria-labelledby="categories-heading">
+            {/* D6.6: the card names its day, so it never reads as the week's numbers */}
             <h2 id="categories-heading" className="meta mb-5">
-              time by category
+              time by category · {dayText}
             </h2>
-            {summary ? <CategoryBars summary={summary} /> : <div className="h-40 animate-pulse rounded bg-night-800/60" />}
+            {summary ? (
+              summary.total_seconds > 0 ? (
+                <CategoryBars summary={summary} dayText={dayText} />
+              ) : (
+                <p className="text-sm text-ink-mute">No time recorded {day === today ? 'yet today' : 'on this day'}.</p>
+              )
+            ) : (
+              <div className="h-40 animate-pulse rounded bg-night-800/60" />
+            )}
           </section>
 
           <section className="card p-6" aria-labelledby="groups-heading">

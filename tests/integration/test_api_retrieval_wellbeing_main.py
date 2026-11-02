@@ -135,28 +135,37 @@ def test_a_past_chat_can_be_resumed_and_unknown_ones_are_404(retrieval_client, m
     assert retrieval_client.get("/retrieval/sessions/bad id!").status_code in (400, 404)
 
 
-def test_session_admin_routes_need_the_api_key(retrieval_client, monkeypatch):
-    """Shows: diagnostics and deletion are locked unless ECHO_API_KEY is set and sent."""
-    monkeypatch.delenv("ECHO_API_KEY", raising=False)
-    assert retrieval_client.get("/retrieval/session/abc").status_code == 503
-    monkeypatch.setenv("ECHO_API_KEY", "s3cret")
-    assert retrieval_client.get("/retrieval/session/abc").status_code == 401
-    assert retrieval_client.get("/retrieval/session/abc", headers={"X-API-Key": "wrong"}).status_code == 401
-    monkeypatch.setattr(retrieval_routes, "load_conversation_history", lambda sid: [HumanMessage(content="hi")])
-    ok = retrieval_client.get("/retrieval/session/abc", headers={"X-API-Key": "s3cret"})
-    assert ok.status_code == 200 and ok.json()["message_count"] == 1
+def test_a_reopened_chat_brings_back_its_memory_pills(retrieval_client, monkeypatch):
+    """Shows (D6.1): a reply saved with its pill data returns it; a reply saved before D6.1 comes back as text only."""
+    sources = [{"n": 1, "memory_id": "m1", "title": "Interview"}]
+    history = [
+        HumanMessage(content="find my interview email"),
+        AIMessage(content="Friday [✉ Priya]", additional_kwargs={"answer_markdown": "Friday ⟦1⟧", "answer_sources": sources}),
+        HumanMessage(content="and before that?"),
+        AIMessage(content="an older reply"),
+        AIMessage(content="broken extras", additional_kwargs={"answer_markdown": "x ⟦1⟧", "answer_sources": "not a list"}),
+    ]
+    monkeypatch.setattr(retrieval_routes, "load_conversation_history", lambda sid: history)
+    messages = retrieval_client.get("/retrieval/sessions/abc").json()["messages"]
+    assert messages[1] == {"role": "echo", "text": "Friday [✉ Priya]", "markdown": "Friday ⟦1⟧", "sources": sources}
+    assert messages[0]["markdown"] is None and messages[0]["sources"] is None
+    assert messages[3]["markdown"] is None and messages[3]["sources"] is None
+    assert messages[4]["markdown"] is None          # malformed stored extras fall back to plain text
 
 
-def test_clear_session_deletes_messages(retrieval_client, monkeypatch):
-    monkeypatch.setenv("ECHO_API_KEY", "s3cret")
-    conn = FakeCursorConnection(rowcount=4)
+def test_a_past_chat_can_be_deleted_without_the_api_key(retrieval_client, monkeypatch):
+    """Shows (D6.2): the browser can delete one chat (no key in the bundle); only that session's rows go."""
+    conn = FakeCursorConnection(rowcount=6)
     monkeypatch.setattr(retrieval_routes, "get_connection", lambda: conn)
-    response = retrieval_client.delete("/retrieval/session/abc", headers={"X-API-Key": "s3cret"})
-    assert response.json() == {"session_id": "abc", "messages_deleted": 4}
-    assert "DELETE FROM message_store" in conn.executed[0][0]
-    assert retrieval_client.delete("/retrieval/session/bad id!", headers={"X-API-Key": "s3cret"}).status_code == 400
+    response = retrieval_client.delete("/retrieval/sessions/abc")
+    assert response.status_code == 200 and response.json() == {"session_id": "abc", "messages_deleted": 6}
+    assert conn.executed == [("DELETE FROM message_store WHERE session_id = %s", ("abc",))]
+    monkeypatch.setattr(retrieval_routes, "get_connection", lambda: FakeCursorConnection(rowcount=0))
+    assert retrieval_client.delete("/retrieval/sessions/gone").status_code == 404
+    assert retrieval_client.delete("/retrieval/sessions/bad id!").status_code in (400, 404)
     monkeypatch.setattr(retrieval_routes, "get_connection", lambda: FakeCursorConnection(fail=True))
-    assert retrieval_client.delete("/retrieval/session/abc", headers={"X-API-Key": "s3cret"}).status_code == 500
+    failed = retrieval_client.delete("/retrieval/sessions/abc")
+    assert failed.status_code == 500 and "db down" not in failed.text
 
 
 # ── Wellbeing ─────────────────────────────────────────────────────────────────
@@ -190,6 +199,21 @@ def test_wellbeing_read_routes_pass_the_data_through(wellbeing_client, monkeypat
     assert wellbeing_client.get("/wellbeing/sessions").json()["sessions"] == []
     assert wellbeing_client.get("/wellbeing/analytics/heatmap?days=0").status_code == 422
     assert wellbeing_client.get("/wellbeing/analytics/daily?day=nonsense").status_code == 422
+
+
+def test_heatmap_can_show_an_earlier_week(wellbeing_client, monkeypatch):
+    """Shows (D6.5): end_day moves the heatmap's range back; without it the range still ends today."""
+    from datetime import date, timedelta
+
+    ranges = []
+    monkeypatch.setattr(wb, "activity_heatmap", lambda start, end: ranges.append((start, end)) or [])
+    body = wellbeing_client.get("/wellbeing/analytics/heatmap?days=7&end_day=2026-10-21").json()
+    assert (body["start_day"], body["end_day"]) == ("2026-10-15", "2026-10-21")
+    assert ranges[-1] == (date(2026, 10, 15), date(2026, 10, 21))
+    body = wellbeing_client.get("/wellbeing/analytics/heatmap?days=3").json()
+    assert body["end_day"] == date.today().isoformat()
+    assert body["start_day"] == (date.today() - timedelta(days=2)).isoformat()
+    assert wellbeing_client.get("/wellbeing/analytics/heatmap?end_day=soon").status_code == 422
 
 
 @pytest.mark.parametrize("method, path, target", [

@@ -9,6 +9,8 @@ Working file — committed to the repo from 2026-10-22 so Claude web can read it
 3. Section B needs a backup before any statement runs: a Neon snapshot or branch for Neon (B1–B3, done), a `pg_dump -Fc` of `echo_db` into `C:\Users\mdshe\echo_backups\` for the local database (B5).
 4. Section D is built after the whole review is finished.
 
+**Audit update — 2026-11-02:** D6 (all seven parts, D6.1 to D6.7) was built and checked offline (pytest + a browser click-through against a fake backend), so the top-level count is now **86 of 86 complete**. His live check of D6 on the real database is still to do. The 2026-10-26 snapshot below is kept as written.
+
 **Audit snapshot — 2026-10-26 (top-level IDs; supersedes the 2026-10-25 one):** 86 entries = **85 complete/resolved + 1 not fully complete** (E1 built later on 2026-10-26). Counting rule: A1–A45 are owner-decision entries, counted complete when the decision is recorded; their implementation follow-ups are audited separately below. B4 is informational/no action. Breakdown: A 45/45 decisions recorded; B 5/5 resolved (B5 ran 2026-10-25); C 29/29 resolved; D 5 complete (D1, D2, D3, D4, D5; D3 and D5 built 2026-10-25, D2 closed 2026-10-26 with old `.doc` dropped), D6 open; E1 built 2026-10-26. E2 (import personal history + export button) was removed from scope on 2026-10-25: the presentation uses the test account only. The one not-fully-complete top-level ID is D6 (four frontend gaps found 2026-10-26 plus three more added 2026-10-27, D6.5 to D6.7; nothing built); E1 was the other until it was built on 2026-10-26. D6 was added 2026-10-26, so the total went from 85 to 86. A26 was built later on 2026-10-26; the top-level count is unchanged because A entries count as complete when the decision is recorded (its build status is in the A26 entry). This top-level count is not a claim that all decided features are implemented. The 2026-10-25 build work (A16/A40 + B5, A27, A28, A37, OCR, D3, D5, A42, A18 part 1, review fixes) is committed and merged to `main` (PRs #12, #13, #14); the two branches were checked after the PR #14 merge and nothing was lost.
 
 **Decision 2026-10-25 (his): the presentation runs on the TEST ACCOUNT only.** There is no time to move to his personal account. So E2 (import personal history + export button) is out of scope, and the Mon 26 / Tue 27 Oct retest and the threshold recompute (A18, A40) use the test account's data.
@@ -2090,45 +2092,86 @@ The `[x] decided` marks above mean the owner's decision is recorded. They do not
   - Checked in a browser with a mocked backend (card appears, snooze sends the call and closes it); NOT yet tried against the live
     backend and database with a real regret habit.
 
-### D6. Frontend gaps found after the build — [ ] open (found 2026-10-26; D6.1 to D6.4. D6.1 and D6.2 also need a small backend change; D6.5 to D6.7 added 2026-10-27)
+### D6. Frontend gaps found after the build — [x] 2026-11-02 all seven built (found 2026-10-26; D6.1 to D6.4. D6.1 and D6.2 also need a small backend change; D6.5 to D6.7 added 2026-10-27)
 Found while reviewing what the screens can actually do. Each one was checked on 2026-10-26: the backend route exists, and nothing in
 `frontend/src` calls it (also searched every remote branch for `addRule`, `assignToGroup`, `/assign` and `deleteSession`: no hits).
-- [ ] **D6.1 Old chats show plain text, no memory pills.** `save_turn` (`rse/conversation_memory.py`) stores only `final_answer` in
+- [x] **D6.1 Old chats show plain text, no memory pills.** `save_turn` (`rse/conversation_memory.py`) stores only `final_answer` in
   `message_store`, and `GET /retrieval/sessions/{id}` returns `{role, text}`, so `toChatMessages` in `frontend/src/pages/RecallPage.tsx`
   rebuilds an old reply with `sources: []`. Bold text and lists still render (the text is markdown); only the pills and the moment strip
   are missing. To fix: also save `answer_markdown` + `answer_sources` with the reply (the `message` column is JSONB, so no schema change)
   and return them from `/sessions/{id}`. This one needs a small backend change as well as the frontend.
-- [ ] **D6.2 Deleting a chat from the Past chats panel.** The route `DELETE /retrieval/session/{id}` exists but needs `X-API-Key`, and
+- [x] **D6.2 Deleting a chat from the Past chats panel.** The route `DELETE /retrieval/session/{id}` exists but needs `X-API-Key`, and
   the key must not ship in the browser bundle (same reasoning as the A27 decision that opened `GET /retrieval/sessions`). So: open a
   delete route the way `/sessions/{id}` was opened, then add the button and a confirm step to `PastChats.tsx` and a `deleteSession`
   in `lib/api.ts`. Decide first whether to open the route (his call, it deletes data).
-- [ ] **D6.3 Adding a rule to a group.** `POST /wellbeing/groups/{id}/rules` exists (types keyword, domain, channel, sender,
+- [x] **D6.3 Adding a rule to a group.** `POST /wellbeing/groups/{id}/rules` exists (types keyword, domain, channel, sender,
   time_window; 400 on a bad value) but no frontend code calls it. Add a form on the rules screen (`GroupRulesPage.tsx`) and an
   `addRule` in `lib/api.ts` that does not fall back to demo data (same rule as `setRuleActive`). Also still not shown on that screen:
   the step-9 rule suggestions (`GET /wellbeing/groups/{id}/rule-suggestions`).
-- [ ] **D6.4 Choosing items for a group by hand.** `POST /wellbeing/groups/{id}/assign` (`manual_assign`) and `GET .../items` exist; no
+- [x] **D6.4 Choosing items for a group by hand.** `POST /wellbeing/groups/{id}/assign` (`manual_assign`) and `GET .../items` exist; no
   screen lets him pick items and put them in a group. Needs an item picker (recent items or search) and an `assignToGroup` in
   `lib/api.ts`. This is a write path into `memory_user_groups` through `manual_assign`, which hard constraint 4 allows.
 
 Added 2026-10-27 by the owner while reviewing the screens (D6.5 to D6.7). Unlike D6.1 to D6.4, these need a small backend change as well.
-- [ ] **D6.5 Browse past days and weeks on Patterns.** Today the frontend calls every wellbeing route with no date, so Patterns can only
+- [x] **D6.5 Browse past days and weeks on Patterns.** Today the frontend calls every wellbeing route with no date, so Patterns can only
   show today and the current week. The backend already takes `day` on `GET /wellbeing/analytics/daily` and `GET /wellbeing/sessions`, and
   `week_end` on `GET /wellbeing/insights/weekly`; `fetchDaily`, `fetchSessions` and `fetchWeeklyInsight` in `lib/api.ts` pass none. The
   heatmap route `GET /wellbeing/analytics/heatmap` takes only `days` and always ends today (`backend/wellbeing.py`), although
   `activity_heatmap(start_day, end_day)` already takes both dates, so the route needs an end-date parameter. To fix: pass the dates
   through `lib/api.ts`, add a previous/next day and week control on `PatternsPage.tsx`, and add the end-date parameter to the heatmap route.
-- [ ] **D6.6 The "time by category" card says nothing about its period.** It reads `GET /wellbeing/analytics/daily` with no date, so it
+- [x] **D6.6 The "time by category" card says nothing about its period.** It reads `GET /wellbeing/analytics/daily` with no date, so it
   shows today only, while the "this week, reflected" text above it covers the week. With one item today (the Echo dashboard itself,
   `misc`, 10 s) the card shows misc 100% and the week text shows study 40% / misc 29%, which looks contradictory. Smallest fix: rename the
   card to say "today" (frontend only). Alternative: show the week (needs a per-week category breakdown from the backend; not checked
   whether one exists). Becomes a period switch if D6.5 is built.
-- [ ] **D6.7 "Open source" works for Chrome items only.** The button on the Timeline (`TimelinePage.tsx`) shows only when `item.url`
+- [x] **D6.7 "Open source" works for Chrome items only.** The button on the Timeline (`TimelinePage.tsx`) shows only when `item.url`
   exists, and `recent_items()` in `wba/time_aggregator.py` takes `url` from `chrome_metadata` alone. Checked 2026-10-27 on the live
   `/wellbeing/recent`: 36 of 36 Chrome items have a URL, 0 of 55 Gmail and 0 of 9 YouTube. To fix (backend, small): build the link in
   `recent_items()` from stored ids: YouTube `https://www.youtube.com/watch?v=<youtube_metadata.video_id>`; Gmail
   `https://mail.google.com/mail/u/0/#all/<gmail_metadata.thread_id or email_id>`. Not tested: the Gmail link format on a real mail and
   that `/u/0/` is the right signed-in account; if wrong, the button opens Gmail but not the exact mail. Check the same gap for the
   source links in Recall answers.
+
+- **Built 2026-11-02 (cloud session; his go: "build all D6 items", which also settles the D6.2 question: open the delete route).**
+  - **D6.1** `rse/conversation_memory.py` `save_turn(..., answer_markdown, answer_sources)` keeps the pill data in the AI message's
+    `additional_kwargs` (LangChain's own JSON format already carries it; `message` is JSONB, so no schema change; ids/dates written as text).
+    `rse/retrieval_engine.py` passes both. `GET /retrieval/sessions/{id}` returns `markdown` + `sources` per reply (None for replies saved
+    before this, or for malformed extras). `RecallPage.tsx` `toChatMessages` draws the pills and moment strip when they are there. The
+    agent's history prompt (`_format_history`) reads only the text, so the extras never reach the LLM. Old chats stay plain text.
+  - **D6.2** new open route `DELETE /retrieval/sessions/{id}` (no key, same reasoning as A27's open GET; 404 when nothing was deleted;
+    the keyed `DELETE /retrieval/session/{id}` was kept at first, then removed the same day, see below). `PastChats.tsx`: a trash button per chat, an inline
+    "Delete this chat? Its questions and answers go; your memories stay." with Delete / Keep; deleting the chat that is open clears the
+    screen and forgets the stored session id. `lib/api.ts` `deleteSession` does not fall back to demo data. Also fixed while testing:
+    when the title row wraps (about 1280 px wide) the panel slid under the fixed sidebar and its left side could not be clicked; the
+    panel now opens toward the side with room.
+  - **D6.3** `GroupRulesPage.tsx`: an "add a rule" form (type select; a value box, or two date pickers for `time_window`; a one-line
+    hint per type; reversed dates refused before sending; the backend's 400 reason is shown) and a "rules echo noticed" card with the
+    step-9 suggestions, each with one-click add. `lib/api.ts` `addRule` (no demo fallback on a live failure; `ApiError` now carries the
+    backend's `detail`), `fetchRuleSuggestions`.
+  - **D6.4** new page `GroupItemsPage.tsx` at `/groups/{id}/items` (linked as "items →" from Patterns and from the rules page): the
+    group's members, and a picker over the 100 most recent items (the most `/wellbeing/recent` gives) with a filter on title, sender,
+    site or channel. "add" calls `assignToGroup` -> `POST /wellbeing/groups/{id}/assign` -> `manual_assign`, the one write path
+    (hard constraint 4). No backend change. Older items: not in the picker (search would need a new route; not built).
+  - **D6.5** `GET /wellbeing/analytics/heatmap` takes `end_day` (default today). `lib/api.ts` passes `day` / `end_day` / `week_end`
+    (`fetchDaily`, `fetchHeatmap`, `fetchWeeklyInsight`, `fetchTodaySessions`). `PatternsPage.tsx`: a day stepper (stat row + category
+    card) and a week stepper (heatmap + reflection, 7 days ending on the chosen day), "back to today", never after today. Each week step
+    asks the insight generator again (one LLM call with aggregated numbers, as before). Also fixed while testing: the category bars
+    crashed framer-motion (`mixObject` on null) when they were re-keyed by day; the key was removed.
+  - **D6.6** the card heading is "time by category · <day>" ("today", "yesterday", or a date) and an empty day says so.
+  - **D6.7** `wba/time_aggregator.py` `recent_items()` builds `url` for every source with `source_link()`: Chrome page, Gmail
+    `https://mail.google.com/mail/u/0/#all/<thread_id, else email_id>` (same rule as the Recall pills, `rse/llm_synthesizer.py _link`),
+    YouTube `https://www.youtube.com/watch?v=<video_id>`; the ids are not returned. The Timeline button says "open in gmail" /
+    "open page" / "open on youtube". Recall answers already had links for all three sources (checked: `_link`).
+  - **Checks:** 6 new tests (pills saved and loaded, pills passed by `run_query`, reopened chat returns pills, open delete route,
+    heatmap `end_day`, recent-item links); `pytest` 569 passed, coverage 94 %, ruff and bandit clean, `npm run build` clean. A browser
+    click-through (headless Chromium) of every D6 flow against the real routers with an in-memory fake database: 27 of 27 checks pass,
+    no console errors, no horizontal scroll at 390 px. **Not checked:** the live database, the Gmail link opening the exact mail in his
+    browser (`/u/0/` = first signed-in account).
+  - **Follow-up 2026-11-02 (his decision): the keyed routes are gone.** `GET /retrieval/session/{id}` (diagnostic) and
+    `DELETE /retrieval/session/{id}`, the `X-API-Key` check and `ECHO_API_KEY` were removed from `backend/retrieval.py`: nothing called
+    them (frontend, extension, MCP server, scripts), `GET` / `DELETE /retrieval/sessions/{id}` do the same work, and the key protected
+    nothing else. Their two tests went with them (`test_session_admin_routes_need_the_api_key`, `test_clear_session_deletes_messages`);
+    the open delete route keeps its own test. `ECHO_API_KEY` no longer needs to be set anywhere.
 
 ---
 

@@ -19,6 +19,13 @@ function itemLocation(item: MemoryItem): string {
   return item.channel_name ?? 'unknown channel'
 }
 
+/** The "open" button's words: where the link goes (D6.7: every source has one now). */
+const OPEN_LABEL: Record<MemoryItem['source_type'], string> = {
+  gmail: 'open in gmail',
+  chrome: 'open page',
+  youtube: 'open on youtube',
+}
+
 function TimelineEntry({ item, index }: { item: MemoryItem; index: number }) {
   const [open, setOpen] = useState(false)
   const [marked, setMarked] = useState(false)
@@ -97,7 +104,7 @@ function TimelineEntry({ item, index }: { item: MemoryItem; index: number }) {
                 <div className="mt-4 flex flex-wrap items-center gap-2">
                   {item.url && (
                     <a href={item.url} target="_blank" rel="noreferrer" className="btn-ghost inline-flex items-center gap-2 text-xs">
-                      <ExternalLink size={13} aria-hidden="true" /> open source
+                      <ExternalLink size={13} aria-hidden="true" /> {OPEN_LABEL[item.source_type] ?? 'open source'}
                     </a>
                   )}
                   {marked ? (

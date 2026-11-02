@@ -92,7 +92,7 @@ class FakeSearch:
 def engine(monkeypatch):
     """Wire a scripted Luna and a fake search into the real graph; returns (run, luna, search, saved)."""
     saved = []
-    monkeypatch.setattr(retrieval_engine, "save_turn", lambda session, question, answer: saved.append((question, answer)))
+    monkeypatch.setattr(retrieval_engine, "save_turn", lambda session, question, answer, **pills: saved.append((question, answer)))
 
     def run(script, table=None, history=None, question="find my TechCorp interview email"):
         luna = FakeLuna(script)
@@ -123,6 +123,20 @@ def test_simple_question_takes_two_llm_calls_and_one_search(engine):
     assert "✉ Priya · 14 Oct" in result["final_answer"]
     assert result["result_count"] == 1
     assert saved == [("find my TechCorp interview email", result["final_answer"])]
+
+
+def test_the_saved_turn_keeps_the_pill_data(engine, monkeypatch):
+    """Shows (D6.1): run_query hands the answer's markdown and cited items to save_turn, so a reopened chat has pills."""
+    run, _ = engine
+    pills = []
+    monkeypatch.setattr(retrieval_engine, "save_turn",
+                        lambda session, question, answer, **extra: pills.append(extra))
+    result, _, _ = run([
+        search_call("TechCorp interview"),
+        AIMessage(content="Priya emailed you ⟦1⟧."),
+    ], table={"TechCorp interview": [item("m1", "TechCorp interview schedule")]})
+    assert pills == [{"answer_markdown": result["answer_markdown"], "answer_sources": result["answer_sources"]}]
+    assert pills[0]["answer_sources"][0]["memory_id"] == "m1"
 
 
 def test_first_question_of_a_chat_forces_a_search_follow_up_does_not(engine):

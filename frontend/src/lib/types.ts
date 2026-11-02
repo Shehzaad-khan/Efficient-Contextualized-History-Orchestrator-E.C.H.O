@@ -45,6 +45,9 @@ export interface SessionSummary {
 export interface SessionMessage {
   role: 'user' | 'echo'
   text: string
+  /** D6.1: a reply saved with its pill data carries it back; replies saved earlier have neither. */
+  markdown?: string | null
+  sources?: AnswerSource[] | null
 }
 
 export interface SessionMessages {
@@ -58,6 +61,7 @@ export interface MemoryItem {
   title: string | null
   created_at: string | null
   last_accessed_at?: string | null
+  /** Opens the original: the page, the Gmail thread or the YouTube video (D6.7). */
   url?: string | null
   domain?: string | null
   sender?: string | null
@@ -100,15 +104,42 @@ export interface UserGroup {
   auto_assignment_active: boolean
 }
 
+export type RuleType = 'keyword' | 'domain' | 'channel' | 'sender' | 'time_window'
+
 /** One rule of a goal group (backend wba/group_manager.py `list_rules`). */
 export interface GroupRule {
   rule_id: string
   group_id: string
-  rule_type: 'keyword' | 'domain' | 'channel' | 'sender' | 'time_window'
+  rule_type: RuleType
   rule_value: string
   is_active: boolean
   created_at: string
   match_count: number
+}
+
+/** A candidate rule shared by 5+ confirmed members (GET /wellbeing/groups/{id}/rule-suggestions, step 9). */
+export interface RuleSuggestion {
+  rule_type: 'domain' | 'sender' | 'channel'
+  rule_value: string
+  match_count: number
+}
+
+/** A confirmed member of a goal group (GET /wellbeing/groups/{id}/items). */
+export interface GroupMember {
+  memory_id: string
+  source_type: SourceType
+  title: string | null
+  created_at: string | null
+  assigned_at: string | null
+}
+
+/** The answer of POST /wellbeing/groups/{id}/assign (manual seeding). */
+export interface AssignResult {
+  memory_id: string
+  group_id: string
+  member_count: number
+  confirmed_count: number
+  auto_assignment_active: boolean
 }
 
 export interface GroupSuggestion {

@@ -213,6 +213,36 @@ def test_a_turn_is_saved_and_loaded_back(use_db):
     assert stored[0] == message_to_dict(HumanMessage(content="find my email"))
 
 
+def test_a_turn_keeps_its_memory_pills(use_db):
+    """Shows (D6.1): the reply's ⟦n⟧ markdown and cited items are saved with it and load back."""
+    import json
+    import uuid
+
+    from langchain_core.messages import AIMessage
+
+    stored, written = [], []
+
+    def handler(sql, params):
+        if sql.startswith("INSERT"):
+            stored.extend([params[1].adapted, params[3].adapted])
+            written.append(params[3].dumps(params[3].adapted))      # what psycopg2 would send
+            return 2
+        return [(message,) for message in stored]
+
+    use_db(handler)
+    memory_id = uuid.uuid4()
+    sources = [{"n": 1, "memory_id": memory_id, "title": "Interview", "link": None}]
+    cm.save_turn("s1", "find my email", "Friday [✉ Priya]", answer_markdown="Friday ⟦1⟧", answer_sources=sources)
+    reply = cm.load_conversation_history("s1")[1]
+    assert isinstance(reply, AIMessage) and reply.content == "Friday [✉ Priya]"
+    assert reply.additional_kwargs["answer_markdown"] == "Friday ⟦1⟧"
+    assert json.loads(written[0])["data"]["additional_kwargs"]["answer_sources"][0]["memory_id"] == str(memory_id)
+
+    stored.clear()
+    cm.save_turn("s2", "q", "no pills")                         # a reply without markers stores no extras
+    assert cm.load_conversation_history("s2")[1].additional_kwargs == {}
+
+
 def test_history_functions_never_raise(use_db):
     use_db(lambda sql, params: psycopg2.OperationalError("down"))
     assert cm.load_conversation_history("s") == []

@@ -116,9 +116,34 @@ def test_total_time_and_group_breakdowns_use_the_database_helpers(monkeypatch):
     monkeypatch.setattr(ta.postgresql_manager, "fetchall", lambda q, p=None: [{"group_name": "work"}])
     assert ta.time_by_system_group(date.today(), date.today()) == [{"group_name": "work"}]
     assert ta.time_by_source(date.today(), date.today()) == [{"group_name": "work"}]
-    assert ta.recent_items(3) == [{"group_name": "work"}]
+    assert ta.recent_items(3) == [{"group_name": "work", "url": None}]  # no source: no link (D6.7)
     monkeypatch.setattr(ta.postgresql_manager, "fetchone", lambda q, p=None: None)
     assert ta.shorts_summary(date.today(), date.today()) == {"shorts_count": 0, "shorts_seconds": 0}
+
+
+def test_recent_items_link_every_source_to_its_original(monkeypatch):
+    """Shows (D6.7): Gmail and YouTube items get a link too (thread, else message; video), and the ids stay private."""
+    rows = [
+        {"source_type": "chrome", "url": "https://docs.python.org/3/", "thread_id": None, "email_id": None, "video_id": None},
+        {"source_type": "gmail", "url": None, "thread_id": "t9", "email_id": "e9", "video_id": None},
+        {"source_type": "gmail", "url": None, "thread_id": None, "email_id": "e7", "video_id": None},
+        {"source_type": "gmail", "url": None, "thread_id": None, "email_id": None, "video_id": None},
+        {"source_type": "youtube", "url": None, "thread_id": None, "email_id": None, "video_id": "dQw4w9WgXcQ"},
+        {"source_type": "youtube", "url": None, "thread_id": None, "email_id": None, "video_id": None},
+    ]
+    captured = {}
+    monkeypatch.setattr(ta.postgresql_manager, "fetchall", lambda q, p=None: captured.setdefault("sql", q) and rows)
+    items = ta.recent_items(6)
+    assert [item["url"] for item in items] == [
+        "https://docs.python.org/3/",
+        "https://mail.google.com/mail/u/0/#all/t9",
+        "https://mail.google.com/mail/u/0/#all/e7",
+        None,
+        "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        None,
+    ]
+    assert all({"thread_id", "email_id", "video_id"}.isdisjoint(item) for item in items)
+    assert "gm.thread_id" in captured["sql"] and "ym.video_id" in captured["sql"]
 
 
 def test_heatmap_marks_cells_that_have_a_regret(monkeypatch):

@@ -246,19 +246,41 @@ def activity_heatmap(start_day: date, end_day: date) -> list[dict[str, Any]]:
     return activity
 
 
+# Same link rules as the Recall answers (rse/llm_synthesizer.py `_link`): a Gmail
+# thread under #all (survives archiving), the video's watch page. /u/0/ is the
+# first signed-in Google account in the browser.
+GMAIL_LINK = "https://mail.google.com/mail/u/0/#all/{}"
+YOUTUBE_LINK = "https://www.youtube.com/watch?v={}"
+
+
+def source_link(row: dict[str, Any]) -> str | None:
+    """URL that opens the original item (D6.7): the page, the Gmail thread, or the video."""
+    source = row.get("source_type")
+    if source == "chrome":
+        return row.get("url") or None
+    if source == "gmail":
+        thread_or_email = row.get("thread_id") or row.get("email_id")
+        return GMAIL_LINK.format(thread_or_email) if thread_or_email else None
+    if source == "youtube":
+        return YOUTUBE_LINK.format(row["video_id"]) if row.get("video_id") else None
+    return None
+
+
 def recent_items(limit: int = 10) -> list[dict[str, Any]]:
     """Last N items across all sources for the dashboard/extension popup.
 
     Ordered by last open; items never opened (unread Gmail) fall back to their
-    ingestion time.
+    ingestion time. `url` opens the original for every source (D6.7): the page
+    for Chrome, the Gmail thread, or the YouTube video. The ids it is built from
+    are not returned.
     """
     rows = postgresql_manager.fetchall(
         """
         SELECT m.memory_id, m.source_type, m.title, m.created_at,
                me.last_accessed_at,
                cm.url, cm.domain,
-               gm.sender,
-               ym.channel_name, ym.is_short
+               gm.sender, gm.thread_id, gm.email_id,
+               ym.channel_name, ym.is_short, ym.video_id
         FROM memory_items m
         JOIN memory_engagement me ON m.memory_id = me.memory_id
         LEFT JOIN chrome_metadata  cm ON m.memory_id = cm.memory_id
@@ -270,5 +292,9 @@ def recent_items(limit: int = 10) -> list[dict[str, Any]]:
         """,
         {"limit": limit},
     )
+    for row in rows:
+        row["url"] = source_link(row)
+        for key in ("thread_id", "email_id", "video_id"):
+            row.pop(key, None)
     logger.debug("recent_items limit=%d -> %d rows", limit, len(rows))
     return rows
