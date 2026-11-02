@@ -222,7 +222,6 @@ export default function RecallPage() {
   return (
     <div className="flex min-h-[calc(100vh-6rem)] flex-col">
       <PageTitle
-        eyebrow="recall"
         title="Ask your memory."
         aside={
           <div className="flex items-center gap-4">
@@ -235,11 +234,10 @@ export default function RecallPage() {
               }}
             />
             {!empty && (
-              <button type="button" onClick={startNewChat} disabled={busy} className="btn-ghost font-mono text-xs normal-case disabled:opacity-40">
+              <button type="button" onClick={startNewChat} disabled={busy} className="btn-ghost flex items-center px-5 py-2.5 font-mono text-sm normal-case disabled:opacity-40">
                 New chat
               </button>
             )}
-            <p className="meta">gmail · chrome · youtube</p>
           </div>
         }
       />

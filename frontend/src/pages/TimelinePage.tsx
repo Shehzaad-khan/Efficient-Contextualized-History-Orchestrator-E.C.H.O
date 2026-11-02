@@ -173,11 +173,7 @@ export default function TimelinePage() {
 
   return (
     <div>
-      <PageTitle
-        eyebrow="timeline"
-        title="What Echo kept."
-        aside={items ? <p className="meta">{items.length} memories in view</p> : undefined}
-      />
+      <PageTitle eyebrow="timeline" title="What Echo kept." />
 
       <div ref={listRef} className="relative mt-12">
         {/* The spine of time — grows with scroll */}

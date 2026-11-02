@@ -12,21 +12,23 @@ export default function PageTitle({
   title,
   aside,
 }: {
-  eyebrow: string
+  eyebrow?: string
   title: string
   aside?: ReactNode
 }) {
   return (
     <header className="flex flex-wrap items-end justify-between gap-x-8 gap-y-3">
       <div className="min-w-0">
-        <motion.p
-          className="meta"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ duration: 0.4, delay: 0.05 }}
-        >
-          {eyebrow}
-        </motion.p>
+        {eyebrow && (
+          <motion.p
+            className="meta"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.4, delay: 0.05 }}
+          >
+            {eyebrow}
+          </motion.p>
+        )}
         <div className="overflow-hidden">
           <motion.h1
             className="font-display text-title-xl font-medium italic text-ink"

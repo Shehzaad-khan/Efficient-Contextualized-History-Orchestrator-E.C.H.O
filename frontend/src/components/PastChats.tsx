@@ -97,9 +97,9 @@ export default function PastChats({ activeSessionId, disabled, onOpen }: PastCha
         disabled={disabled}
         aria-expanded={open}
         aria-controls="past-chats-panel"
-        className="btn-ghost flex items-center gap-2 font-mono text-xs normal-case disabled:opacity-40"
+        className="btn-ghost flex items-center gap-2.5 px-5 py-2.5 font-mono text-sm normal-case disabled:opacity-40"
       >
-        <History size={13} aria-hidden="true" />
+        <History size={16} aria-hidden="true" />
         Past chats
       </button>
 

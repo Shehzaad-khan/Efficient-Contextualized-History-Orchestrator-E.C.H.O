@@ -48,11 +48,7 @@ export default function ReflectionsPage() {
 
   return (
     <div>
-      <PageTitle
-        eyebrow="reflections"
-        title="In your own words."
-        aside={<p className="meta">only you decide what belongs here</p>}
-      />
+      <PageTitle eyebrow="reflections" title="In your own words." />
 
       <motion.p
         className="mt-6 max-w-[52ch] text-[15px] leading-7 text-ink-mute"
