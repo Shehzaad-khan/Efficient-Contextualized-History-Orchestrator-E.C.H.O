@@ -908,9 +908,9 @@ Chat sessions (A27, built Thu–Sun): every new chat gets a new `session_id`; op
 session list (title = first question, last active, turns) built from `message_store`. The browser uses the open routes
 `GET /retrieval/sessions`, `GET /retrieval/sessions/{id}` (one chat's messages) and, since D6.2 (2026-11-02),
 `DELETE /retrieval/sessions/{id}` (delete one chat from the past-chats panel, with a confirm step; memories are not touched;
-404 when already gone). They need no key because the key must not ship in the browser bundle. The older diagnostic
-`GET /retrieval/session/{id}` and `DELETE /retrieval/session/{id}` stay behind the `X-API-Key` header (= `ECHO_API_KEY`,
-else 503/401). The frontend gets "New chat", a past-chats list, and remembers the open chat id across reloads
+404 when already gone). They need no key because no key can ship in the browser bundle. The older keyed routes
+`GET /retrieval/session/{id}` and `DELETE /retrieval/session/{id}` (`X-API-Key` = `ECHO_API_KEY`) were removed on
+2026-11-02 (owner's decision): nothing called them and the routes above cover them. The frontend gets "New chat", a past-chats list, and remembers the open chat id across reloads
 (localStorage, a per-viewer convenience).
 
 Memory pills in reopened chats (D6.1, 2026-11-02): `save_turn` stores the reply's `answer_markdown` (validated `⟦n⟧`
@@ -1218,7 +1218,7 @@ Built (21 Oct 2026):
 | `/gmail` | `GET /health`, `POST /poll`, `POST /engagement` |
 | `/chrome` | `POST /ingest`, `POST /revisit-check` |
 | `/ytc` | `POST /video-detected`, `POST /heartbeat`, `POST /video-closed` |
-| `/retrieval` | `POST /query`, `POST /query/stream`, `GET /sessions`, `GET /sessions/{id}`, `DELETE /sessions/{id}` (open, D6.2); `GET /session/{id}`, `DELETE /session/{id}` (X-API-Key) |
+| `/retrieval` | `POST /query`, `POST /query/stream`, `GET /sessions`, `GET /sessions/{id}`, `DELETE /sessions/{id}` (all open; no API key since 2026-11-02) |
 | `/wellbeing` (only with `ECHO_WBA_ENABLED=1`) | `GET /analytics/daily`, `GET /analytics/heatmap` (`days`, `end_day`), `GET /recent`, `POST /sessions/rebuild`, `GET /sessions`, `GET|POST /groups`, `DELETE /groups/{id}`, `GET /groups/review`, `POST /groups/auto-assign`, `GET /groups/{id}/items`, `POST /groups/{id}/assign`, `GET|POST /groups/{id}/rules`, `GET /groups/{id}/rule-suggestions`, `POST /suggestions/{id}/decision`, `POST /regret/{memory_id}`, `GET /regret/analytics`, `GET /regret/reminder`, `POST /regret/reminders/settings`, `GET /insights/weekly` |
 | no prefix | `DELETE /items/{memory_id}` (soft delete), `GET /export` (JSON or CSV, formula-injection guarded), `GET|POST /settings` |
 

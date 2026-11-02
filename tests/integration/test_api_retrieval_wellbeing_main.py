@@ -135,30 +135,6 @@ def test_a_past_chat_can_be_resumed_and_unknown_ones_are_404(retrieval_client, m
     assert retrieval_client.get("/retrieval/sessions/bad id!").status_code in (400, 404)
 
 
-def test_session_admin_routes_need_the_api_key(retrieval_client, monkeypatch):
-    """Shows: diagnostics and deletion are locked unless ECHO_API_KEY is set and sent."""
-    monkeypatch.delenv("ECHO_API_KEY", raising=False)
-    assert retrieval_client.get("/retrieval/session/abc").status_code == 503
-    monkeypatch.setenv("ECHO_API_KEY", "s3cret")
-    assert retrieval_client.get("/retrieval/session/abc").status_code == 401
-    assert retrieval_client.get("/retrieval/session/abc", headers={"X-API-Key": "wrong"}).status_code == 401
-    monkeypatch.setattr(retrieval_routes, "load_conversation_history", lambda sid: [HumanMessage(content="hi")])
-    ok = retrieval_client.get("/retrieval/session/abc", headers={"X-API-Key": "s3cret"})
-    assert ok.status_code == 200 and ok.json()["message_count"] == 1
-
-
-def test_clear_session_deletes_messages(retrieval_client, monkeypatch):
-    monkeypatch.setenv("ECHO_API_KEY", "s3cret")
-    conn = FakeCursorConnection(rowcount=4)
-    monkeypatch.setattr(retrieval_routes, "get_connection", lambda: conn)
-    response = retrieval_client.delete("/retrieval/session/abc", headers={"X-API-Key": "s3cret"})
-    assert response.json() == {"session_id": "abc", "messages_deleted": 4}
-    assert "DELETE FROM message_store" in conn.executed[0][0]
-    assert retrieval_client.delete("/retrieval/session/bad id!", headers={"X-API-Key": "s3cret"}).status_code == 400
-    monkeypatch.setattr(retrieval_routes, "get_connection", lambda: FakeCursorConnection(fail=True))
-    assert retrieval_client.delete("/retrieval/session/abc", headers={"X-API-Key": "s3cret"}).status_code == 500
-
-
 def test_a_reopened_chat_brings_back_its_memory_pills(retrieval_client, monkeypatch):
     """Shows (D6.1): a reply saved with its pill data returns it; a reply saved before D6.1 comes back as text only."""
     sources = [{"n": 1, "memory_id": "m1", "title": "Interview"}]
@@ -179,7 +155,6 @@ def test_a_reopened_chat_brings_back_its_memory_pills(retrieval_client, monkeypa
 
 def test_a_past_chat_can_be_deleted_without_the_api_key(retrieval_client, monkeypatch):
     """Shows (D6.2): the browser can delete one chat (no key in the bundle); only that session's rows go."""
-    monkeypatch.delenv("ECHO_API_KEY", raising=False)
     conn = FakeCursorConnection(rowcount=6)
     monkeypatch.setattr(retrieval_routes, "get_connection", lambda: conn)
     response = retrieval_client.delete("/retrieval/sessions/abc")

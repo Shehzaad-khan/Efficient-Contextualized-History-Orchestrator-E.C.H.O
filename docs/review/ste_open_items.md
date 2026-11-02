@@ -2139,7 +2139,7 @@ Added 2026-10-27 by the owner while reviewing the screens (D6.5 to D6.7). Unlike
     before this, or for malformed extras). `RecallPage.tsx` `toChatMessages` draws the pills and moment strip when they are there. The
     agent's history prompt (`_format_history`) reads only the text, so the extras never reach the LLM. Old chats stay plain text.
   - **D6.2** new open route `DELETE /retrieval/sessions/{id}` (no key, same reasoning as A27's open GET; 404 when nothing was deleted;
-    the keyed `DELETE /retrieval/session/{id}` is kept and shares the code). `PastChats.tsx`: a trash button per chat, an inline
+    the keyed `DELETE /retrieval/session/{id}` was kept at first, then removed the same day, see below). `PastChats.tsx`: a trash button per chat, an inline
     "Delete this chat? Its questions and answers go; your memories stay." with Delete / Keep; deleting the chat that is open clears the
     screen and forgets the stored session id. `lib/api.ts` `deleteSession` does not fall back to demo data. Also fixed while testing:
     when the title row wraps (about 1280 px wide) the panel slid under the fixed sidebar and its left side could not be clicked; the
@@ -2167,6 +2167,11 @@ Added 2026-10-27 by the owner while reviewing the screens (D6.5 to D6.7). Unlike
     click-through (headless Chromium) of every D6 flow against the real routers with an in-memory fake database: 27 of 27 checks pass,
     no console errors, no horizontal scroll at 390 px. **Not checked:** the live database, the Gmail link opening the exact mail in his
     browser (`/u/0/` = first signed-in account).
+  - **Follow-up 2026-11-02 (his decision): the keyed routes are gone.** `GET /retrieval/session/{id}` (diagnostic) and
+    `DELETE /retrieval/session/{id}`, the `X-API-Key` check and `ECHO_API_KEY` were removed from `backend/retrieval.py`: nothing called
+    them (frontend, extension, MCP server, scripts), `GET` / `DELETE /retrieval/sessions/{id}` do the same work, and the key protected
+    nothing else. Their two tests went with them (`test_session_admin_routes_need_the_api_key`, `test_clear_session_deletes_messages`);
+    the open delete route keeps its own test. `ECHO_API_KEY` no longer needs to be set anywhere.
 
 ---
 

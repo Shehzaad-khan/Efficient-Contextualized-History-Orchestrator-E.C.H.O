@@ -10,14 +10,12 @@ Endpoints:
     GET  /retrieval/sessions       — past chats, newest first    (no API key: the local UI calls it)
     GET  /retrieval/sessions/{id}  — one past chat's messages    (no API key: the local UI calls it)
     DELETE /retrieval/sessions/{id} — delete one past chat        (no API key: the local UI calls it, D6.2)
-    GET  /retrieval/session/{id}   — session diagnostic          (X-API-Key required)
-    DELETE /retrieval/session/{id} — clear session history       (X-API-Key required)
 
-The diagnostic and delete routes (/session/{id}) need ECHO_API_KEY; without it
-set they answer 503. The chat list, one chat's messages and deleting one chat
-(/sessions, /sessions/{id}) are open like /query: they touch only the user's own
-questions and Echo's replies, on a local port, and the key must not ship in the
-browser bundle (owner's go for the open delete route: 2026-11-02, D6.2).
+Every route is open like /query: the session routes touch only the user's own
+questions and Echo's replies, on a local port, and no key can ship in the browser
+bundle. The old X-API-Key routes (GET and DELETE /retrieval/session/{id}) and
+ECHO_API_KEY were removed on 2026-11-02 (owner's decision): nothing called them,
+and /sessions/{id} does the same reads and deletes.
 
 Threading: every route is a plain `def`, so FastAPI runs it in its threadpool.
 The RSE graph and the DB calls block, and must never run on the event loop.
@@ -28,15 +26,12 @@ logs failures and session-route results — never the query text or the answer.
 
 import json
 import logging
-import os
 import re
-import secrets
 from datetime import datetime, timezone
 from typing import Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Security
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
-from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, Field
 
 from langchain_core.messages import AIMessage, HumanMessage
@@ -51,19 +46,6 @@ router = APIRouter(prefix="/retrieval", tags=["Retrieval & Synthesis Engine"])
 # One rule for session ids everywhere: run_query makes UUIDs, which match it.
 _SESSION_ID_PATTERN = r"^[a-zA-Z0-9_-]{1,128}$"
 _SESSION_ID_RE = re.compile(_SESSION_ID_PATTERN)
-
-_api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
-
-
-def _require_api_key(api_key: Optional[str] = Security(_api_key_header)) -> None:
-    expected = os.getenv("ECHO_API_KEY")
-    if not expected:
-        raise HTTPException(status_code=503, detail="Session management unavailable")
-    # compare_digest takes the same time whatever the input, so response
-    # timing can't reveal how much of a guessed key was right.
-    if api_key is None or not secrets.compare_digest(api_key.encode(), expected.encode()):
-        raise HTTPException(status_code=401, detail="Unauthorized")
-
 
 # LangChain stores each message as {"type": "human"|"ai", "data": {"content": ...}}.
 _LIST_SESSIONS_SQL = """
@@ -274,28 +256,6 @@ def _session_message(message: HumanMessage | AIMessage) -> SessionMessage:
     )
 
 
-def _delete_session_rows(session_id: str, route: str) -> SessionDeleted:
-    """Delete every message_store row of one session; shared by both delete routes."""
-    _check_session_id(session_id)
-    try:
-        # Same pooled connection as rse.conversation_memory, so no fresh
-        # TCP+TLS handshake per call. `with conn` commits, or rolls back on error.
-        conn = get_connection()
-        try:
-            with conn:
-                with conn.cursor() as cur:
-                    cur.execute("DELETE FROM message_store WHERE session_id = %s", (session_id,))
-                    deleted = cur.rowcount
-        finally:
-            conn.close()
-    except Exception as exc:
-        logger.exception("%s failed for session %s — %s", route, session_id, type(exc).__name__)
-        raise HTTPException(status_code=500, detail="Internal server error")
-
-    logger.info("Cleared session %s (%d messages)", session_id, deleted)
-    return SessionDeleted(session_id=session_id, messages_deleted=deleted)
-
-
 @router.get("/sessions/{session_id}", response_model=SessionMessages)
 def get_session_messages(session_id: str):
     """
@@ -322,36 +282,27 @@ def delete_past_chat(session_id: str):
     """
     Delete one past chat from the Past chats panel (D6.2).
 
-    Open like GET /sessions/{id}: the browser cannot hold ECHO_API_KEY. It removes
+    Open like GET /sessions/{id} (no key can ship in the browser bundle). It removes
     only that chat's questions and replies from message_store; memories are not
     touched. 404 when the chat has no messages (already gone).
     """
-    result = _delete_session_rows(session_id, "delete_past_chat")
-    if result.messages_deleted == 0:
-        raise HTTPException(status_code=404, detail="Chat not found")
-    return result
-
-
-@router.get("/session/{session_id}", dependencies=[Depends(_require_api_key)])
-def get_session_info(session_id: str):
-    """
-    Return diagnostic info about a conversation session.
-    Useful for debugging multi-turn context issues.
-    """
     _check_session_id(session_id)
-    # Returns [] on a DB error (it logs the error itself).
-    history = load_conversation_history(session_id)
-    return {
-        "session_id": session_id,
-        "message_count": len(history),
-        "history": history,
-    }
+    try:
+        # Same pooled connection as rse.conversation_memory, so no fresh
+        # TCP+TLS handshake per call. `with conn` commits, or rolls back on error.
+        conn = get_connection()
+        try:
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute("DELETE FROM message_store WHERE session_id = %s", (session_id,))
+                    deleted = cur.rowcount
+        finally:
+            conn.close()
+    except Exception as exc:
+        logger.exception("delete_past_chat failed for session %s — %s", session_id, type(exc).__name__)
+        raise HTTPException(status_code=500, detail="Internal server error")
 
-
-@router.delete("/session/{session_id}", dependencies=[Depends(_require_api_key)])
-def clear_session(session_id: str):
-    """
-    Delete all messages for a session from message_store.
-    Use this to start a fresh conversation context.
-    """
-    return _delete_session_rows(session_id, "clear_session").model_dump()
+    if deleted == 0:
+        raise HTTPException(status_code=404, detail="Chat not found")
+    logger.info("Deleted past chat %s (%d messages)", session_id, deleted)
+    return SessionDeleted(session_id=session_id, messages_deleted=deleted)
