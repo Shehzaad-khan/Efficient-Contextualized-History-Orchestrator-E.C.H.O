@@ -61,6 +61,13 @@ def tex_inline_to_plain(tex: str) -> str:
 
 # ── plain text to LaTeX (inline) ─────────────────────────────────────────────
 
+def code_to_tex(code: str) -> str:
+    """`code` in the text: a model name becomes its macro; other code may break after a hyphen so it cannot overflow a column."""
+    if code in PLAIN_MACRO:
+        return PLAIN_MACRO[code]
+    return "\\texttt{" + code.replace("_", "\\_").replace("-", "-\\allowbreak ") + "}"
+
+
 def plain_inline_to_tex(plain: str) -> str:
     holders: list[str] = []
 
@@ -70,12 +77,12 @@ def plain_inline_to_tex(plain: str) -> str:
 
     text = plain
     text = re.sub(r"\$[^$]*\$", lambda m: hold(m.group(0)), text)  # inline math stays as LaTeX
-    text = re.sub(r"`([^`]*)`", lambda m: hold("\\texttt{" + m.group(1).replace("_", "\\_") + "}"), text)
+    text = re.sub(r"`([^`]*)`", lambda m: hold(code_to_tex(m.group(1))), text)
     text = re.sub(r"\[(\d{1,2})\]", lambda m: hold("\\cite{" + NUMBER_CITE[int(m.group(1))] + "}") if int(m.group(1)) in NUMBER_CITE else m.group(0), text)
     text = re.sub(r"Section ([IVX]+)\b", lambda m: hold(f"Section~\\ref{{sec:{ROMAN_SECTION[m.group(1)]}}}") if m.group(1) in ROMAN_SECTION else m.group(0), text)
     text = re.sub(r"Fig\. (\d)\b", lambda m: hold(f"Fig.~\\ref{{fig:{NUM_FIG[m.group(1)]}}}") if m.group(1) in NUM_FIG else m.group(0), text)
     text = re.sub(r"Table ([IVX]+)\b", lambda m: hold(f"Table~\\ref{{tab:{ROMAN_TABLE[m.group(1)]}}}") if m.group(1) in ROMAN_TABLE else m.group(0), text)
-    text = re.sub(r"Eq\. \((\d)\)", lambda m: hold(f"Eq.~\\ref{{eq:{NUM_EQ[m.group(1)]}}}") if m.group(1) in NUM_EQ else m.group(0), text)
+    text = re.sub(r"Eq\. \((\d)\)", lambda m: hold(f"Eq.~\\eqref{{eq:{NUM_EQ[m.group(1)]}}}") if m.group(1) in NUM_EQ else m.group(0), text)
     for plain_name, macro in PLAIN_MACRO.items():
         text = text.replace(plain_name, hold(macro))
     text = text.replace("\u2019", "'").replace("\u2018", "'")
@@ -157,7 +164,7 @@ def segment(lines: list[str]) -> list[dict[str, Any]]:
                 else:
                     j += 1
             i = j + 1
-        elif s.startswith("\\"):
+        elif s.startswith("\\") and not re.match(r"\\(textit|texttt|emph|textbf)\{", s):  # an italic lead in starts a paragraph
             flush(i)
             i += 1
         else:

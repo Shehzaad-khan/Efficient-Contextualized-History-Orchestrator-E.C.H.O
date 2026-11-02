@@ -65,3 +65,10 @@ junit.xml
 bandit-report.json
 bandit-report.txt
 .ruff_cache/
+
+# Turnitin rewrite notes for the paper drafts (flagged-sentence lists and dictation briefs; working notes, not the paper)
+docs/Research Paper/**/merged_clean_draft.txt
+docs/Research Paper/**/rewrite_list.txt
+docs/Research Paper/**/leftover_flagged_sentences.txt
+docs/Research Paper/**/dictation_briefs*.md
+docs/Research Paper/**/reference_paragraphs.md
