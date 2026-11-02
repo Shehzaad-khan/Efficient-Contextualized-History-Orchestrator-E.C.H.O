@@ -16,7 +16,9 @@ import {
   demoRules,
 } from './demoData'
 import type {
+  AssignResult,
   DailySummary,
+  GroupMember,
   GroupRule,
   GroupSuggestion,
   HeatmapCell,
@@ -25,6 +27,8 @@ import type {
   QueryStep,
   RegretAnalytics,
   RegretReminder,
+  RuleSuggestion,
+  RuleType,
   SessionRow,
   SourceType,
   SessionMessages,
@@ -55,6 +59,31 @@ function setDemoMode(value: boolean): void {
   listeners.forEach((listener) => listener(value))
 }
 
+/**
+ * A refused call. `detail` is the backend's own message (FastAPI's `detail`) when
+ * it sent a readable one, e.g. a malformed time window on a new rule (400).
+ */
+export class ApiError extends Error {
+  constructor(
+    readonly status: number,
+    readonly detail: string | null,
+    message: string,
+  ) {
+    super(message)
+  }
+}
+
+async function errorFrom(response: Response): Promise<ApiError> {
+  let detail: string | null = null
+  try {
+    const body = (await response.json()) as { detail?: unknown }
+    if (typeof body.detail === 'string') detail = body.detail
+  } catch {
+    // Not JSON (a proxy page, an empty body): keep the status line only.
+  }
+  return new ApiError(response.status, detail, `${response.status} ${response.statusText}`)
+}
+
 // Data calls hit a remote Postgres (Neon, us-east-1) and can legitimately take
 // several seconds; the timeout only guards against a truly hung socket, so it
 // sits well above realistic latency rather than racing it.
@@ -67,7 +96,7 @@ async function request<T>(path: string, init?: RequestInit, timeoutMs = 20000): 
       signal: controller.signal,
       headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
     })
-    if (!response.ok) throw new Error(`${response.status} ${response.statusText}`)
+    if (!response.ok) throw await errorFrom(response)
     setDemoMode(false) // a live response is proof the backend is up — heal the badge
     return (await response.json()) as T
   } finally {
@@ -218,6 +247,14 @@ export function askEchoStreaming(
   )
 }
 
+/** Query string from the given parameters, leaving out the empty ones ("" when none is set). */
+function queryString(params: Record<string, string | number | undefined>): string {
+  const parts = Object.entries(params)
+    .filter(([, value]) => value !== undefined && value !== '')
+    .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`)
+  return parts.length ? `?${parts.join('&')}` : ''
+}
+
 // ── Wellbeing (WBA) ───────────────────────────────────────────────────────────
 
 /** The past chats, newest first (A27). Empty in demo mode: there is no history to list. */
@@ -234,13 +271,39 @@ export async function fetchSessionMessages(sessionId: string): Promise<SessionMe
   return request<SessionMessages>(`/retrieval/sessions/${encodeURIComponent(sessionId)}`)
 }
 
-export function fetchDaily(): Promise<DailySummary> {
-  return withFallback(() => request<DailySummary>('/wellbeing/analytics/daily'), () => demoDaily)
+/**
+ * Delete one past chat (D6.2): its questions and replies only, never memories.
+ * Like opening a chat, a failure is NOT hidden behind demo data: the caller keeps
+ * the chat in the list and says it could not be deleted. A chat that is already
+ * gone (404) counts as deleted.
+ */
+export async function deleteSession(sessionId: string): Promise<void> {
+  if (demoMode) throw new Error('No chat history in demo mode')
+  try {
+    await request<{ messages_deleted: number }>(`/retrieval/sessions/${encodeURIComponent(sessionId)}`, {
+      method: 'DELETE',
+    })
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) return
+    void probeBackend()
+    throw error
+  }
 }
 
-export function fetchHeatmap(days = 7): Promise<HeatmapCell[]> {
+/** One local day's summary (`day` = YYYY-MM-DD; today when left out). */
+export function fetchDaily(day?: string): Promise<DailySummary> {
   return withFallback(
-    async () => (await request<{ cells: HeatmapCell[] }>(`/wellbeing/analytics/heatmap?days=${days}`)).cells,
+    () => request<DailySummary>(`/wellbeing/analytics/daily${queryString({ day })}`),
+    () => (day ? { ...demoDaily, day } : demoDaily),
+  )
+}
+
+/** The hour × weekday grid of the `days` days ending on `endDay` (YYYY-MM-DD; today when left out). */
+export function fetchHeatmap(days = 7, endDay?: string): Promise<HeatmapCell[]> {
+  return withFallback(
+    async () =>
+      (await request<{ cells: HeatmapCell[] }>(`/wellbeing/analytics/heatmap${queryString({ days, end_day: endDay })}`))
+        .cells,
     () => demoHeatmap,
   )
 }
@@ -283,6 +346,72 @@ export function fetchGroupRules(groupId: string): Promise<GroupRule[]> {
       (await request<{ rules: GroupRule[] }>(`/wellbeing/groups/${groupId}/rules?include_inactive=true`)).rules,
     () => demoRules[groupId] ?? [],
   )
+}
+
+/**
+ * Add a rule to a group (D6.3). Like setRuleActive, a live failure is NOT replaced
+ * by demo data: the form must not look saved when it was not, so the caller gets
+ * the error (an ApiError with the backend's reason for a refused value). In demo
+ * mode the rule exists in this browser only.
+ */
+export async function addRule(groupId: string, ruleType: RuleType, ruleValue: string): Promise<GroupRule> {
+  if (demoMode) {
+    return {
+      rule_id: `demo-${Date.now()}`,
+      group_id: groupId,
+      rule_type: ruleType,
+      rule_value: ruleValue.trim().toLowerCase(),
+      is_active: true,
+      created_at: new Date().toISOString(),
+      match_count: 0,
+    }
+  }
+  try {
+    return await request<GroupRule>(`/wellbeing/groups/${groupId}/rules`, {
+      method: 'POST',
+      body: JSON.stringify({ rule_type: ruleType, rule_value: ruleValue }),
+    })
+  } catch (error) {
+    if (!(error instanceof ApiError)) void probeBackend()
+    throw error
+  }
+}
+
+/** Rules Echo would suggest from patterns its confirmed members share (step 9). None in demo mode. */
+export function fetchRuleSuggestions(groupId: string): Promise<RuleSuggestion[]> {
+  return withFallback(
+    async () =>
+      (await request<{ suggestions: RuleSuggestion[] }>(`/wellbeing/groups/${groupId}/rule-suggestions`)).suggestions,
+    () => [],
+  )
+}
+
+/** The group's members, newest assignment first. None in demo mode. */
+export function fetchGroupItems(groupId: string, limit = 200): Promise<GroupMember[]> {
+  return withFallback(
+    async () => (await request<{ items: GroupMember[] }>(`/wellbeing/groups/${groupId}/items?limit=${limit}`)).items,
+    () => [],
+  )
+}
+
+/**
+ * Put one item in a group by hand (D6.4). This is the user's own approval, written
+ * through `manual_assign` (the one write path into memory_user_groups). A live
+ * failure is passed on, never faked; in demo mode nothing is saved.
+ */
+export async function assignToGroup(groupId: string, memoryId: string): Promise<AssignResult> {
+  if (demoMode) {
+    return { memory_id: memoryId, group_id: groupId, member_count: 0, confirmed_count: 0, auto_assignment_active: false }
+  }
+  try {
+    return await request<AssignResult>(`/wellbeing/groups/${groupId}/assign`, {
+      method: 'POST',
+      body: JSON.stringify({ memory_id: memoryId }),
+    })
+  } catch (error) {
+    if (!(error instanceof ApiError)) void probeBackend()
+    throw error
+  }
 }
 
 /**
@@ -336,8 +465,12 @@ export function toggleRegret(memoryId: string, note?: string): Promise<{ regrett
   )
 }
 
-export function fetchWeeklyInsight(): Promise<WeeklyInsight> {
-  return withFallback(() => request<WeeklyInsight>('/wellbeing/insights/weekly', undefined, 30000), () => demoInsight)
+/** The reflection on the 7 local days ending on `weekEnd` (YYYY-MM-DD; today when left out). */
+export function fetchWeeklyInsight(weekEnd?: string): Promise<WeeklyInsight> {
+  return withFallback(
+    () => request<WeeklyInsight>(`/wellbeing/insights/weekly${queryString({ week_end: weekEnd })}`, undefined, 30000),
+    () => demoInsight,
+  )
 }
 
 export function setReminderSettings(enabled: boolean): Promise<{ reminders_enabled: boolean }> {
@@ -351,10 +484,10 @@ export function setReminderSettings(enabled: boolean): Promise<{ reminders_enabl
   )
 }
 
-/** Today's stored sessions; the backend rebuilds today's on every call. */
-export function fetchTodaySessions(): Promise<SessionRow[]> {
+/** Today's stored sessions (or those of `day`, YYYY-MM-DD); the backend rebuilds today's on every call. */
+export function fetchTodaySessions(day?: string): Promise<SessionRow[]> {
   return withFallback(
-    async () => (await request<{ sessions: SessionRow[] }>('/wellbeing/sessions')).sessions,
+    async () => (await request<{ sessions: SessionRow[] }>(`/wellbeing/sessions${queryString({ day })}`)).sessions,
     () => [],
   )
 }

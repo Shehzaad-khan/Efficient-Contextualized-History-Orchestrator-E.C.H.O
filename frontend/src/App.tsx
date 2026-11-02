@@ -4,6 +4,7 @@ import RecallPage from './pages/RecallPage'
 import TimelinePage from './pages/TimelinePage'
 import PatternsPage from './pages/PatternsPage'
 import GroupRulesPage from './pages/GroupRulesPage'
+import GroupItemsPage from './pages/GroupItemsPage'
 import ReflectionsPage from './pages/ReflectionsPage'
 import SettingsPage from './pages/SettingsPage'
 
@@ -16,6 +17,7 @@ export default function App() {
           <Route path="/timeline" element={<TimelinePage />} />
           <Route path="/patterns" element={<PatternsPage />} />
           <Route path="/groups/:groupId/rules" element={<GroupRulesPage />} />
+          <Route path="/groups/:groupId/items" element={<GroupItemsPage />} />
           <Route path="/reflections" element={<ReflectionsPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="*" element={<RecallPage />} />

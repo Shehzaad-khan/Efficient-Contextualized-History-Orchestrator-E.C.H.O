@@ -133,8 +133,8 @@ ever wanted again, it will be recreated from `Echo_System_Design.md`, which is t
 
 ## 4. Current state (as of 2026-10-26)
 
-Every feature in the architecture doc is implemented and wired, except the two items under "Known open items" below.
-The build status of every decided item is in `docs/review/ste_open_items.md` (85 of 86 top-level items complete).
+Every feature in the architecture doc is implemented and wired; the first live runs of A26 and E1 are still open (see "Known open items" below).
+The build status of every decided item is in `docs/review/ste_open_items.md` (86 of 86 top-level items complete since D6 was built on 2026-11-02).
 Earlier additions (2026-07):
 Tier-2 attachment extraction + real `fetch_attachment` node, `fetch_api` node (live
 Gmail poll for "today/just received" queries; removed 2026-10-26 with the A26 loop, A45), capture settings (Redis) enforced in
@@ -169,8 +169,8 @@ Known open items:
 - **A26 and E1 are built, with their first live run still to be done by the owner.** E1 is `mcp_server/` (tools `search_memories` and `get_memory`,
   stdio; setup in `mcp_server/README.md`; run it from Claude Desktop). A26: (`python -m rse.retrieval_engine "find my TechCorp interview email"`: expect `llm_calls=2 searches=1` in the log;
   if the API rejects the forced first tool choice, set `FORCE_FIRST_SEARCH = False` in `rse/config.py`).
-- **D6, four frontend gaps** (backend routes exist, nothing calls them): old chats show no memory pills, no way to delete a chat,
-  no form to add a group rule, no screen to pick items for a group by hand. Details in `docs/review/ste_open_items.md` D6.
+- **D6 (seven frontend gaps) was built on 2026-11-02**, checked offline only (tests + a browser click-through against a fake backend); the owner's
+  live check is still to do. See `docs/review/ste_open_items.md` D6.
 - Thresholds were measured on 2026-10-26 (`scripts/calibrate_thresholds.py`, results in `docs/review/eval/thresholds_2026-10-26.json`): A18 seeds use
   `SEED_MIN_SCORE` 0.55 / `SEED_MIN_MARGIN` 0.05 (recomputed centroids keep 0.55 / 0.08); A40 `MIN_TOP_SIMILARITY` kept at 0.55; A42
   `KNN_ONLY_THRESHOLD` 0.65 -> 0.85. They rest on 3 provisional user groups and 12 invented unanswerable queries (labels by the assistant, not the owner);

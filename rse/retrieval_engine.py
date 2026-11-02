@@ -222,7 +222,13 @@ def _finish_query(
     # the next question's history.
     answer = final_state.get("final_answer", "")
     if answer and not graph_failed:
-        save_turn(session_id, user_query, answer)
+        save_turn(
+            session_id,
+            user_query,
+            answer,
+            answer_markdown=final_state.get("answer_markdown") or "",
+            answer_sources=final_state.get("answer_sources") or [],
+        )
 
     result_count = len(final_state.get("found_items") or [])
 

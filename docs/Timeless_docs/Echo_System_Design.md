@@ -905,10 +905,19 @@ Chat history is stored in the local `message_store` table (Table 16) in LangChai
 its table format is kept. History older than 30 days is deleted once at backend startup (`CONVERSATION_HISTORY_DAYS`).
 
 Chat sessions (A27, built Thu–Sun): every new chat gets a new `session_id`; opening an old chat resumes it. Backend adds a
-session list (title = first question, last active, turns) built from `message_store`; the existing
-`GET /retrieval/session/{id}` and `DELETE /retrieval/session/{id}` load and delete one chat (both need the `X-API-Key`
-header = `ECHO_API_KEY`, else 503/401). The frontend gets "New chat", a past-chats list, and remembers the open chat id
-across reloads (localStorage, a per-viewer convenience).
+session list (title = first question, last active, turns) built from `message_store`. The browser uses the open routes
+`GET /retrieval/sessions`, `GET /retrieval/sessions/{id}` (one chat's messages) and, since D6.2 (2026-11-02),
+`DELETE /retrieval/sessions/{id}` (delete one chat from the past-chats panel, with a confirm step; memories are not touched;
+404 when already gone). They need no key because the key must not ship in the browser bundle. The older diagnostic
+`GET /retrieval/session/{id}` and `DELETE /retrieval/session/{id}` stay behind the `X-API-Key` header (= `ECHO_API_KEY`,
+else 503/401). The frontend gets "New chat", a past-chats list, and remembers the open chat id across reloads
+(localStorage, a per-viewer convenience).
+
+Memory pills in reopened chats (D6.1, 2026-11-02): `save_turn` stores the reply's `answer_markdown` (validated `⟦n⟧`
+markers) and `answer_sources` in the AI message's `additional_kwargs`, which LangChain's message JSON already carries, so
+there is no schema change. `GET /retrieval/sessions/{id}` returns them as `markdown` / `sources` on each reply, and a
+reopened chat draws its pills and moment strip again. Replies saved before D6.1 have neither and render as plain text.
+The agent's history prompt reads only the message text, so these fields never reach the LLM.
 
 **History the agent reads (owner's decision 2026-10-26).** One shared reader since A26 (the parser and the synthesizer used to read 10 and 6
 messages cut to 500 characters each): the last `HISTORY_MESSAGES = 12` messages (6 question-and-answer pairs), a question cut at
@@ -1182,8 +1191,10 @@ returned. One LLM call per request.
 | Page (route) | Shows |
 |---|---|
 | Recall (`/`) | Chat with Luna, memory pills, moment strip, live progress, past chats (A27/A28 parts built Thu–Sun) |
-| Timeline (`/timeline`) | Recent items across sources (`/wellbeing/recent`), regret toggle per item |
-| Patterns (`/patterns`) | Daily summary, heatmap, weekly insight, user groups (create) and the suggestion review queue |
+| Timeline (`/timeline`) | Recent items across sources (`/wellbeing/recent`), regret toggle per item, an "open" link for every source (D6.7: the page, the Gmail thread `mail.google.com/mail/u/0/#all/<thread_id>`, or the YouTube video) |
+| Patterns (`/patterns`) | Daily summary, heatmap, weekly insight, user groups (create) and the suggestion review queue. Day and week steppers (D6.5): the day drives the stat row and "time by category" (the card names its day, D6.6), the week (7 days ending on the chosen day) drives the heatmap and the reflection; never after today |
+| Group rules (`/groups/{id}/rules`) | A group's rules with pause/resume (D5), a form to add a rule of any type, and the step-9 rule suggestions with one-click add (D6.3) |
+| Group items (`/groups/{id}/items`) | A group's members and a picker over the 100 most recent items (filter by title, sender, site or channel); "add" writes through `manual_assign` (D6.4) |
 | Reflections (`/reflections`) | Regret analytics |
 | Settings (`/settings`) | Capture toggles, excluded domains and senders (backend-wired), regret reminders on/off, retention window (A37, built Thu–Sun) |
 
@@ -1207,8 +1218,8 @@ Built (21 Oct 2026):
 | `/gmail` | `GET /health`, `POST /poll`, `POST /engagement` |
 | `/chrome` | `POST /ingest`, `POST /revisit-check` |
 | `/ytc` | `POST /video-detected`, `POST /heartbeat`, `POST /video-closed` |
-| `/retrieval` | `POST /query`; `GET /session/{id}`, `DELETE /session/{id}` (X-API-Key) |
-| `/wellbeing` (only with `ECHO_WBA_ENABLED=1`) | `GET /analytics/daily`, `GET /analytics/heatmap`, `GET /recent`, `POST /sessions/rebuild`, `GET /sessions`, `GET|POST /groups`, `DELETE /groups/{id}`, `GET /groups/review`, `POST /groups/auto-assign`, `GET /groups/{id}/items`, `POST /groups/{id}/assign`, `GET|POST /groups/{id}/rules`, `GET /groups/{id}/rule-suggestions`, `POST /suggestions/{id}/decision`, `POST /regret/{memory_id}`, `GET /regret/analytics`, `GET /regret/reminder`, `POST /regret/reminders/settings`, `GET /insights/weekly` |
+| `/retrieval` | `POST /query`, `POST /query/stream`, `GET /sessions`, `GET /sessions/{id}`, `DELETE /sessions/{id}` (open, D6.2); `GET /session/{id}`, `DELETE /session/{id}` (X-API-Key) |
+| `/wellbeing` (only with `ECHO_WBA_ENABLED=1`) | `GET /analytics/daily`, `GET /analytics/heatmap` (`days`, `end_day`), `GET /recent`, `POST /sessions/rebuild`, `GET /sessions`, `GET|POST /groups`, `DELETE /groups/{id}`, `GET /groups/review`, `POST /groups/auto-assign`, `GET /groups/{id}/items`, `POST /groups/{id}/assign`, `GET|POST /groups/{id}/rules`, `GET /groups/{id}/rule-suggestions`, `POST /suggestions/{id}/decision`, `POST /regret/{memory_id}`, `GET /regret/analytics`, `GET /regret/reminder`, `POST /regret/reminders/settings`, `GET /insights/weekly` |
 | no prefix | `DELETE /items/{memory_id}` (soft delete), `GET /export` (JSON or CSV, formula-injection guarded), `GET|POST /settings` |
 
 Static paths (`/groups/review`) are declared before parametrized ones (`/groups/{group_id}/...`).

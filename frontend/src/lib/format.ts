@@ -37,5 +37,32 @@ export function dayLabel(iso: string | null | undefined): string {
   return date.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })
 }
 
+/** A Date's LOCAL calendar day as YYYY-MM-DD (the backend's `day` parameters are local days). */
+export function toLocalIsoDate(date: Date): string {
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${date.getFullYear()}-${month}-${day}`
+}
+
+/** Today's local day as YYYY-MM-DD. */
+export function todayIso(): string {
+  return toLocalIsoDate(new Date())
+}
+
+/** A YYYY-MM-DD day moved by `days` (negative = back), on the local calendar. */
+export function shiftIsoDate(iso: string, days: number): string {
+  const [year, month, day] = iso.split('-').map(Number)
+  return toLocalIsoDate(new Date(year, month - 1, day + days))
+}
+
+/** A YYYY-MM-DD day for a heading: "today", "yesterday", or e.g. "Thu 29 Oct". */
+export function isoDayLabel(iso: string): string {
+  const today = todayIso()
+  if (iso === today) return 'today'
+  if (iso === shiftIsoDate(today, -1)) return 'yesterday'
+  const [year, month, day] = iso.split('-').map(Number)
+  return new Date(year, month - 1, day).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' })
+}
+
 export const HOUR_LABELS = ['12a', '', '', '3a', '', '', '6a', '', '', '9a', '', '', '12p', '', '', '3p', '', '', '6p', '', '', '9p', '', '']
 export const DOW_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']

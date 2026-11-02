@@ -9,13 +9,15 @@ Endpoints:
     POST /retrieval/query/stream   — same query as server-sent events with live steps (no API key)
     GET  /retrieval/sessions       — past chats, newest first    (no API key: the local UI calls it)
     GET  /retrieval/sessions/{id}  — one past chat's messages    (no API key: the local UI calls it)
+    DELETE /retrieval/sessions/{id} — delete one past chat        (no API key: the local UI calls it, D6.2)
     GET  /retrieval/session/{id}   — session diagnostic          (X-API-Key required)
     DELETE /retrieval/session/{id} — clear session history       (X-API-Key required)
 
 The diagnostic and delete routes (/session/{id}) need ECHO_API_KEY; without it
-set they answer 503. The chat list and one chat's messages (/sessions, /sessions/{id})
-are open like /query: they show only the user's own questions and Echo's replies, on
-a local port.
+set they answer 503. The chat list, one chat's messages and deleting one chat
+(/sessions, /sessions/{id}) are open like /query: they touch only the user's own
+questions and Echo's replies, on a local port, and the key must not ship in the
+browser bundle (owner's go for the open delete route: 2026-11-02, D6.2).
 
 Threading: every route is a plain `def`, so FastAPI runs it in its threadpool.
 The RSE graph and the DB calls block, and must never run on the event loop.
@@ -135,6 +137,15 @@ class SessionSummary(BaseModel):
 class SessionMessage(BaseModel):
     role: Literal["user", "echo"]
     text: str
+    # D6.1: a reply saved with its pill data carries it back, so a reopened chat
+    # draws its memory pills again. Replies saved before D6.1 have neither (None).
+    markdown: Optional[str] = None
+    sources: Optional[list[dict]] = None
+
+
+class SessionDeleted(BaseModel):
+    session_id: str
+    messages_deleted: int
 
 
 class SessionMessages(BaseModel):
@@ -245,28 +256,80 @@ def list_sessions(limit: int = Query(50, ge=1, le=200)):
     ]
 
 
+def _session_message(message: HumanMessage | AIMessage) -> SessionMessage:
+    """One stored message for the chat screen; a reply keeps its pill data when it has any (D6.1)."""
+    text = str(message.content)
+    if isinstance(message, HumanMessage):
+        return SessionMessage(role="user", text=text)
+    extras = message.additional_kwargs or {}
+    markdown = extras.get("answer_markdown")
+    sources = extras.get("answer_sources")
+    if not isinstance(markdown, str) or not markdown or not isinstance(sources, list):
+        return SessionMessage(role="echo", text=text)
+    return SessionMessage(
+        role="echo",
+        text=text,
+        markdown=markdown,
+        sources=[source for source in sources if isinstance(source, dict)],
+    )
+
+
+def _delete_session_rows(session_id: str, route: str) -> SessionDeleted:
+    """Delete every message_store row of one session; shared by both delete routes."""
+    _check_session_id(session_id)
+    try:
+        # Same pooled connection as rse.conversation_memory, so no fresh
+        # TCP+TLS handshake per call. `with conn` commits, or rolls back on error.
+        conn = get_connection()
+        try:
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute("DELETE FROM message_store WHERE session_id = %s", (session_id,))
+                    deleted = cur.rowcount
+        finally:
+            conn.close()
+    except Exception as exc:
+        logger.exception("%s failed for session %s — %s", route, session_id, type(exc).__name__)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+    logger.info("Cleared session %s (%d messages)", session_id, deleted)
+    return SessionDeleted(session_id=session_id, messages_deleted=deleted)
+
+
 @router.get("/sessions/{session_id}", response_model=SessionMessages)
 def get_session_messages(session_id: str):
     """
     One past chat's messages, oldest first, for the chat screen (A27 resume).
 
-    The stored reply is the readable answer text (message_store keeps no pills),
-    so a resumed chat shows plain text; new questions in it get pills as usual.
+    Each reply carries its readable text, and (D6.1) its ⟦n⟧ markdown and cited
+    items when it was saved with them, so the chat screen can draw the memory
+    pills again. Replies saved before D6.1 come back as text only.
     404 when the session has no messages (never existed, or the 30-day cleanup
     removed it); a DB error is also logged and answers 404 because
     load_conversation_history returns [] on failure.
     """
     _check_session_id(session_id)
     history = load_conversation_history(session_id)
-    messages = [
-        SessionMessage(role="user" if isinstance(message, HumanMessage) else "echo", text=str(message.content))
-        for message in history
-        if isinstance(message, (HumanMessage, AIMessage))
-    ]
+    messages = [_session_message(message) for message in history if isinstance(message, (HumanMessage, AIMessage))]
     if not messages:
         raise HTTPException(status_code=404, detail="Chat not found")
     logger.info("Loaded %d messages of a past chat", len(messages))
     return SessionMessages(session_id=session_id, messages=messages)
+
+
+@router.delete("/sessions/{session_id}", response_model=SessionDeleted)
+def delete_past_chat(session_id: str):
+    """
+    Delete one past chat from the Past chats panel (D6.2).
+
+    Open like GET /sessions/{id}: the browser cannot hold ECHO_API_KEY. It removes
+    only that chat's questions and replies from message_store; memories are not
+    touched. 404 when the chat has no messages (already gone).
+    """
+    result = _delete_session_rows(session_id, "delete_past_chat")
+    if result.messages_deleted == 0:
+        raise HTTPException(status_code=404, detail="Chat not found")
+    return result
 
 
 @router.get("/session/{session_id}", dependencies=[Depends(_require_api_key)])
@@ -291,21 +354,4 @@ def clear_session(session_id: str):
     Delete all messages for a session from message_store.
     Use this to start a fresh conversation context.
     """
-    _check_session_id(session_id)
-    try:
-        # Same pooled connection as rse.conversation_memory, so no fresh
-        # TCP+TLS handshake per call. `with conn` commits, or rolls back on error.
-        conn = get_connection()
-        try:
-            with conn:
-                with conn.cursor() as cur:
-                    cur.execute("DELETE FROM message_store WHERE session_id = %s", (session_id,))
-                    deleted = cur.rowcount
-        finally:
-            conn.close()
-    except Exception as exc:
-        logger.exception("clear_session failed for session %s — %s", session_id, type(exc).__name__)
-        raise HTTPException(status_code=500, detail="Internal server error")
-
-    logger.info("Cleared session %s (%d messages)", session_id, deleted)
-    return {"session_id": session_id, "messages_deleted": deleted}
+    return _delete_session_rows(session_id, "clear_session").model_dump()

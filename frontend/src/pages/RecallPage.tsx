@@ -39,13 +39,18 @@ function storeSessionId(sessionId: string | null): void {
   }
 }
 
-/** Stored messages as chat bubbles. A stored reply has no pills, but its bold text and lists still render. */
+/**
+ * Stored messages as chat bubbles. A reply saved with its pill data (D6.1) gets its
+ * memory pills back; an older reply has none, but its bold text and lists still render.
+ */
 function toChatMessages(stored: SessionMessage[]): ChatMessage[] {
-  return stored.map((message) =>
-    message.role === 'echo'
-      ? { id: nextId(), role: message.role, text: message.text, markdown: message.text, sources: [] }
-      : { id: nextId(), role: message.role, text: message.text },
-  )
+  return stored.map((message) => {
+    if (message.role !== 'echo') return { id: nextId(), role: message.role, text: message.text }
+    if (message.markdown && message.sources) {
+      return { id: nextId(), role: message.role, text: message.text, markdown: message.markdown, sources: message.sources }
+    }
+    return { id: nextId(), role: message.role, text: message.text, markdown: message.text, sources: [] }
+  })
 }
 
 /** A pulsing dot on the thread while Echo searches, with the steps finished so far. */
@@ -208,6 +213,11 @@ export default function RecallPage() {
 
   const empty = messages.length === 0
 
+  /** A deleted chat that is open on screen is closed: the next question starts a new chat (D6.2). */
+  function handleChatDeleted(sessionId: string) {
+    if (sessionRef.current === sessionId) startNewChat()
+  }
+
   /** A new chat is a new session id: forget the old one and clear the screen. */
   function startNewChat() {
     touchedRef.current = true
@@ -233,6 +243,7 @@ export default function RecallPage() {
                 touchedRef.current = true
                 openStoredChat(sessionId, stored)
               }}
+              onDeleted={handleChatDeleted}
             />
             {!empty && (
               <button type="button" onClick={startNewChat} disabled={busy} className="btn-ghost font-mono text-xs normal-case disabled:opacity-40">

@@ -16,7 +16,9 @@ per call (load + save = 2 handshakes per query, ~700 ms each to Neon) that was
 only closed by garbage collection, and ran CREATE TABLE IF NOT EXISTS on every
 call. This module does the same reads/writes over the RSE connection pool.
 """
+import json
 import logging
+from typing import Any, Optional
 
 from langchain_core.messages import BaseMessage, AIMessage, HumanMessage, message_to_dict, messages_from_dict
 from psycopg2.extras import Json
@@ -60,19 +62,43 @@ def load_conversation_history(session_id: str) -> list[BaseMessage]:
         return []
 
 
-def save_turn(session_id: str, user_query: str, assistant_answer: str) -> None:
+def _json_dumps(value: Any) -> str:
+    """json.dumps that writes ids or dates it does not know as text instead of failing."""
+    return json.dumps(value, default=str)
+
+
+def save_turn(
+    session_id: str,
+    user_query: str,
+    assistant_answer: str,
+    answer_markdown: str = "",
+    answer_sources: Optional[list[dict[str, Any]]] = None,
+) -> None:
     """
     Persist one query/answer turn to message_store.
 
     Both rows are written in one transaction, so a failure never leaves a
     question without its answer in the history.
 
+    D6.1: the reply's pill data (answer_markdown with its ⟦n⟧ markers and the
+    cited items) is kept in the AI message's `additional_kwargs`, which
+    LangChain's own dict format already carries, so a reopened chat can draw its
+    memory pills again. No schema change: `message` is JSONB. The agent's history
+    prompt reads only the message content (`_format_history`), so these fields
+    never reach the LLM.
+
     Args:
         session_id: Conversation session identifier.
         user_query: The raw user query text.
-        assistant_answer: The answer returned to the user.
+        assistant_answer: The answer returned to the user (readable text).
+        answer_markdown: The same answer with validated ⟦n⟧ markers ("" = none).
+        answer_sources: The cited items the markers point at (None or [] = none).
     """
-    turn = [HumanMessage(content=user_query), AIMessage(content=assistant_answer)]
+    extras: dict[str, Any] = {}
+    if answer_markdown:
+        extras["answer_markdown"] = answer_markdown
+        extras["answer_sources"] = list(answer_sources or [])
+    turn = [HumanMessage(content=user_query), AIMessage(content=assistant_answer, additional_kwargs=extras)]
     try:
         conn = get_connection()
         try:
@@ -81,8 +107,8 @@ def save_turn(session_id: str, user_query: str, assistant_answer: str) -> None:
                     cur.execute(
                         "INSERT INTO message_store (session_id, message) VALUES (%s, %s), (%s, %s)",
                         (
-                            session_id, Json(message_to_dict(turn[0])),
-                            session_id, Json(message_to_dict(turn[1])),
+                            session_id, Json(message_to_dict(turn[0]), dumps=_json_dumps),
+                            session_id, Json(message_to_dict(turn[1]), dumps=_json_dumps),
                         ),
                     )
         finally:
