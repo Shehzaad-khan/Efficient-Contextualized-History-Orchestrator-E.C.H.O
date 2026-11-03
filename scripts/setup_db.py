@@ -63,7 +63,6 @@ CREATE TABLE IF NOT EXISTS memory_items (
     created_at               TIMESTAMP    NOT NULL,
     first_ingested_at        TIMESTAMP    DEFAULT NOW(),
     last_updated_at          TIMESTAMP    DEFAULT NOW(),
-    is_deleted               BOOLEAN      DEFAULT FALSE,
 
     -- Stored full-text vector for keyword search (A24.3): title, FULL raw_text,
     -- keywords, subject, sender, domain, channel and attachment extracted_text.
@@ -402,10 +401,6 @@ CREATE INDEX IF NOT EXISTS idx_memory_items_created
 -- Partial: enrichment pipeline pickup queue
 CREATE INDEX IF NOT EXISTS idx_memory_items_unprocessed
     ON memory_items (preprocessed) WHERE preprocessed = FALSE;
-
--- Partial: all UI queries filter soft-deleted items
-CREATE INDEX IF NOT EXISTS idx_memory_items_active
-    ON memory_items (is_deleted) WHERE is_deleted = FALSE;
 
 -- gmail_metadata
 CREATE INDEX IF NOT EXISTS idx_gmail_email_id

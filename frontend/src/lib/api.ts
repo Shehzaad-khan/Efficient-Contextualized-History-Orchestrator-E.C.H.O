@@ -487,6 +487,23 @@ export function toggleRegret(memoryId: string, note?: string): Promise<{ regrett
   )
 }
 
+/**
+ * Forget one memory for good. The backend removes its text, notes, links and search vector
+ * everywhere; there is no undo. Like deleteSession, a failure is NOT hidden behind demo data:
+ * the caller keeps the entry and says it could not be deleted. An item that is already gone
+ * (404) counts as deleted.
+ */
+export async function deleteItem(memoryId: string): Promise<void> {
+  if (demoMode) throw new Error('Nothing is stored in demo mode')
+  try {
+    await request<{ status: string }>(`/items/${encodeURIComponent(memoryId)}`, { method: 'DELETE' })
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) return
+    void probeBackend()
+    throw error
+  }
+}
+
 /** The reflection on the 7 local days ending on `weekEnd` (YYYY-MM-DD; today when left out). */
 export function fetchWeeklyInsight(weekEnd?: string): Promise<WeeklyInsight> {
   return withFallback(

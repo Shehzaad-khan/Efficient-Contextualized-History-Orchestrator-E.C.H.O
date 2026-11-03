@@ -74,7 +74,7 @@ def backend_is_running() -> bool:
 
 def load_items(cursor: Any) -> list[dict[str, Any]]:
     cursor.execute(
-        "SELECT memory_id::text, source_type, title, system_group_id, classified_by FROM memory_items WHERE is_deleted = FALSE"
+        "SELECT memory_id::text, source_type, title, system_group_id, classified_by FROM memory_items"
     )
     manager = get_manager()
     items = []
@@ -172,7 +172,7 @@ def calibrate_gate() -> dict[str, Any]:
 def resolve_group(cursor: Any, selectors: list[tuple[Optional[str], str]]) -> set[str]:
     ids: set[str] = set()
     for source, title in selectors:
-        sql, params = "SELECT memory_id::text FROM memory_items WHERE is_deleted = FALSE AND title ILIKE %s", [f"%{title}%"]
+        sql, params = "SELECT memory_id::text FROM memory_items WHERE title ILIKE %s", [f"%{title}%"]
         if source:
             sql, params = sql + " AND source_type = %s", params + [source]
         cursor.execute(sql, params)

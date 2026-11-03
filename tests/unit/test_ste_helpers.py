@@ -254,3 +254,78 @@ def test_redis_cleanup_removes_attachment_and_retry_keys(monkeypatch, fake_redis
 
     monkeypatch.setattr(retention, "get_sync_client", broken)
     assert retention._delete_redis_keys(["m1"]) == 0     # best effort, never raises
+
+
+# ── delete_items: the one hard-delete path (retention and DELETE /items/{id}) ──
+
+@pytest.fixture
+def delete_env(monkeypatch, fake_redis):
+    """Records the order of the three stores and holds one Chrome item with a revisit flag in Redis."""
+    log = []
+    revisit = rm.revisit_key("chrome", "https://blog.example.com/post")
+    fake_redis.set(revisit, "1")
+    fake_redis.set("echo:attachment:m1:a1", "text")
+    fake_redis.set("echo:enp:retry:m1", "2")
+    fake_redis.set("echo:attachment:other:a1", "kept")
+
+    class Vectors:
+        def remove_many(self, ids):
+            log.append(("faiss", list(ids)))
+            return len(ids)
+
+        def save_index(self):
+            log.append(("saved",))
+
+    monkeypatch.setattr(retention, "get_manager", lambda: Vectors())
+    monkeypatch.setattr(retention, "get_sync_client", lambda: fake_redis)
+    monkeypatch.setattr(retention.postgresql_manager, "fetchall",
+                        lambda q, p=None: [{"canonical_url": "https://blog.example.com/post"}, {"canonical_url": None}])
+    monkeypatch.setattr(retention.postgresql_manager, "execute", lambda q, p=None: log.append(("postgres", p["ids"])))
+    return log
+
+
+def test_delete_items_clears_postgres_then_faiss_then_redis(delete_env, fake_redis):
+    """Shows: one call removes the item from every store, Postgres first (the safe order if it stops half way)."""
+    result = retention.delete_items(["m1"])
+    assert delete_env == [("postgres", ["m1"]), ("faiss", ["m1"]), ("saved",)]
+    assert result == (1, 1, 3)                              # attachment text, retry counter, Chrome revisit flag
+    assert list(fake_redis.data) == ["echo:attachment:other:a1"]      # another item's keys are untouched
+
+
+def test_delete_items_with_nothing_to_delete_touches_no_store(delete_env):
+    assert retention.delete_items([]) == (0, 0, 0)
+    assert delete_env == []
+
+
+def test_delete_items_does_not_save_the_index_when_no_vector_was_there(monkeypatch, delete_env):
+    class NoVectors:
+        def remove_many(self, ids):
+            return 0
+
+        def save_index(self):
+            raise AssertionError("nothing changed, nothing to save")
+
+    monkeypatch.setattr(retention, "get_manager", lambda: NoVectors())
+    assert retention.delete_items(["m1"]).vectors_removed == 0
+
+
+def test_a_postgres_failure_stops_before_faiss_or_redis_are_touched(monkeypatch, delete_env, fake_redis):
+    def broken(query, params=None):
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(retention.postgresql_manager, "execute", broken)
+    with pytest.raises(RuntimeError):
+        retention.delete_items(["m1"])
+    assert delete_env == [] and "echo:enp:retry:m1" in fake_redis.data
+
+
+def test_redis_down_never_fails_a_delete(monkeypatch, delete_env):
+    def broken():
+        raise ConnectionError("down")
+
+    monkeypatch.setattr(retention, "get_sync_client", broken)
+    assert retention.delete_items(["m1"]) == (1, 1, 0)      # the item is gone; the flags expire on their own
+
+
+def test_the_delete_sql_has_no_soft_delete_flag():
+    assert "is_deleted" not in retention._DELETE_SQL and retention._DELETE_SQL.startswith("DELETE FROM memory_items")

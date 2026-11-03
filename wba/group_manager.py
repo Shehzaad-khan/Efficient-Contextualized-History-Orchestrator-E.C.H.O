@@ -163,7 +163,7 @@ def list_groups(include_inactive: bool = False) -> list[dict[str, Any]]:
                COUNT(m.memory_id) FILTER (WHERE """ + _CONFIRMED_MEMBER_SQL + """) AS confirmed_count
         FROM user_groups ug
         LEFT JOIN memory_user_groups mug ON mug.group_id = ug.group_id
-        LEFT JOIN memory_items m ON m.memory_id = mug.memory_id AND m.is_deleted = FALSE
+        LEFT JOIN memory_items m ON m.memory_id = mug.memory_id
         WHERE (:include_inactive OR ug.is_active = TRUE)
         GROUP BY ug.group_id
         ORDER BY ug.created_at DESC
@@ -278,7 +278,7 @@ def suggest_rules_for_group(group_id: str) -> list[dict[str, Any]]:
             LEFT JOIN chrome_metadata  cm ON cm.memory_id = m.memory_id
             LEFT JOIN gmail_metadata   gm ON gm.memory_id = m.memory_id
             LEFT JOIN youtube_metadata ym ON ym.memory_id = m.memory_id
-            WHERE mug.group_id = :group_id AND m.is_deleted = FALSE
+            WHERE mug.group_id = :group_id
         )
         SELECT 'domain' AS rule_type, host AS rule_value, COUNT(*) AS match_count
         FROM members WHERE host IS NOT NULL AND host <> ''
@@ -363,7 +363,7 @@ def _load_group_context(group_id: str, manager: Any) -> _GroupContext:
             SELECT mug.memory_id
             FROM memory_user_groups mug
             JOIN memory_items m ON m.memory_id = mug.memory_id
-            WHERE mug.group_id = :group_id AND m.is_deleted = FALSE
+            WHERE mug.group_id = :group_id
               AND """ + _CONFIRMED_MEMBER_SQL + """
             """,
             {"group_id": group_id},
@@ -548,7 +548,7 @@ def _run_auto_assignment(limit: int) -> dict[str, Any]:
         LEFT JOIN chrome_metadata  cm ON m.memory_id = cm.memory_id
         LEFT JOIN gmail_metadata   gm ON m.memory_id = gm.memory_id
         LEFT JOIN youtube_metadata ym ON m.memory_id = ym.memory_id
-        WHERE m.is_deleted = FALSE AND m.preprocessed = TRUE
+        WHERE m.preprocessed = TRUE
         ORDER BY m.first_ingested_at DESC
         LIMIT :limit
         """,
@@ -597,7 +597,7 @@ def review_queue(group_id: Optional[str] = None) -> list[dict[str, Any]]:
                m.title, m.source_type, m.created_at
         FROM group_suggestions gs
         JOIN user_groups ug ON ug.group_id = gs.group_id AND ug.is_active = TRUE
-        JOIN memory_items m ON m.memory_id = gs.memory_id AND m.is_deleted = FALSE
+        JOIN memory_items m ON m.memory_id = gs.memory_id
         WHERE gs.reviewed = FALSE
           AND (:group_id IS NULL OR gs.group_id = :group_id)
         ORDER BY gs.suggested_at DESC
@@ -672,7 +672,7 @@ def manual_assign(memory_id: str, group_id: str) -> dict[str, Any]:
     """
     with postgresql_manager.transaction() as connection:
         item_exists = connection.execute(
-            text("SELECT 1 FROM memory_items WHERE memory_id = :memory_id AND is_deleted = FALSE"),
+            text("SELECT 1 FROM memory_items WHERE memory_id = :memory_id"),
             {"memory_id": memory_id},
         ).first()
         if not item_exists:
@@ -723,7 +723,7 @@ def manual_assign(memory_id: str, group_id: str) -> dict[str, Any]:
         SELECT COUNT(*) AS member_count,
                COUNT(*) FILTER (WHERE """ + _CONFIRMED_MEMBER_SQL + """) AS confirmed_count
         FROM memory_user_groups mug
-        JOIN memory_items m ON m.memory_id = mug.memory_id AND m.is_deleted = FALSE
+        JOIN memory_items m ON m.memory_id = mug.memory_id
         WHERE mug.group_id = :group_id
         """,
         {"group_id": group_id},
@@ -747,7 +747,7 @@ def group_items(group_id: str, limit: int = 100) -> list[dict[str, Any]]:
         SELECT m.memory_id, m.source_type, m.title, m.created_at, mug.assigned_at
         FROM memory_user_groups mug
         JOIN memory_items m ON m.memory_id = mug.memory_id
-        WHERE mug.group_id = :group_id AND m.is_deleted = FALSE
+        WHERE mug.group_id = :group_id
         ORDER BY mug.assigned_at DESC
         LIMIT :limit
         """,

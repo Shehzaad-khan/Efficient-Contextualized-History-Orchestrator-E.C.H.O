@@ -23,6 +23,8 @@ from ingestion.chrome.chrome_connector import router as chrome_router
 from rse import agent_nodes, fusion, reranker, retrieval_engine, search_coordinator, search_tool
 from ste import faiss_manager as fm
 from ste import postgresql_manager as db
+from ste import redis_manager as rm
+from ste import retention
 
 pytest.importorskip("faiss")
 
@@ -61,7 +63,7 @@ def pg_view_of_sqlite(sql, params):
         return 1
     if "FROM memory_items WHERE preprocessed = FALSE" in sql:
         rows = db.fetchall("SELECT memory_id, source_type, source_id, title, raw_text, created_at FROM memory_items "
-                           "WHERE preprocessed = 0 AND is_deleted = 0 ORDER BY first_ingested_at")
+                           "WHERE preprocessed = 0 ORDER BY first_ingested_at")
         return [(r["memory_id"], r["source_type"], r["source_id"], r["title"], r["raw_text"], datetime(2026, 10, 5)) for r in rows]
     if "FROM chrome_metadata" in sql and not sql.startswith("UPDATE"):
         rows = db.fetchall("SELECT url, canonical_url, domain FROM chrome_metadata WHERE memory_id = :m", {"m": params[0]})
@@ -72,7 +74,7 @@ def pg_view_of_sqlite(sql, params):
 def sqlite_keyword_search(state):
     """Stands in for PostgreSQL full text search: every query word must appear in title or text."""
     words = [w for w in state["parsed_intent"].get("query_clean", "").lower().split() if w]
-    rows = db.fetchall("SELECT * FROM memory_items WHERE preprocessed = 1 AND is_deleted = 0")
+    rows = db.fetchall("SELECT * FROM memory_items WHERE preprocessed = 1")
     hits = [r for r in rows if words and all(w in f"{r['title']} {r['raw_text']}".lower() for w in words)]
     return {"postgres_results": [row_for_search(r) for r in hits]}
 
@@ -100,7 +102,7 @@ def world(sqlite_db, isolated_settings, fake_embedding_model, fake_pg, tmp_path,
     # Retrieval: SQLite look-ups instead of PostgreSQL, a fake cross-encoder, no neighbours
     monkeypatch.setattr(search_tool, "node_postgres_keyword_search", sqlite_keyword_search)
     monkeypatch.setattr(fusion, "hydrate_memory_items", lambda ids: [
-        row_for_search(r) for r in db.fetchall("SELECT * FROM memory_items WHERE is_deleted = 0 AND preprocessed = 1") if r["memory_id"] in ids])
+        row_for_search(r) for r in db.fetchall("SELECT * FROM memory_items WHERE preprocessed = 1") if r["memory_id"] in ids])
     monkeypatch.setattr(search_coordinator, "hydrate_memory_items", fusion.hydrate_memory_items)
     monkeypatch.setattr(reranker, "get_cross_encoder", lambda: type("CE", (), {"predict": lambda self, pairs: [3.0 if "python" in t.lower() else -3.0 for _, t in pairs]})())
     monkeypatch.setattr(search_tool, "node_extend_neighborhood", lambda state: {"neighbor_items": {}})
@@ -195,15 +197,36 @@ def test_private_pages_never_enter_the_memory(world):
     assert db.fetchall("SELECT COUNT(*) AS n FROM memory_items")[0]["n"] == 1
 
 
-def test_a_deleted_item_disappears_from_answers(world):
-    """Shows: 'delete' really removes a memory from retrieval (soft-deleted rows are never searched)."""
-    world.visit("https://docs.example.org/python-tutorial", "Python tutorial", PYTHON_TEXT)
+def test_a_deleted_item_is_gone_from_every_store_and_can_be_captured_again(world, fake_redis, monkeypatch):
+    """Shows: 'delete' is a hard delete. The row, the vector and the Redis keys are gone, the answer no longer
+    finds the page, and visiting the page again saves it as a new memory."""
+    # SQLite has no uuid[] arrays: the same two statements, with the id list read from JSON.
+    monkeypatch.setattr(retention, "_DELETE_SQL", "DELETE FROM memory_items WHERE memory_id IN (SELECT value FROM json_each(:ids))")
+    monkeypatch.setattr(retention, "_CHROME_URLS_SQL",
+                        "SELECT canonical_url FROM chrome_metadata WHERE memory_id IN (SELECT value FROM json_each(:ids))")
+    monkeypatch.setattr(retention, "get_sync_client", lambda: fake_redis)
+
+    url = "https://docs.example.org/python-tutorial"
+    world.visit(url, "Python tutorial", PYTHON_TEXT)
     world.enrich()
     memory_id = db.fetchall("SELECT memory_id FROM memory_items")[0]["memory_id"]
+    revisit = rm.revisit_key("chrome", db.fetchall("SELECT canonical_url FROM chrome_metadata")[0]["canonical_url"])
+    fake_redis.set(revisit, "1")
+    fake_redis.set(f"echo:enp:retry:{memory_id}", "1")
+    assert world.manager.get_vector(memory_id) is not None
     assert world.ask("python", ScriptedLuna(["python tutorial"], "Found ⟦1⟧.")).json()["result_count"] == 1
+
     assert world.client.delete(f"/items/{memory_id}").status_code == 200
+
+    assert db.fetchall("SELECT * FROM memory_items") == []
+    assert world.manager.get_vector(memory_id) is None
+    assert fake_redis.data == {}
     again = world.ask("python", ScriptedLuna(["python tutorial"], "Nothing.")).json()
     assert again["result_count"] == 0 and again["no_results"] is True
+    assert world.client.delete(f"/items/{memory_id}").status_code == 404
+
+    assert world.visit(url, "Python tutorial", PYTHON_TEXT)["status"] == "saved"     # nothing blocks re-capture
+    assert db.fetchall("SELECT memory_id FROM memory_items")[0]["memory_id"] != memory_id
 
 
 def test_a_follow_up_question_uses_the_chat_history(world):

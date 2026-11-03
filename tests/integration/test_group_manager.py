@@ -15,12 +15,12 @@ from wba import group_manager as gm
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def seed_item(memory_id, title="A page", source="chrome", domain="github.com", preprocessed=1, deleted=0):
+def seed_item(memory_id, title="A page", source="chrome", domain="github.com", preprocessed=1):
     db.execute(
         "INSERT INTO memory_items (memory_id, system_group_id, source_type, source_id, title, created_at, "
-        "first_ingested_at, preprocessed, is_deleted) VALUES (:id, 5, :source, :id, :title, '2026-10-05 10:00:00', "
-        "'2026-10-05 10:00:00', :pre, :deleted)",
-        {"id": memory_id, "source": source, "title": title, "pre": preprocessed, "deleted": deleted},
+        "first_ingested_at, preprocessed) VALUES (:id, 5, :source, :id, :title, '2026-10-05 10:00:00', "
+        "'2026-10-05 10:00:00', :pre)",
+        {"id": memory_id, "source": source, "title": title, "pre": preprocessed},
     )
     if source == "chrome":
         db.execute("INSERT INTO chrome_metadata (memory_id, url, canonical_url, domain) VALUES (:id, :id, :id, :d)",
@@ -103,9 +103,6 @@ def test_manual_assign_refuses_unknown_items_and_inactive_groups(group):
     seed_item("m1")
     with pytest.raises(ValueError, match="memory item"):
         gm.manual_assign("missing", group)
-    seed_item("deleted", deleted=1)
-    with pytest.raises(ValueError, match="memory item"):
-        gm.manual_assign("deleted", group)
     gm.deactivate_group(group)
     with pytest.raises(ValueError, match="group"):
         gm.manual_assign("m1", group)

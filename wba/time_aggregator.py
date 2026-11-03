@@ -56,7 +56,6 @@ TIME_UNION_SQL = """
     FROM memory_items m
     JOIN memory_engagement me ON m.memory_id = me.memory_id
     WHERE m.source_type = 'gmail'
-      AND m.is_deleted = FALSE
       AND me.first_opened_at IS NOT NULL
       AND me.last_accessed_at >= :start_utc AND me.last_accessed_at < :end_utc
     UNION ALL
@@ -66,7 +65,6 @@ TIME_UNION_SQL = """
     FROM visits v
     JOIN memory_items m ON m.memory_id = v.memory_id
     WHERE m.source_type = 'chrome'
-      AND m.is_deleted = FALSE
       AND v.visited_at >= :start_utc AND v.visited_at < :end_utc
     UNION ALL
     SELECT m.memory_id, m.source_type, m.system_group_id,
@@ -75,7 +73,6 @@ TIME_UNION_SQL = """
     FROM visits v
     JOIN memory_items m ON m.memory_id = v.memory_id
     WHERE m.source_type = 'youtube'
-      AND m.is_deleted = FALSE
       AND v.dwell_seconds > 0
       AND v.visited_at >= :start_utc AND v.visited_at < :end_utc
 """
@@ -180,7 +177,6 @@ def shorts_summary(start_day: date, end_day: date) -> dict[str, Any]:
         JOIN memory_items m ON m.memory_id = v.memory_id
         JOIN youtube_metadata ym ON m.memory_id = ym.memory_id
         WHERE ym.is_short = TRUE
-          AND m.is_deleted = FALSE
           AND v.dwell_seconds > 0
           AND v.visited_at >= :start_utc AND v.visited_at < :end_utc
         """,
@@ -271,7 +267,7 @@ RECENT_SORT_TS = "COALESCE(me.last_accessed_at, m.first_ingested_at)"
 # Keyset page (not OFFSET): items arrive continuously, so an offset would skip or
 # repeat rows between two pages. The cursor is the (sort time, memory_id) of the
 # last row already shown; memory_id breaks ties between equal timestamps.
-RECENT_BEFORE_SQL = f"AND ({RECENT_SORT_TS}, m.memory_id) < (:before_ts, CAST(:before_id AS uuid))"
+RECENT_BEFORE_SQL = f"WHERE ({RECENT_SORT_TS}, m.memory_id) < (:before_ts, CAST(:before_id AS uuid))"
 
 
 def recent_items(limit: int = 10, before: tuple[datetime, str] | None = None) -> list[dict[str, Any]]:
@@ -305,7 +301,6 @@ def recent_items(limit: int = 10, before: tuple[datetime, str] | None = None) ->
         LEFT JOIN chrome_metadata  cm ON m.memory_id = cm.memory_id
         LEFT JOIN gmail_metadata   gm ON m.memory_id = gm.memory_id
         LEFT JOIN youtube_metadata ym ON m.memory_id = ym.memory_id
-        WHERE m.is_deleted = FALSE
         {before_clause}
         ORDER BY {RECENT_SORT_TS} DESC, m.memory_id DESC
         LIMIT :limit

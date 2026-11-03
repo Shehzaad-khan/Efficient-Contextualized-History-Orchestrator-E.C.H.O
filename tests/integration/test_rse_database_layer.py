@@ -55,7 +55,7 @@ def test_keyword_search_builds_filters_and_returns_normalised_rows(use_db):
     assert results[0]["memory_id"] == ROW["memory_id"]
     sql, params = conn.calls[0]
     assert "websearch_to_tsquery" in sql and "m.source_type IN" in sql and "m.created_at > %s::timestamp" in sql
-    assert "m.is_deleted = FALSE" in sql and "m.preprocessed = TRUE" in sql      # deleted / unprocessed items are never searched
+    assert "m.preprocessed = TRUE" in sql and "is_deleted" not in sql      # unprocessed items are never searched; no soft-delete flag exists
     assert params[0] == "interview" and params[-1] == 200 and "%interview%" in params
 
 

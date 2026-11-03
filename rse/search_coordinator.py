@@ -98,8 +98,7 @@ LEFT JOIN youtube_metadata ym ON m.memory_id = ym.memory_id
 """
 
 BASE_CONDITIONS = """
-WHERE m.is_deleted = FALSE
-  AND m.preprocessed = TRUE
+WHERE m.preprocessed = TRUE
 """
 
 # Searchable document for FTS: the stored vector memory_items.search_vector (A24.3),
