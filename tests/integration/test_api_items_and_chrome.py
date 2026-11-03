@@ -212,6 +212,16 @@ def test_export_json_leaves_out_deleted_items(client, deletions):
     assert "echo_export.json" in client.get("/export").headers["content-disposition"]
 
 
+def test_export_holds_no_full_text_vectors_or_sign_in_data(client):
+    """Shows: the Settings page promises "no full text, no search index, no Google sign-in"; the file keeps that promise."""
+    memory_id = seed("a page")
+    db.execute("UPDATE memory_items SET raw_text = 'THE FULL PAGE TEXT' WHERE memory_id = :id", {"id": memory_id})
+    for format_ in ("json", "csv"):
+        body = client.get(f"/export?format={format_}").text
+        assert "THE FULL PAGE TEXT" not in body
+        assert all(word not in body.lower() for word in ("raw_text", "search_vector", "embeddable", "token", "credential"))
+
+
 def test_export_csv_defuses_spreadsheet_formulas(client):
     """Shows: a page titled '=HYPERLINK(...)' cannot run as a formula when the CSV is opened in Excel."""
     seed('=HYPERLINK("http://evil.example","click")')

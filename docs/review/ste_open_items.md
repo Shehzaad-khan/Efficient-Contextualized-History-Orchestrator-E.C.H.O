@@ -2204,6 +2204,22 @@ Added 2026-10-27 by the owner while reviewing the screens (D6.5 to D6.7). Unlike
   list following it. Browser run on a real PostgreSQL: marks persist across reloads, undo adds a second event (nothing deleted), the failure
   paths keep the old state.
 
+### D9. Three backend features get a screen: export, "keep out" lists, "check now" for auto-assign — [x] decided and BUILT 2026-11-03 (his live check still to do)
+- **Export:** Settings → "your data": download JSON / CSV of `GET /export` (`downloadExport` in `frontend/src/lib/api.ts`). The file holds titles,
+  sources, times, engagement and the sender / link / channel; test `test_export_holds_no_full_text_vectors_or_sign_in_data` backs the text on the card.
+- **Keep out:** Settings → "keep out": two lists (sites, senders) with add and remove, saved through the existing `POST /settings`. Sites are
+  matched exactly or as a subdomain, senders as a piece of the From address (`ste/settings_store.py`). The page checks input first (a site must look like
+  `example.com`; a sender needs at least 3 characters, because a 1 or 2 character piece would match nearly every address) and shows what the server stored.
+  Unlike the capture toggles, a failed save is not hidden behind demo data (it is a privacy control). Applies to new activity only; stored items stay.
+- **Check now:** Patterns → the Sunday review: "check recent items now" runs `POST /wellbeing/groups/auto-assign` (nothing else runs it) and refreshes
+  the queue. It is disabled, with a reason, until some group has 5 confirmed items. Result line: how many were added automatically (A42) and how many
+  wait for his yes, or "nothing new matched".
+- **Checked on a real PostgreSQL + the real backend + a browser (no test change needed for the routes, they already had tests):** input checks reject
+  `notasite`, `com`, a 2-character sender; `https://Mail.Example.com/inbox?x=1` is stored as `mail.example.com`; the site and its subdomain are then
+  discarded by `/chrome/ingest` while the look-alike `notmail.example.com` is kept; both export formats download (10 items, no `raw_text`); the check added
+  5 items for a group of 5 confirmed members plus a rule, a second run said nothing new matched; failures leave lists and queue as they were.
+- **Not built (his decision):** group delete (he has it locally), sessions rebuild, Gmail sync button, the unused non-streaming `askEcho`.
+
 ---
 
 ## E. Later — after the review AND Step 2 are complete
