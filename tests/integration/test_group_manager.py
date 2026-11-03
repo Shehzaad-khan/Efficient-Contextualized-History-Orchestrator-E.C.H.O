@@ -235,3 +235,57 @@ def test_rules_still_work_when_faiss_is_unavailable(sqlite_db, monkeypatch):
 
     monkeypatch.setattr(gm, "get_manager", broken)
     assert gm.run_auto_assignment()["suggested"] == 1       # rule match -> pending (no KNN score)
+
+
+# ── The guided new-goal flow: a group exists only with its first 5 items ──────
+
+def _group_rows():
+    return db.fetchall("SELECT group_id FROM user_groups")
+
+
+def test_create_group_with_items_writes_group_items_and_rules_together(sqlite_db):
+    for i in range(6):
+        seed_item(f"m{i}")
+    created = gm.create_group_with_items(
+        "  Placement Prep ", "drive season", [f"m{i}" for i in range(6)],
+        [("domain", "WWW.LeetCode.com"), ("domain", "leetcode.com"), ("keyword", "DBMS"), ("sender", "@pes.edu")],
+    )
+    assert created["group_name"] == "Placement Prep"
+    assert created["member_count"] == 6 and created["confirmed_count"] == 6
+    assert created["auto_assignment_active"] is True
+    # lowercase, "www." and "@" dropped, and the repeated domain is one rule
+    assert sorted((r["rule_type"], r["rule_value"]) for r in created["rules"]) == [
+        ("domain", "leetcode.com"), ("keyword", "dbms"), ("sender", "pes.edu")]
+    # every member entered through an accepted suggestion (CLAUDE.md §2.4)
+    suggestions = db.fetchall("SELECT decision, reviewed FROM group_suggestions WHERE group_id = :g",
+                              {"g": created["group_id"]})
+    assert len(suggestions) == 6 and all(s["decision"] == "accepted" and s["reviewed"] for s in suggestions)
+    assert [g["group_name"] for g in gm.list_groups()] == ["Placement Prep"]
+
+
+def test_a_group_needs_five_different_items_and_nothing_is_created_without_them(sqlite_db):
+    for i in range(5):
+        seed_item(f"m{i}")
+    with pytest.raises(ValueError, match="at least 5"):
+        gm.create_group_with_items("Goal", None, ["m0", "m1", "m2", "m3"], [])
+    with pytest.raises(ValueError, match="at least 5"):
+        gm.create_group_with_items("Goal", None, ["m0", "m1", "m2", "m3", "m3"], [])  # a repeat is not a 5th item
+    with pytest.raises(ValueError, match="group_name"):
+        gm.create_group_with_items("   ", None, [f"m{i}" for i in range(5)], [])
+    assert _group_rows() == []
+
+
+def test_a_vanished_item_or_a_bad_rule_leaves_no_group_behind(sqlite_db):
+    for i in range(5):
+        seed_item(f"m{i}")
+    ids = [f"m{i}" for i in range(5)]
+    with pytest.raises(ValueError, match="No memory item"):
+        gm.create_group_with_items("Goal", None, ids[:4] + ["gone"], [])
+    with pytest.raises(ValueError, match="rule_type"):
+        gm.create_group_with_items("Goal", None, ids, [("keyword", "ok"), ("colour", "red")])
+    with pytest.raises(ValueError, match="time_window"):
+        gm.create_group_with_items("Goal", None, ids, [("time_window", "2026-05-01,2026-04-01")])
+    # all or nothing: no group, membership, suggestion or rule survived the refused attempts
+    assert _group_rows() == []
+    for table in ("memory_user_groups", "group_suggestions", "group_rules"):
+        assert db.scalar(f"SELECT COUNT(*) FROM {table}") == 0

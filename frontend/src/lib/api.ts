@@ -371,6 +371,23 @@ export function createGroup(name: string, description?: string): Promise<UserGro
   )
 }
 
+/**
+ * Delete a goal group. The backend only hides it (its rules stop running, no item is
+ * deleted). Like addRule, a live failure is NOT replaced by demo data: the group must
+ * not vanish from the screen when it was not removed. A group that is already gone
+ * (404) counts as deleted; in demo mode it is removed in this browser only.
+ */
+export async function deleteGroup(groupId: string): Promise<void> {
+  if (demoMode) return
+  try {
+    await request<{ is_active: boolean }>(`/wellbeing/groups/${encodeURIComponent(groupId)}`, { method: 'DELETE' })
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) return
+    void probeBackend()
+    throw error
+  }
+}
+
 /** All rules of a group, paused ones included (the rules screen shows both). */
 export function fetchGroupRules(groupId: string): Promise<GroupRule[]> {
   return withFallback(

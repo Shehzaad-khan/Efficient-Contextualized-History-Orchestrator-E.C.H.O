@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { ArrowLeft, Check, Plus, Search } from 'lucide-react'
 import PageTitle from '../components/PageTitle'
+import ScrollList from '../components/ScrollList'
 import SourceBadge from '../components/SourceBadge'
 import { ApiError, assignToGroup, fetchGroupItems, fetchGroups, fetchRecent } from '../lib/api'
 import { asUtc, formatWhen } from '../lib/format'
@@ -165,7 +166,7 @@ export default function GroupItemsPage() {
               {recent.length === 0 ? 'No items yet.' : 'Nothing in your recent items matches that.'}
             </p>
           ) : (
-            <ul className="mt-3 max-h-[60vh] overflow-y-auto pr-1">
+            <ScrollList label="Recent items you can add">
               {candidates.map((item) => {
                 const inGroup = memberIds.has(item.memory_id)
                 const saving = savingId === item.memory_id
@@ -205,9 +206,12 @@ export default function GroupItemsPage() {
                   </li>
                 )
               })}
-            </ul>
+            </ScrollList>
           )}
-          <p className="meta mt-3 text-[9px] text-ink-faint">your {PICKER_ITEMS} most recent items · search Recall for older ones</p>
+          <p className="meta mt-3 text-[9px] text-ink-faint">
+            {recent !== null && candidates.length > 0 ? `${candidates.length} items · scroll the list for more · ` : ''}
+            your {PICKER_ITEMS} most recent items · search Recall for older ones
+          </p>
         </section>
 
         <section className="card px-6 py-5" aria-labelledby="members-heading">
@@ -223,7 +227,7 @@ export default function GroupItemsPage() {
           ) : members.length === 0 ? (
             <p className="mt-4 text-sm text-ink-mute">Nothing here yet. Add items from the list.</p>
           ) : (
-            <ul className="mt-3 max-h-[60vh] overflow-y-auto pr-1">
+            <ScrollList label="Items in this group">
               {members.map((member) => (
                 <li key={member.memory_id} className="border-b border-white/[0.05] py-3 last:border-0">
                   <div className="flex flex-wrap items-center gap-2">
@@ -233,7 +237,7 @@ export default function GroupItemsPage() {
                   <p className="mt-1 truncate text-sm text-ink-soft">{member.title || '(untitled)'}</p>
                 </li>
               ))}
-            </ul>
+            </ScrollList>
           )}
         </section>
       </div>

@@ -17,7 +17,8 @@ Endpoints (prefix /wellbeing):
         GET  /sessions                         — stored sessions for a day + focus scores
     User groups:
         GET  /groups                           — list groups with member counts
-        POST /groups                           — create group
+        POST /groups                           — create an empty group
+        POST /groups/with-items                — create a group with its first 5+ items and optional rules, all or nothing (new-goal flow)
         DELETE /groups/{group_id}              — deactivate (soft delete)
         GET  /groups/review                    — weekly review queue (Phase 3): pending + auto_accepted (A42)
         POST /groups/auto-assign               — run hybrid classification (Phase 2); returns auto_accepted count
@@ -59,8 +60,10 @@ from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 
 from wba.group_manager import (
+    MIN_CONFIRMED_FOR_KNN,
     add_rule,
     create_group,
+    create_group_with_items,
     deactivate_group,
     decide_suggestion,
     group_items,
@@ -125,6 +128,13 @@ class RuleCreateRequest(BaseModel):
 
 class RuleActiveRequest(BaseModel):
     active: bool
+
+
+class GroupWithItemsRequest(BaseModel):
+    group_name: str = Field(..., min_length=1, max_length=100)
+    description: Optional[str] = Field(None, max_length=500)
+    memory_ids: list[UUID] = Field(..., min_length=MIN_CONFIRMED_FOR_KNN, max_length=200)
+    rules: list[RuleCreateRequest] = Field(default_factory=list, max_length=20)
 
 
 class ManualAssignRequest(BaseModel):
@@ -270,6 +280,23 @@ def groups_create(request: GroupCreateRequest):
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception:
         raise _server_error("groups create")
+
+
+@router.post("/groups/with-items", status_code=201)
+def groups_create_with_items(request: GroupWithItemsRequest):
+    """The guided new-goal flow: the group, its first items and its rules, all or nothing."""
+    try:
+        return create_group_with_items(
+            request.group_name,
+            request.description,
+            [str(memory_id) for memory_id in request.memory_ids],
+            [(rule.rule_type, rule.rule_value) for rule in request.rules],
+        )
+    except ValueError as exc:
+        # empty name, fewer than 5 different items, an unknown item, a bad rule
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception:
+        raise _server_error("groups create with items")
 
 
 @router.delete("/groups/{group_id}")

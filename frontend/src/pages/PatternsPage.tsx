@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { Link } from 'react-router-dom'
-import { Check, ChevronDown, ChevronLeft, ChevronRight, Plus, X } from 'lucide-react'
+import { Check, ChevronDown, ChevronLeft, ChevronRight, Plus, Target, Trash2, X } from 'lucide-react'
 import PageTitle from '../components/PageTitle'
 import Counter from '../components/Counter'
 import SourceBadge from '../components/SourceBadge'
 import {
   createGroup,
   decideSuggestion,
+  deleteGroup,
   fetchCategoryItems,
   fetchDaily,
   fetchGroups,
@@ -392,7 +393,120 @@ function Heatmap({ cells, weekEnd }: { cells: HeatmapCell[]; weekEnd: string }) 
 }
 
 /* ── User groups ────────────────────────────────────────────────────────── */
-function Groups({ groups, onCreate }: { groups: UserGroup[]; onCreate: (name: string) => Promise<void> }) {
+// A group starts sorting by itself after this many confirmed items (the progress bar fills towards it).
+const AUTO_SORT_AFTER = 5
+const GROUP_NAME_EXAMPLES = ['Placement Prep', 'Exam revision', 'Side project']
+const GROUP_ACTION_CLASS = 'meta inline-block text-[10px] text-ember-400 transition hover:text-ember-300'
+
+function GroupRow({ group, onDelete }: { group: UserGroup; onDelete: (groupId: string) => Promise<void> }) {
+  const [confirming, setConfirming] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [failed, setFailed] = useState(false)
+
+  const confirmed = group.confirmed_count ?? group.member_count
+  const progress = group.auto_assignment_active ? 1 : Math.min(1, confirmed / AUTO_SORT_AFTER)
+  const status = group.auto_assignment_active
+    ? 'auto-sorting on'
+    : `${Math.max(0, AUTO_SORT_AFTER - confirmed)} more to auto-sort`
+
+  async function confirmDelete() {
+    if (deleting) return
+    setDeleting(true)
+    setFailed(false)
+    try {
+      await onDelete(group.group_id)
+    } catch {
+      setFailed(true)
+      setDeleting(false)
+    }
+  }
+
+  return (
+    <li className="rounded-card border border-white/[0.06] bg-night-900/50 p-4 transition duration-200 hover:border-ember-500/25">
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <p className="truncate text-sm font-medium text-ink">{group.group_name}</p>
+          {group.description && <p className="mt-0.5 truncate text-xs text-ink-mute">{group.description}</p>}
+        </div>
+        <p className="shrink-0 font-mono text-xs text-ink-soft">{group.member_count} items</p>
+      </div>
+
+      <div
+        className="mt-3 h-[3px] rounded-full bg-night-700/60"
+        role="progressbar"
+        aria-label={`${group.group_name}: ${status}`}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={Math.round(progress * 100)}
+      >
+        <div
+          className="h-full rounded-full bg-gradient-to-r from-ember-600 to-ember-400 transition-[width] duration-500"
+          style={{ width: `${progress * 100}%` }}
+        />
+      </div>
+
+      {confirming ? (
+        <div className="mt-3" role="alert">
+          <p className="text-xs leading-5 text-ink-soft">
+            Delete “{group.group_name}”? Its rules stop running. Your items are not deleted.
+          </p>
+          {failed && <p className="mt-1 text-xs text-youtube">Couldn't delete it. Try again.</p>}
+          <div className="mt-2 flex gap-2">
+            <button
+              type="button"
+              onClick={() => void confirmDelete()}
+              disabled={deleting}
+              className="btn-ghost border-youtube/40 px-3 py-1 font-mono text-xs normal-case text-youtube hover:border-youtube/70 disabled:opacity-50"
+            >
+              {deleting ? 'deleting…' : 'yes, delete'}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setConfirming(false)
+                setFailed(false)
+              }}
+              disabled={deleting}
+              className="btn-ghost px-3 py-1 font-mono text-xs normal-case disabled:opacity-50"
+            >
+              keep it
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="mt-2.5 flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5">
+          <p className="meta text-[10px]">{status}</p>
+          <div className="flex items-center gap-4">
+            <Link to={`/groups/${group.group_id}/items`} className={GROUP_ACTION_CLASS} aria-label={`Items in ${group.group_name}`}>
+              items →
+            </Link>
+            <Link to={`/groups/${group.group_id}/rules`} className={GROUP_ACTION_CLASS} aria-label={`Rules for ${group.group_name}`}>
+              rules →
+            </Link>
+            <button
+              type="button"
+              onClick={() => setConfirming(true)}
+              className="meta inline-flex items-center gap-1 text-[10px] text-ink-faint transition hover:text-youtube"
+              aria-label={`Delete ${group.group_name}`}
+            >
+              <Trash2 size={11} aria-hidden="true" /> delete
+            </button>
+          </div>
+        </div>
+      )}
+    </li>
+  )
+}
+
+function Groups({
+  groups,
+  onCreate,
+  onDelete,
+}: {
+  groups: UserGroup[]
+  onCreate: (name: string) => Promise<void>
+  onDelete: (groupId: string) => Promise<void>
+}) {
   const [name, setName] = useState('')
   const [saving, setSaving] = useState(false)
 
@@ -408,61 +522,61 @@ function Groups({ groups, onCreate }: { groups: UserGroup[]; onCreate: (name: st
     }
   }
 
+  const taken = new Set(groups.map((group) => group.group_name.trim().toLowerCase()))
+  const examples = GROUP_NAME_EXAMPLES.filter((example) => !taken.has(example.toLowerCase()))
+
   return (
     <div>
       <ul className="space-y-3">
         {groups.map((group) => (
-          <li key={group.group_id} className="flex items-center justify-between gap-4 border-b border-white/[0.05] pb-3">
-            <div className="min-w-0">
-              <p className="truncate text-sm font-medium text-ink">{group.group_name}</p>
-              {group.description && <p className="mt-0.5 truncate text-xs text-ink-mute">{group.description}</p>}
-            </div>
-            <div className="shrink-0 text-right">
-              <p className="font-mono text-xs text-ink-soft">{group.member_count} items</p>
-              <p className="meta mt-0.5 text-[9px]">
-                {group.auto_assignment_active
-                  ? 'auto-sorting on'
-                  : `${Math.max(0, 5 - (group.confirmed_count ?? group.member_count))} more to auto-sort`}
-              </p>
-              <div className="mt-1 flex justify-end gap-3">
-                <Link
-                  to={`/groups/${group.group_id}/items`}
-                  className="meta inline-block text-[9px] text-ember-400 transition hover:text-ember-300"
-                  aria-label={`Items in ${group.group_name}`}
-                >
-                  items →
-                </Link>
-                <Link
-                  to={`/groups/${group.group_id}/rules`}
-                  className="meta inline-block text-[9px] text-ember-400 transition hover:text-ember-300"
-                  aria-label={`Rules for ${group.group_name}`}
-                >
-                  rules →
-                </Link>
-              </div>
-            </div>
-          </li>
+          <GroupRow key={group.group_id} group={group} onDelete={onDelete} />
         ))}
         {groups.length === 0 && <li className="text-sm text-ink-mute">No goal groups yet — name one below.</li>}
       </ul>
 
       <form
-        className="mt-4 flex gap-2"
+        className="mt-6"
         onSubmit={(event) => {
           event.preventDefault()
           void submit()
         }}
       >
-        <input
-          value={name}
-          onChange={(event) => setName(event.target.value)}
-          placeholder="a goal, e.g. “Placement Prep”…"
-          aria-label="New group name"
-          className="input-study flex-1 px-3 py-2 text-sm"
-        />
-        <button type="submit" disabled={saving || !name.trim()} className="btn-ghost inline-flex items-center gap-1.5 disabled:opacity-40" aria-label="Create group">
-          <Plus size={14} aria-hidden="true" /> add
-        </button>
+        <label htmlFor="new-group-name" className="meta mb-2 block">
+          new goal
+        </label>
+        <div className="flex items-center gap-2 rounded-pill border border-ember-500/25 bg-night-900 p-1.5 pl-4 transition duration-200 focus-within:border-ember-500/50 focus-within:shadow-[0_0_0_3px_rgba(245,169,71,0.12)]">
+          <Target size={16} className="shrink-0 text-ember-400" aria-hidden="true" />
+          <input
+            id="new-group-name"
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            maxLength={100}
+            placeholder="name a goal…"
+            className="min-w-0 flex-1 bg-transparent py-1.5 text-sm text-ink placeholder:font-mono placeholder:text-xs placeholder:text-ink-faint focus:outline-none"
+          />
+          <button
+            type="submit"
+            disabled={saving || !name.trim()}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-pill bg-ember-500 px-4 py-2 text-sm font-semibold text-night-950 transition duration-200 ease-out hover:bg-ember-400 active:scale-[0.97] disabled:bg-white/[0.06] disabled:text-ink-faint disabled:hover:bg-white/[0.06] disabled:active:scale-100"
+          >
+            <Plus size={14} aria-hidden="true" /> {saving ? 'adding…' : 'add goal'}
+          </button>
+        </div>
+        {name.trim() === '' && examples.length > 0 && (
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <span className="meta text-[10px] text-ink-faint">try</span>
+            {examples.map((example) => (
+              <button
+                key={example}
+                type="button"
+                onClick={() => setName(example)}
+                className="rounded-pill border border-white/10 px-3 py-1 font-mono text-[11px] text-ink-mute transition hover:border-ember-500/30 hover:text-ink-soft"
+              >
+                {example}
+              </button>
+            ))}
+          </div>
+        )}
       </form>
     </div>
   )
@@ -609,7 +723,21 @@ export default function PatternsPage() {
 
   async function handleCreateGroup(name: string) {
     const created = await createGroup(name)
-    setGroups((current) => [created, ...current])
+    // POST /groups answers without counts; a new group has no items and is not auto-sorting yet.
+    const withCounts: UserGroup = {
+      ...created,
+      member_count: created.member_count ?? 0,
+      auto_assignment_active: created.auto_assignment_active ?? false,
+    }
+    setGroups((current) => [withCounts, ...current])
+  }
+
+  // Throws on a refused delete, so the row can say so and stay in the list.
+  async function handleDeleteGroup(groupId: string) {
+    await deleteGroup(groupId)
+    setGroups((current) => current.filter((group) => group.group_id !== groupId))
+    // The review queue only lists suggestions of active groups, so drop this group's now.
+    setReviewQueue((current) => current.filter((suggestion) => suggestion.group_id !== groupId))
   }
 
   const stats = summary
@@ -711,7 +839,7 @@ export default function PatternsPage() {
             <h2 id="groups-heading" className="meta mb-5">
               your goal groups
             </h2>
-            <Groups groups={groups} onCreate={handleCreateGroup} />
+            <Groups groups={groups} onCreate={handleCreateGroup} onDelete={handleDeleteGroup} />
           </section>
 
           <section className="card p-6" aria-labelledby="review-heading">

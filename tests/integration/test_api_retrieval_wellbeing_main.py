@@ -213,6 +213,35 @@ def test_category_items_route_validates_the_group_and_passes_the_day(wellbeing_c
     assert wellbeing_client.get("/wellbeing/analytics/category-items?group=misc").status_code == 500
 
 
+def test_create_group_with_items_route_checks_the_request_and_passes_it_on(wellbeing_client, monkeypatch):
+    calls = []
+
+    def create(name, description, memory_ids, rules):
+        calls.append((name, description, memory_ids, rules))
+        return {"group_id": ID, "group_name": name}
+
+    monkeypatch.setattr(wb, "create_group_with_items", create)
+    ids = [str(uuid.uuid4()) for _ in range(5)]
+    body = {"group_name": "Placement Prep", "description": None, "memory_ids": ids,
+            "rules": [{"rule_type": "domain", "rule_value": "leetcode.com"}]}
+    response = wellbeing_client.post("/wellbeing/groups/with-items", json=body)
+    assert response.status_code == 201 and response.json()["group_id"] == ID
+    assert calls == [("Placement Prep", None, ids, [("domain", "leetcode.com")])]
+    # fewer than 5 ids, a bad id, no name: refused before anything is created (422)
+    for bad in ({**body, "memory_ids": ids[:4]}, {**body, "memory_ids": ids[:4] + ["x"]}, {**body, "group_name": ""}):
+        assert wellbeing_client.post("/wellbeing/groups/with-items", json=bad).status_code == 422
+    assert len(calls) == 1
+
+    def refuse(*args):
+        raise ValueError("rule_value must not be empty")
+
+    monkeypatch.setattr(wb, "create_group_with_items", refuse)
+    refused = wellbeing_client.post("/wellbeing/groups/with-items", json=body)
+    assert refused.status_code == 400 and "rule_value" in refused.json()["detail"]
+    monkeypatch.setattr(wb, "create_group_with_items", boom)
+    assert wellbeing_client.post("/wellbeing/groups/with-items", json=body).status_code == 500
+
+
 def _recent_rows(count):
     """`count` rows newest first, one minute apart, shaped like recent_items (with sort_ts)."""
     from datetime import datetime, timedelta
