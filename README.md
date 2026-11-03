@@ -99,7 +99,7 @@ The frontend runs without the backend too — it flips into a clearly-badged **d
 
 ```bash
 pip install -r requirements-dev.txt
-pytest --cov          # 563 tests (unit / integration / system), about 94 % line coverage, no live services needed
+pytest --cov          # 575 tests (unit / integration / system), about 94 % line coverage, no live services needed
 ```
 
 Every push runs the same checks on GitHub (`.github/workflows/ci.yml`): compile, lint, bandit security scan, tests with an
@@ -133,4 +133,4 @@ Every push runs the same checks on GitHub (`.github/workflows/ci.yml`): compile,
 - All personal data lives on your laptop — never permanently in the cloud
 - Incognito is never tracked; typed text is never captured; app content (Slack, Notion, Jira) is never read
 - The LLM API receives only your query and bounded text excerpts of the top results (up to 8,000 characters each for the best 3, 2,000 for the rest) and attachment text (up to 40,000 characters per file) — never the database or your whole store
-- Built-in controls: per-source capture toggles, domain/sender exclusions, soft deletion, full JSON/CSV export
+- Built-in controls: per-source capture toggles, domain/sender exclusions, permanent per-item deletion, full JSON/CSV export

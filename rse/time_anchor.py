@@ -74,8 +74,7 @@ SELECT
     gm.thread_id,
     ts_rank({_ANCHOR_DOCUMENT}, websearch_to_tsquery('english', %(terms)s)) AS anchor_rank
 {_ANCHOR_JOINS}
-WHERE m.is_deleted = FALSE
-  AND m.preprocessed = TRUE
+WHERE m.preprocessed = TRUE
   AND (%(source)s::text IS NULL OR m.source_type = %(source)s)
   AND (
         {_ANCHOR_DOCUMENT} @@ websearch_to_tsquery('english', %(terms)s)
@@ -90,8 +89,7 @@ _ANCHOR_BY_IDS_SQL = """
 SELECT m.memory_id::text AS memory_id, m.source_type, m.title, m.created_at, gm.subject, gm.thread_id
 FROM memory_items m
 LEFT JOIN gmail_metadata gm ON m.memory_id = gm.memory_id
-WHERE m.is_deleted = FALSE
-  AND m.memory_id::text = ANY(%s)
+WHERE m.memory_id::text = ANY(%s)
 """
 
 

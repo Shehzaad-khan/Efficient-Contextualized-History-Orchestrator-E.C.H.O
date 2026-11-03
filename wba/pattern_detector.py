@@ -172,7 +172,6 @@ def session_source_sequences(start_day: date, end_day: date, top_n: int = 5) -> 
         JOIN memory_items m ON m.memory_id = smm.memory_id
         LEFT JOIN memory_engagement me ON me.memory_id = m.memory_id
         WHERE s.session_start >= :start_utc AND s.session_start < :end_utc
-          AND m.is_deleted = FALSE
         GROUP BY s.session_id
         """,
         local_day_range_utc(start_day, end_day),

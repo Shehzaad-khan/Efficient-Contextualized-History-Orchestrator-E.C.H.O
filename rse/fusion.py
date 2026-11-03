@@ -154,7 +154,8 @@ def merge_and_rrf(state: EchoState) -> dict[str, Any]:
         for memory_id in batch:
             item = pg_items.get(memory_id) or hydrated.get(memory_id)
             if item is None:
-                # Present in FAISS but soft-deleted / unprocessed in PostgreSQL.
+                # Present in FAISS but unprocessed in PostgreSQL, or an orphan vector left by a
+                # hard delete that stopped between the Postgres and FAISS steps.
                 dropped_missing += 1
                 continue
             # Keyword-branch rows already satisfied the SQL constraints; hydrated

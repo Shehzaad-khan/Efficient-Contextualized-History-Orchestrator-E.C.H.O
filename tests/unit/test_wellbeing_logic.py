@@ -100,11 +100,11 @@ def test_local_day_range_covers_whole_local_days_as_naive_utc():
 
 
 def test_time_union_only_counts_opened_gmail_and_watched_youtube():
-    """Shows (§11.2): unread mail never counts; YouTube needs dwell > 0; deleted items never count."""
+    """Shows (§11.2): unread mail never counts; YouTube needs dwell > 0."""
     sql = " ".join(ta.TIME_UNION_SQL.split())
     assert "first_opened_at IS NOT NULL" in sql
     assert "v.dwell_seconds > 0" in sql
-    assert sql.count("m.is_deleted = FALSE") == 3
+    assert "is_deleted" not in sql      # deleted items are really gone, so no flag is checked
 
 
 def test_total_time_and_group_breakdowns_use_the_database_helpers(monkeypatch):
@@ -174,11 +174,12 @@ def test_recent_items_before_a_cursor_pages_by_keyset_with_the_id_breaking_ties(
     ta.recent_items(40, (cursor_time, cursor_id))
     assert seen["params"] == {"limit": 40, "before_ts": cursor_time, "before_id": cursor_id}
     assert (
-        "AND (COALESCE(me.last_accessed_at, m.first_ingested_at), m.memory_id) < (:before_ts, CAST(:before_id AS uuid))"
+        "WHERE (COALESCE(me.last_accessed_at, m.first_ingested_at), m.memory_id) < (:before_ts, CAST(:before_id AS uuid))"
         in seen["sql"]
     )
-    # The paging condition sits in the WHERE part, before the ordering.
-    assert seen["sql"].index("is_deleted = FALSE") < seen["sql"].index(":before_ts") < seen["sql"].index("ORDER BY")
+    # The paging condition is the only WHERE (no soft-delete flag any more), after the joins and before the ordering.
+    assert "is_deleted" not in seen["sql"] and seen["sql"].count("WHERE") == 1
+    assert seen["sql"].index("youtube_metadata") < seen["sql"].index(":before_ts") < seen["sql"].index("ORDER BY")
 
 
 def test_recent_items_selects_the_sort_time_for_the_cursor_and_keeps_the_ids_private(monkeypatch):

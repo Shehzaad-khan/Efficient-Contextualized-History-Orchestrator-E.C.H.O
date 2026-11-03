@@ -226,7 +226,7 @@ def sessions_for_day(day: date) -> list[dict[str, Any]]:
         FROM sessions s
         LEFT JOIN system_groups sg ON sg.system_group_id = s.dominant_group_id
         LEFT JOIN session_memory_map smm ON smm.session_id = s.session_id
-        LEFT JOIN memory_items m ON m.memory_id = smm.memory_id AND m.is_deleted = FALSE
+        LEFT JOIN memory_items m ON m.memory_id = smm.memory_id
         WHERE s.session_start >= :start_utc AND s.session_start < :end_utc
         GROUP BY s.session_id, sg.group_name
         ORDER BY s.session_start ASC

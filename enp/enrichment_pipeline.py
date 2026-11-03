@@ -168,7 +168,6 @@ def fetch_unprocessed_items(
                    created_at
             FROM memory_items
             WHERE preprocessed = FALSE
-              AND is_deleted = FALSE
               {failed_clause}
               AND NOT (
                     LOWER(source_type) = 'youtube'
@@ -215,7 +214,6 @@ def _fetch_thread_history(conn, item: dict[str, Any]) -> list[str]:
             JOIN gmail_metadata gm ON gm.memory_id = mi.memory_id
             WHERE gm.thread_id = %s
               AND mi.memory_id != %s
-              AND mi.is_deleted = FALSE
               AND mi.preprocessed = TRUE
               AND mi.created_at <= %s
             ORDER BY mi.created_at ASC
@@ -721,7 +719,6 @@ def retry_failed_items(conn, max_attempts: int = MAX_ENP_RETRIES, limit: int = 5
             SELECT memory_id
             FROM memory_items
             WHERE preprocessed = FALSE
-              AND is_deleted = FALSE
               AND classified_by = %s
             ORDER BY first_ingested_at ASC
             LIMIT %s

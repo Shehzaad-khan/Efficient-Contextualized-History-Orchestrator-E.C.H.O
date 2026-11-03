@@ -158,7 +158,7 @@ def connect_readonly() -> Any:
 
 def resolve_selector(cursor: Any, selector: GoldSelector) -> list[tuple[str, str, str]]:
     """Items matching one selector: (memory_id, source, title). Raises LookupError when nothing matches."""
-    clauses = ["is_deleted = FALSE"]
+    clauses: list[str] = []
     params: list[Any] = []
     if "source" in selector:
         clauses.append("source_type = %s")
@@ -169,7 +169,7 @@ def resolve_selector(cursor: Any, selector: GoldSelector) -> list[tuple[str, str
     if "date" in selector:
         clauses.append("to_char(created_at AT TIME ZONE 'Asia/Kolkata', 'MM-DD') = %s")
         params.append(selector["date"])
-    cursor.execute(f"SELECT memory_id::text, source_type, title FROM memory_items WHERE {' AND '.join(clauses)}", params)
+    cursor.execute(f"SELECT memory_id::text, source_type, title FROM memory_items WHERE {' AND '.join(clauses) or 'TRUE'}", params)
     rows = cursor.fetchall()
     if not rows:
         raise LookupError(f"gold selector matches no item: {selector}")
@@ -185,7 +185,7 @@ def resolve_gold(cursor: Any, question: Question) -> list[tuple[str, str, str]]:
 
 
 def item_counts(cursor: Any) -> dict[str, int]:
-    cursor.execute("SELECT source_type, COUNT(*) FROM memory_items WHERE is_deleted = FALSE GROUP BY 1 ORDER BY 1")
+    cursor.execute("SELECT source_type, COUNT(*) FROM memory_items GROUP BY 1 ORDER BY 1")
     return {source: int(count) for source, count in cursor.fetchall()}
 
 
