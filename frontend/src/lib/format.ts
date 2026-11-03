@@ -8,6 +8,12 @@ export function formatDuration(totalSeconds: number): string {
   return `${hours}h ${String(minutes).padStart(2, '0')}m`
 }
 
+/** The backend sends naive UTC timestamps (no zone); read them as UTC, not local time. */
+export function asUtc(iso: string | null | undefined): string | null | undefined {
+  if (!iso) return iso
+  return /[zZ]|[+-]\d\d:?\d\d$/.test(iso) ? iso : `${iso}Z`
+}
+
 export function formatWhen(iso: string | null | undefined): string {
   if (!iso) return 'unknown time'
   const date = new Date(iso)

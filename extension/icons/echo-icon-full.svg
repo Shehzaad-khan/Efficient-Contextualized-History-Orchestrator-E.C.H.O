@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <radialGradient id="glow" cx="0.3" cy="0.5" r="0.65">
+      <stop offset="0" stop-color="#F5A947" stop-opacity="0.2"/>
+      <stop offset="1" stop-color="#F5A947" stop-opacity="0"/>
+    </radialGradient>
+    <!-- the stem: bright at the top, deeper at the bottom -->
+    <linearGradient id="stem" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFE2B5"/>
+      <stop offset="0.5" stop-color="#F5A947"/>
+      <stop offset="1" stop-color="#C9731A"/>
+    </linearGradient>
+    <!-- each arm fades toward its tip, like a voice dying away -->
+    <linearGradient id="arm1" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#FFD9A0"/><stop offset="0.55" stop-color="#F5A947"/><stop offset="1" stop-color="#F5A947" stop-opacity="0.45"/>
+    </linearGradient>
+    <linearGradient id="arm2" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#F8BC63"/><stop offset="0.55" stop-color="#E5962F"/><stop offset="1" stop-color="#E5962F" stop-opacity="0.35"/>
+    </linearGradient>
+    <linearGradient id="arm3" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#E5962F"/><stop offset="0.55" stop-color="#C9731A"/><stop offset="1" stop-color="#C9731A" stop-opacity="0.25"/>
+    </linearGradient>
+    <filter id="soft" x="-20%" y="-50%" width="140%" height="200%"><feGaussianBlur stdDeviation="0.7"/></filter>
+    <filter id="halo" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="4"/></filter>
+  </defs>
+
+  <rect x="1" y="1" width="126" height="126" rx="28" fill="#12100C" stroke="#2B2620" stroke-width="2"/>
+  <ellipse cx="50" cy="64" rx="64" ry="64" fill="url(#glow)"/>
+
+  <!-- soft light under the letter -->
+  <rect x="24" y="26" width="14" height="76" rx="7" fill="#F5A947" opacity="0.45" filter="url(#halo)"/>
+
+  <!-- the E: stem + three shortening arms -->
+  <rect x="24" y="26" width="14" height="76" rx="7" fill="url(#stem)"/>
+  <rect x="24" y="26" width="64" height="14" rx="7" fill="url(#arm1)"/>
+  <rect x="24" y="57" width="50" height="14" rx="7" fill="url(#arm2)"/>
+  <rect x="24" y="88" width="36" height="14" rx="7" fill="url(#arm3)"/>
+
+  <!-- glossy edge light -->
+  <g fill="none" stroke="#FFF6E6" stroke-linecap="round" stroke-width="2.4" filter="url(#soft)">
+    <path d="M31 31 L31 96" stroke-opacity="0.45"/>
+    <path d="M43 31.5 L72 31.5" stroke-opacity="0.45"/>
+    <path d="M43 62.5 L60 62.5" stroke-opacity="0.35"/>
+    <path d="M43 93.5 L50 93.5" stroke-opacity="0.28"/>
+  </g>
+
+  <!-- echo dots trailing after each arm -->
+  <g fill="#F5A947">
+    <circle cx="97" cy="33" r="3.2" opacity="0.55"/><circle cx="107" cy="33" r="2.4" opacity="0.28"/>
+    <circle cx="83" cy="64" r="3.2" opacity="0.5"/><circle cx="93" cy="64" r="2.4" opacity="0.25"/>
+    <circle cx="69" cy="95" r="3.2" opacity="0.42"/><circle cx="79" cy="95" r="2.4" opacity="0.2"/>
+  </g>
+</svg>
