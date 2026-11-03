@@ -1,12 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { Link } from 'react-router-dom'
-import { Check, ChevronDown, ChevronLeft, ChevronRight, Plus, Target, Trash2, X } from 'lucide-react'
+import { Link, useLocation } from 'react-router-dom'
+import { Check, ChevronDown, ChevronLeft, ChevronRight, Plus, Trash2, X } from 'lucide-react'
 import PageTitle from '../components/PageTitle'
 import Counter from '../components/Counter'
 import SourceBadge from '../components/SourceBadge'
 import {
-  createGroup,
   decideSuggestion,
   deleteGroup,
   fetchCategoryItems,
@@ -395,7 +394,6 @@ function Heatmap({ cells, weekEnd }: { cells: HeatmapCell[]; weekEnd: string }) 
 /* ── User groups ────────────────────────────────────────────────────────── */
 // A group starts sorting by itself after this many confirmed items (the progress bar fills towards it).
 const AUTO_SORT_AFTER = 5
-const GROUP_NAME_EXAMPLES = ['Placement Prep', 'Exam revision', 'Side project']
 const GROUP_ACTION_CLASS = 'meta inline-block text-[10px] text-ember-400 transition hover:text-ember-300'
 
 function GroupRow({ group, onDelete }: { group: UserGroup; onDelete: (groupId: string) => Promise<void> }) {
@@ -500,84 +498,34 @@ function GroupRow({ group, onDelete }: { group: UserGroup; onDelete: (groupId: s
 
 function Groups({
   groups,
-  onCreate,
   onDelete,
 }: {
   groups: UserGroup[]
-  onCreate: (name: string) => Promise<void>
   onDelete: (groupId: string) => Promise<void>
 }) {
-  const [name, setName] = useState('')
-  const [saving, setSaving] = useState(false)
-
-  async function submit() {
-    const trimmed = name.trim()
-    if (!trimmed || saving) return
-    setSaving(true)
-    try {
-      await onCreate(trimmed)
-      setName('')
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  const taken = new Set(groups.map((group) => group.group_name.trim().toLowerCase()))
-  const examples = GROUP_NAME_EXAMPLES.filter((example) => !taken.has(example.toLowerCase()))
-
   return (
     <div>
       <ul className="space-y-3">
         {groups.map((group) => (
           <GroupRow key={group.group_id} group={group} onDelete={onDelete} />
         ))}
-        {groups.length === 0 && <li className="text-sm text-ink-mute">No goal groups yet — name one below.</li>}
       </ul>
 
-      <form
-        className="mt-6"
-        onSubmit={(event) => {
-          event.preventDefault()
-          void submit()
-        }}
+      {groups.length === 0 && (
+        <p className="max-w-[46ch] text-sm leading-6 text-ink-mute">
+          A goal group collects the pages, emails and videos behind one goal, like “Placement Prep”. You pick{' '}
+          {AUTO_SORT_AFTER} examples and Echo suggests the rest.
+        </p>
+      )}
+
+      <Link
+        to="/groups/new"
+        className={`inline-flex items-center gap-2 rounded-pill bg-ember-500 px-5 py-2.5 text-sm font-semibold text-night-950 transition duration-200 ease-out hover:bg-ember-400 active:scale-[0.97] ${
+          groups.length === 0 ? 'mt-5' : 'mt-6'
+        }`}
       >
-        <label htmlFor="new-group-name" className="meta mb-2 block">
-          new goal
-        </label>
-        <div className="flex items-center gap-2 rounded-pill border border-ember-500/25 bg-night-900 p-1.5 pl-4 transition duration-200 focus-within:border-ember-500/50 focus-within:shadow-[0_0_0_3px_rgba(245,169,71,0.12)]">
-          <Target size={16} className="shrink-0 text-ember-400" aria-hidden="true" />
-          <input
-            id="new-group-name"
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-            maxLength={100}
-            placeholder="name a goal…"
-            className="min-w-0 flex-1 bg-transparent py-1.5 text-sm text-ink placeholder:font-mono placeholder:text-xs placeholder:text-ink-faint focus:outline-none"
-          />
-          <button
-            type="submit"
-            disabled={saving || !name.trim()}
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-pill bg-ember-500 px-4 py-2 text-sm font-semibold text-night-950 transition duration-200 ease-out hover:bg-ember-400 active:scale-[0.97] disabled:bg-white/[0.06] disabled:text-ink-faint disabled:hover:bg-white/[0.06] disabled:active:scale-100"
-          >
-            <Plus size={14} aria-hidden="true" /> {saving ? 'adding…' : 'add goal'}
-          </button>
-        </div>
-        {name.trim() === '' && examples.length > 0 && (
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            <span className="meta text-[10px] text-ink-faint">try</span>
-            {examples.map((example) => (
-              <button
-                key={example}
-                type="button"
-                onClick={() => setName(example)}
-                className="rounded-pill border border-white/10 px-3 py-1 font-mono text-[11px] text-ink-mute transition hover:border-ember-500/30 hover:text-ink-soft"
-              >
-                {example}
-              </button>
-            ))}
-          </div>
-        )}
-      </form>
+        <Plus size={15} aria-hidden="true" /> new goal group
+      </Link>
     </div>
   )
 }
@@ -643,8 +591,24 @@ function ReviewQueue({
 }
 
 /* ── Page ───────────────────────────────────────────────────────────────── */
+interface CreatedGroupNotice {
+  name: string
+  items: number
+  hints: number
+}
+
 export default function PatternsPage() {
   const today = todayIso()
+  // The new-goal flow sends the user back here with what it created. Show it, then blank the state in
+  // the browser's history entry (not through the router, which would remount the page and lose the
+  // notice) so a refresh does not bring it back.
+  const location = useLocation()
+  const [notice, setNotice] = useState<CreatedGroupNotice | null>(
+    (location.state as { createdGroup?: CreatedGroupNotice } | null)?.createdGroup ?? null,
+  )
+  useEffect(() => {
+    if (location.state) window.history.replaceState({ ...window.history.state, usr: null }, '')
+  }, [location.state])
   // D6.5: the day the stats and category card show, and the last day of the week the
   // heatmap and the reflection cover. Both are local days, YYYY-MM-DD; never after today.
   const [day, setDay] = useState(today)
@@ -721,17 +685,6 @@ export default function PatternsPage() {
     })
   }
 
-  async function handleCreateGroup(name: string) {
-    const created = await createGroup(name)
-    // POST /groups answers without counts; a new group has no items and is not auto-sorting yet.
-    const withCounts: UserGroup = {
-      ...created,
-      member_count: created.member_count ?? 0,
-      auto_assignment_active: created.auto_assignment_active ?? false,
-    }
-    setGroups((current) => [withCounts, ...current])
-  }
-
   // Throws on a refused delete, so the row can say so and stay in the list.
   async function handleDeleteGroup(groupId: string) {
     await deleteGroup(groupId)
@@ -752,6 +705,34 @@ export default function PatternsPage() {
   return (
     <div>
       <PageTitle eyebrow="patterns" title="Where the time went." aside={<p className="meta">{day}</p>} />
+
+      {notice && (
+        <motion.div
+          role="status"
+          className="mt-6 flex items-start justify-between gap-4 rounded-card border border-ember-500/30 bg-ember-500/10 px-5 py-4"
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.4, ease: EASE_OUT }}
+        >
+          <div className="flex items-start gap-3">
+            <Check size={16} aria-hidden="true" className="mt-1 shrink-0 text-ember-400" />
+            <p className="text-sm leading-6 text-ink-soft">
+              <span className="font-medium text-ink">“{notice.name}” is ready</span> with {notice.items}{' '}
+              {notice.items === 1 ? 'example' : 'examples'}
+              {notice.hints > 0 ? ` and ${notice.hints} ${notice.hints === 1 ? 'hint' : 'hints'}` : ''}. Echo will start
+              suggesting similar items in your Sunday review.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setNotice(null)}
+            aria-label="Dismiss"
+            className="shrink-0 rounded-full p-1 text-ink-faint transition hover:text-ink-soft"
+          >
+            <X size={14} aria-hidden="true" />
+          </button>
+        </motion.div>
+      )}
 
       {/* Period controls (D6.5): the day drives the stats and categories, the week the heatmap and reflection */}
       <div className="mt-8 flex flex-wrap items-center gap-x-8 gap-y-3">
@@ -839,7 +820,7 @@ export default function PatternsPage() {
             <h2 id="groups-heading" className="meta mb-5">
               your goal groups
             </h2>
-            <Groups groups={groups} onCreate={handleCreateGroup} onDelete={handleDeleteGroup} />
+            <Groups groups={groups} onDelete={handleDeleteGroup} />
           </section>
 
           <section className="card p-6" aria-labelledby="review-heading">

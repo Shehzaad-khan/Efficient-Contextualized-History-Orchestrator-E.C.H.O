@@ -1068,7 +1068,11 @@ time to today, so past days changed after the fact.
 **Layer 2 — user groups** (goals such as "Capstone Project"). Four phases (`wba/group_manager.py`; code comments cite them as "§11.3 Phase N"):
 
 1. **Manual seeding.** The user adds items by hand. Auto-assignment starts once a group has **5** confirmed items
-   (A39: was 6, `MIN_CONFIRMED_FOR_KNN`, built Thu–Sun).
+   (A39: was 6, `MIN_CONFIRMED_FOR_KNN`, built Thu–Sun). **A new group is created with its 5 (D6.8, owner 2026-11-03):** the "new goal group"
+   flow (`/groups/new`) collects the name, at least 5 hand-picked items and optional rules in the browser, and only its last step calls
+   `POST /wellbeing/groups/with-items` (`create_group_with_items`), which writes the group, the items (each through the same accepted-suggestion
+   path as a manual add) and the rules in ONE transaction. A refused rule or a vanished item leaves no group behind, and a group
+   with fewer than 5 different items cannot be created this way. `POST /wellbeing/groups` (an empty group) still exists but the UI no longer uses it.
 2. **Auto-suggestion.** For each new item and each ready group: `rule_score` = share of the group's active rules that match;
    `knn_score` = mean cosine of the 3 most similar confirmed members. Today: suggest when `0.5 × rule + 0.5 × knn > 0.70`
    or any rule matched — so KNN alone can never suggest (its maximum is 0.5). Decided (A32, built Thu–Sun): suggest when any
@@ -1130,13 +1134,17 @@ flowchart TD
 
 Values stored lowercase; five rule types (`VALID_RULE_TYPES`):
 
-| rule_type | Matches | Example |
-|---|---|---|
-| keyword | substring of the title | `pytorch` |
-| domain | page host equals the domain or is a subdomain of it | `github.com` matches `gist.github.com` |
-| channel | exact YouTube channel name | `3blue1brown` |
-| sender | address inside the From header; a domain matches any address at it, a full address only itself | `techcorp.com` |
-| time_window | `YYYY-MM-DD,YYYY-MM-DD`, inclusive, on the item's local created date | `2026-01-01,2026-03-31` |
+| rule_type | Shown in the UI as (D6.8) | Matches | Example |
+|---|---|---|---|
+| keyword | "A word in the title" | substring of the title | `pytorch` |
+| domain | "A website" | page host equals the domain or is a subdomain of it | `github.com` matches `gist.github.com` |
+| channel | "A YouTube channel" | exact YouTube channel name | `3blue1brown` |
+| sender | "An email sender" | address inside the From header; a domain matches any address at it, a full address only itself | `techcorp.com` |
+| time_window | "A date range" | `YYYY-MM-DD,YYYY-MM-DD`, inclusive, on the item's local created date | `2026-01-01,2026-03-31` |
+
+The UI never shows the stored type names (`domain`, `sender`, `time_window`): `frontend/src/lib/rules.ts` holds the plain names, the
+hint under each and the example. In the new-goal flow rules are called "hints" and are optional; the flow also offers a one-tap hint for
+every site, mail sender domain (not shared providers like gmail.com) or channel that two or more of the picked items share.
 
 When 5 or more accepted items share a pattern (`RULE_SUGGESTION_MIN_MATCHES = 5`), the UI offers a rule; the user approves it.
 `match_count` counts matches. `PATCH /wellbeing/groups/{group_id}/rules/{rule_id}` pauses or resumes a rule (D5, route 2026-10-22). The rules screen (`/groups/:groupId/rules`, built 2026-10-25) has a switch per rule, and marks an active rule with no matches in 30+ days.
@@ -1192,7 +1200,8 @@ returned. One LLM call per request.
 |---|---|
 | Recall (`/`) | Chat with Luna, memory pills, moment strip, live progress, past chats (A27/A28 parts built Thu–Sun) |
 | Timeline (`/timeline`) | Recent items across sources (`/wellbeing/recent`), regret toggle per item, an "open" link for every source (D6.7: the page, the Gmail thread `mail.google.com/mail/u/0/#all/<thread_id>`, or the YouTube video) |
-| Patterns (`/patterns`) | Daily summary, heatmap, weekly insight, user groups (create) and the suggestion review queue. Day and week steppers (D6.5): the day drives the stat row and "time by category" (the card names its day, D6.6), the week (7 days ending on the chosen day) drives the heatmap and the reflection; never after today |
+| Patterns (`/patterns`) | Daily summary, heatmap, weekly insight, user groups (list, delete with a confirm, and a "new goal group" button into the guided flow) and the suggestion review queue. Day and week steppers (D6.5): the day drives the stat row and "time by category" (the card names its day, D6.6), the week (7 days ending on the chosen day) drives the heatmap and the reflection; never after today |
+| New goal group (`/groups/new`) | Four steps, D6.8: name (and an optional line) → pick at least 5 examples from the 100 most recent items → optional hints (rules, in plain words) → review. Nothing exists until "create group" on the last step; leaving earlier creates nothing |
 | Group rules (`/groups/{id}/rules`) | A group's rules with pause/resume (D5), a form to add a rule of any type, and the step-9 rule suggestions with one-click add (D6.3) |
 | Group items (`/groups/{id}/items`) | A group's members and a picker over the 100 most recent items (filter by title, sender, site or channel); "add" writes through `manual_assign` (D6.4) |
 | Reflections (`/reflections`) | Regret analytics |

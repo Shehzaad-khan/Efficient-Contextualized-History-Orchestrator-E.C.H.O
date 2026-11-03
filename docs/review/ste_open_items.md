@@ -2167,6 +2167,22 @@ Added 2026-10-27 by the owner while reviewing the screens (D6.5 to D6.7). Unlike
     click-through (headless Chromium) of every D6 flow against the real routers with an in-memory fake database: 27 of 27 checks pass,
     no console errors, no horizontal scroll at 390 px. **Not checked:** the live database, the Gmail link opening the exact mail in his
     browser (`/u/0/` = first signed-in account).
+  - **D6.8 (owner, 2026-11-03): a goal group is created in one guided flow, with its first 5 items.** The inline "add a group" box was a
+    bare name field that made an empty group, so a new user did not know what came next. Now Patterns has a "new goal group" button into
+    `/groups/new` (`NewGroupPage.tsx`): 1 name (+ optional line), 2 pick at least 5 examples (5 is the minimum, more is optional),
+    3 optional hints (rules renamed in plain words: website, email sender, YouTube channel, word in the title, date range; one-tap hints
+    from sites, senders and channels the picked items share), 4 review and create. The group does not exist until step 4: one new route
+    `POST /wellbeing/groups/with-items` (`wba/group_manager.py` `create_group_with_items`) writes the group, the items and the rules in one
+    transaction, reusing the same write code as `manual_assign` and `add_rule` (now shared helpers), so the only-write-path rule holds
+    and a refused rule leaves nothing behind. Also: a delete link with a confirm on each group (soft delete, existing route), plain rule
+    names on the rules page (`lib/rules.ts`), a scroll hint on long lists. **Checks:** 4 new tests (group + items + rules together,
+    needs 5 different items, rollback on a vanished item or bad rule, the route); `pytest` 577 passed + 1 failing OCR test that fails
+    without this change too; `npm run build` clean; the whole flow clicked through in the browser with the create call faked.
+    **Runtime check 2026-11-03 (`/verify`, throwaway PostgreSQL 16 + Redis, only the wellbeing router, the owner's database untouched):**
+    5 refusals (4 items, bad type, vanished item, reversed dates, 7 ids with a repeat) left 0 groups / 0 members / 0 suggestions / 0 rules;
+    a valid create wrote the group, 6 members, 6 `accepted` + `reviewed` suggestions and 3 normalized rules; the wizard in a browser,
+    start to finish against that backend, created a group with 5 members and 3 rules and showed the banner. **Not checked:** the owner's
+    own `echo_db`, and the full `backend.main` app (Gmail/ENP left out on purpose). His running backend must be restarted to load the route.
   - **Follow-up 2026-11-02 (his decision): the keyed routes are gone.** `GET /retrieval/session/{id}` (diagnostic) and
     `DELETE /retrieval/session/{id}`, the `X-API-Key` check and `ECHO_API_KEY` were removed from `backend/retrieval.py`: nothing called
     them (frontend, extension, MCP server, scripts), `GET` / `DELETE /retrieval/sessions/{id}` do the same work, and the key protected

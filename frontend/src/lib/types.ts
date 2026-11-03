@@ -146,6 +146,19 @@ export interface GroupMember {
   assigned_at: string | null
 }
 
+/** What the new-goal flow sends: the group with its first items and optional rules, created together. */
+export interface NewGroupInput {
+  group_name: string
+  description: string | null
+  memory_ids: string[]
+  rules: { rule_type: RuleType; rule_value: string }[]
+}
+
+/** The answer of POST /wellbeing/groups/with-items. */
+export interface CreatedGroup extends UserGroup {
+  rules: GroupRule[]
+}
+
 /** The answer of POST /wellbeing/groups/{id}/assign (manual seeding). */
 export interface AssignResult {
   memory_id: string

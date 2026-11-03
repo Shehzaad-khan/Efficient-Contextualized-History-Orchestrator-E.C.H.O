@@ -18,12 +18,14 @@ import {
 import type {
   AssignResult,
   CategoryItem,
+  CreatedGroup,
   DailySummary,
   GroupMember,
   GroupRule,
   GroupSuggestion,
   HeatmapCell,
   MemoryItem,
+  NewGroupInput,
   QueryResponse,
   QueryStep,
   RecentPage,
@@ -354,21 +356,33 @@ export function fetchGroups(): Promise<UserGroup[]> {
   )
 }
 
-export function createGroup(name: string, description?: string): Promise<UserGroup> {
-  return withFallback(
-    () =>
-      request<UserGroup>('/wellbeing/groups', {
-        method: 'POST',
-        body: JSON.stringify({ group_name: name, description: description ?? null }),
-      }),
-    () => ({
+/**
+ * Create a goal group together with its first items and optional rules; the backend does all of it
+ * or none of it. A live failure is NOT replaced by demo data (the group must not look created when
+ * it was not): the caller gets an ApiError, with the backend's reason for a refused value (400).
+ * In demo mode the group exists in this browser only.
+ */
+export async function createGroupWithItems(input: NewGroupInput): Promise<CreatedGroup> {
+  if (demoMode) {
+    return {
       group_id: `demo-${Date.now()}`,
-      group_name: name,
-      description: description ?? null,
-      member_count: 0,
-      auto_assignment_active: false,
-    }),
-  )
+      group_name: input.group_name,
+      description: input.description,
+      member_count: input.memory_ids.length,
+      confirmed_count: input.memory_ids.length,
+      auto_assignment_active: true,
+      rules: [],
+    }
+  }
+  try {
+    return await request<CreatedGroup>('/wellbeing/groups/with-items', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    })
+  } catch (error) {
+    void probeBackend()
+    throw error
+  }
 }
 
 /**

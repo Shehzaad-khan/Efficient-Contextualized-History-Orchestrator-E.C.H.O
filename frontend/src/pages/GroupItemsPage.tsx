@@ -7,24 +7,13 @@ import ScrollList from '../components/ScrollList'
 import SourceBadge from '../components/SourceBadge'
 import { ApiError, assignToGroup, fetchGroupItems, fetchGroups, fetchRecent } from '../lib/api'
 import { asUtc, formatWhen } from '../lib/format'
+import { filterItems, itemLocation } from '../lib/itemFilter'
 import type { GroupMember, MemoryItem, UserGroup } from '../lib/types'
 
 // The most the backend's recent-items route gives (backend/wellbeing.py `/recent`, le=100).
 const PICKER_ITEMS = 100
 // Confirmed members needed before Echo starts suggesting items by similarity (A42.3).
 const CONFIRMED_FOR_AUTO_SORT = 5
-
-function itemLocation(item: MemoryItem): string {
-  if (item.source_type === 'gmail') return item.sender ?? ''
-  if (item.source_type === 'chrome') return item.domain ?? ''
-  return item.channel_name ?? ''
-}
-
-/** True when every word typed appears in the item's title or its sender / site / channel. */
-function matches(item: MemoryItem, words: string[]): boolean {
-  const haystack = `${item.title ?? ''} ${itemLocation(item)}`.toLowerCase()
-  return words.every((word) => haystack.includes(word))
-}
 
 function assignErrorText(error: unknown): string {
   if (error instanceof ApiError && error.status === 404) return 'That item or this group no longer exists.'
@@ -62,10 +51,7 @@ export default function GroupItemsPage() {
 
   const memberIds = useMemo(() => new Set((members ?? []).map((member) => member.memory_id)), [members])
 
-  const candidates = useMemo(() => {
-    const words = search.toLowerCase().split(/\s+/).filter(Boolean)
-    return (recent ?? []).filter((item) => matches(item, words))
-  }, [recent, search])
+  const candidates = useMemo(() => filterItems(recent ?? [], search), [recent, search])
 
   async function add(item: MemoryItem) {
     if (savingId) return
