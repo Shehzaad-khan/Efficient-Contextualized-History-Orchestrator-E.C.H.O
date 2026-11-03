@@ -1291,7 +1291,7 @@ No local LLM, and it is not listed as future work (A31.5: college laptops cannot
   saved chats are left alone by decision. The Timeline page has a Delete button (with a confirmation) next to "mark regret".
 - **Retention (A37, built Thu–Sun):** Settings → Retention: forever (default) / 1 year / 6 months. A job at backend startup
   **hard-deletes** items older than the window from every store: `memory_items` + child rows (CASCADE), FAISS vectors, Redis keys.
-- Export: `GET /export` as JSON or CSV (all stored items, no vectors, no OAuth material). A frontend export button is a stretch item (E2).
+- Export: `GET /export` as JSON or CSV (all stored items, no vectors, no OAuth material). Settings has "download JSON" / "download CSV" buttons for it (D9, 2026-11-03); importing personal history (the rest of E2) stays out of scope.
 - Regret reminders: disable; delete chats.
 
 ### 13.4 Development vs Final Data

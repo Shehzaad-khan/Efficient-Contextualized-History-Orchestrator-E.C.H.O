@@ -1,13 +1,17 @@
 import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
+import { Download, X } from 'lucide-react'
 import PageTitle from '../components/PageTitle'
 import Switch from '../components/Switch'
 import {
+  downloadExport,
   fetchCaptureSettings,
   isDemoMode,
   onDemoModeChange,
+  saveExclusions,
   setReminderSettings,
   updateCaptureSettings,
+  type ExclusionLists,
   type RetentionChoice,
 } from '../lib/api'
 
@@ -76,9 +80,136 @@ const RETENTION_OPTIONS: ReadonlyArray<{ value: RetentionChoice; label: string }
   { value: '6m', label: '6 months' },
 ]
 
+type Checked = { value: string } | { error: string }
+
+/** "https://Mail.Example.com/inbox" -> "mail.example.com". Echo matches the site and its subdomains. */
+function checkSite(raw: string): Checked {
+  const host = raw
+    .trim()
+    .toLowerCase()
+    .replace(/^[a-z][a-z0-9+.-]*:\/\//, '')
+    .replace(/[/?#].*$/, '')
+    .replace(/:\d+$/, '')
+    .replace(/^\*?\./, '')
+  if (host === 'localhost' || /^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(host)) return { value: host }
+  return { error: 'Enter a site like example.com.' }
+}
+
+/** Echo matches a sender as a piece of the From address, so a very short entry would match nearly everyone. */
+function checkSender(raw: string): Checked {
+  const sender = raw.trim().toLowerCase()
+  if (/\s/.test(sender) || sender.length > 254) return { error: 'Enter part of an address, like newsletter@.' }
+  if (sender.length < 3) return { error: 'Use at least 3 characters, so it does not match everyone.' }
+  return { value: sender }
+}
+
+/** One "keep out" list: a text box, an add button and removable chips. Saves on every change. */
+function ExclusionList({
+  title,
+  placeholder,
+  help,
+  entries,
+  check,
+  onSave,
+}: {
+  title: string
+  placeholder: string
+  help: string
+  entries: string[]
+  check: (raw: string) => Checked
+  onSave: (next: string[]) => Promise<void>
+}) {
+  const [input, setInput] = useState('')
+  const [message, setMessage] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  async function save(next: string[]): Promise<boolean> {
+    setBusy(true)
+    setMessage(null)
+    try {
+      await onSave(next)
+      return true
+    } catch {
+      setMessage('Couldn’t save just now — the list is as it was. Try again in a moment.')
+      return false
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function add() {
+    if (!input.trim()) return
+    const checked = check(input)
+    if ('error' in checked) {
+      setMessage(checked.error)
+      return
+    }
+    if (entries.includes(checked.value)) {
+      setInput('')
+      setMessage('Already on the list.')
+      return
+    }
+    if (await save([...entries, checked.value])) setInput('')
+  }
+
+  return (
+    <div className="mt-5">
+      <label htmlFor={`keep-out-${title}`} className="text-sm font-medium text-ink">
+        {title}
+      </label>
+      <p className="mt-1 text-xs leading-5 text-ink-mute">{help}</p>
+      <div className="mt-2 flex gap-2">
+        <input
+          id={`keep-out-${title}`}
+          value={input}
+          onChange={(event) => {
+            setInput(event.target.value)
+            setMessage(null)
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') void add()
+          }}
+          placeholder={placeholder}
+          maxLength={254}
+          className="input-study min-w-0 flex-1 px-3 py-1.5 text-xs"
+        />
+        <button type="button" onClick={() => void add()} disabled={busy} className="btn-ghost px-4 py-1.5 text-xs disabled:opacity-50">
+          {busy ? 'saving…' : 'add'}
+        </button>
+      </div>
+      {message && (
+        <p role="alert" className="mt-2 text-xs leading-5 text-ink-soft">
+          {message}
+        </p>
+      )}
+      {entries.length > 0 && (
+        <ul className="mt-3 flex flex-wrap gap-2" aria-label={`${title} kept out`}>
+          {entries.map((entry) => (
+            <li key={entry} className="inline-flex items-center gap-1.5 rounded-pill border border-white/[0.08] bg-night-800 py-1 pl-3 pr-1.5 font-mono text-xs text-ink-soft">
+              {entry}
+              <button
+                type="button"
+                onClick={() => void save(entries.filter((other) => other !== entry))}
+                disabled={busy}
+                aria-label={`Stop keeping out ${entry}`}
+                className="rounded-full p-1 text-ink-mute transition hover:text-ink disabled:opacity-50"
+              >
+                <X size={11} aria-hidden="true" />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
 export default function SettingsPage() {
   const [settings, setSettings] = useState<LocalSettings>(loadSettings)
   const [retention, setRetention] = useState<RetentionChoice>('forever')
+  const [excluded, setExcluded] = useState<ExclusionLists>({ excluded_domains: [], excluded_senders: [] })
+  const [exporting, setExporting] = useState<'json' | 'csv' | null>(null)
+  const [exportMessage, setExportMessage] = useState<string | null>(null)
   const [demo, setDemo] = useState(isDemoMode())
 
   useEffect(() => onDemoModeChange(setDemo), [])
@@ -96,6 +227,7 @@ export default function SettingsPage() {
         youtubeCapture: remote.youtube_enabled,
       }))
       setRetention(remote.retention)
+      setExcluded({ excluded_domains: remote.excluded_domains, excluded_senders: remote.excluded_senders })
     })
     return () => {
       cancelled = true
@@ -118,6 +250,25 @@ export default function SettingsPage() {
   function chooseRetention(value: RetentionChoice) {
     setRetention(value)
     void updateCaptureSettings({ retention: value })
+  }
+
+  /** Save one list and show what the server now holds (it lowercases, de-duplicates and sorts). Throws on failure. */
+  async function saveList(key: keyof ExclusionLists, next: string[]) {
+    const saved = await saveExclusions({ [key]: next })
+    setExcluded(saved)
+  }
+
+  async function exportData(format: 'json' | 'csv') {
+    setExporting(format)
+    setExportMessage(null)
+    try {
+      await downloadExport(format)
+      setExportMessage('Downloaded. The file holds titles, links and senders, so keep it somewhere private.')
+    } catch {
+      setExportMessage('Couldn’t download your data just now. Try again in a moment.')
+    } finally {
+      setExporting(null)
+    }
   }
 
   const apiBase = (import.meta.env.VITE_API_BASE as string | undefined) ?? 'http://localhost:8000'
@@ -199,6 +350,39 @@ export default function SettingsPage() {
           </motion.section>
 
           <motion.section
+            className="card px-6 py-5"
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5, ease: EASE_OUT, delay: 0.28 }}
+            aria-labelledby="keep-out-heading"
+          >
+            <h2 id="keep-out-heading" className="meta">
+              keep out
+            </h2>
+            <p className="mt-3 text-sm font-medium text-ink">Sites and senders Echo never stores</p>
+            <p className="mt-1 text-xs leading-5 text-ink-mute">
+              Anything from these is skipped entirely: nothing is captured, kept or searchable. Changes apply to new
+              activity; what is already stored stays until you delete it from the Timeline.
+            </p>
+            <ExclusionList
+              title="Sites"
+              placeholder="example.com"
+              help="A site and all its subdomains: example.com also covers mail.example.com."
+              entries={excluded.excluded_domains}
+              check={checkSite}
+              onSave={(next) => saveList('excluded_domains', next)}
+            />
+            <ExclusionList
+              title="Senders"
+              placeholder="newsletter@"
+              help="Part of an email address: newsletter@ covers every address that contains it."
+              entries={excluded.excluded_senders}
+              check={checkSender}
+              onSave={(next) => saveList('excluded_senders', next)}
+            />
+          </motion.section>
+
+          <motion.section
             className="card px-6 py-2"
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
@@ -240,6 +424,41 @@ export default function SettingsPage() {
                 </dd>
               </div>
             </dl>
+          </motion.section>
+
+          <motion.section
+            className="card p-6"
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5, ease: EASE_OUT, delay: 0.38 }}
+            aria-labelledby="your-data-heading"
+          >
+            <h2 id="your-data-heading" className="meta mb-4">
+              your data
+            </h2>
+            <p className="text-sm font-medium text-ink">Take a copy with you</p>
+            <p className="mt-1 text-xs leading-5 text-ink-mute">
+              Every item Echo stored: title, source, times, time spent, and the sender, link or channel. The full
+              text, the search index and your Google sign-in are not included.
+            </p>
+            <div className="mt-4 flex flex-wrap gap-2">
+              {(['json', 'csv'] as const).map((format) => (
+                <button
+                  key={format}
+                  type="button"
+                  onClick={() => void exportData(format)}
+                  disabled={exporting !== null}
+                  className="btn-ghost inline-flex items-center gap-2 text-xs disabled:opacity-50"
+                >
+                  <Download size={13} aria-hidden="true" /> {exporting === format ? 'preparing…' : `download ${format.toUpperCase()}`}
+                </button>
+              ))}
+            </div>
+            {exportMessage && (
+              <p role="status" className="mt-3 text-xs leading-5 text-ink-soft">
+                {exportMessage}
+              </p>
+            )}
           </motion.section>
 
           <motion.section

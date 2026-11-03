@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { Link, useLocation } from 'react-router-dom'
-import { Check, ChevronDown, ChevronLeft, ChevronRight, Plus, Trash2, X } from 'lucide-react'
+import { Check, ChevronDown, ChevronLeft, ChevronRight, Plus, RefreshCw, Trash2, X } from 'lucide-react'
 import PageTitle from '../components/PageTitle'
 import Counter from '../components/Counter'
 import SourceBadge from '../components/SourceBadge'
@@ -14,6 +14,9 @@ import {
   fetchHeatmap,
   fetchReviewQueue,
   fetchWeeklyInsight,
+  refreshReviewQueue,
+  runAutoAssignment,
+  type AutoAssignResult,
 } from '../lib/api'
 import { DOW_LABELS, HOUR_LABELS, formatDuration, isoDayLabel, shiftIsoDate, todayIso } from '../lib/format'
 import type { CategoryItem, DailySummary, GroupSuggestion, HeatmapCell, UserGroup, WeeklyInsight } from '../lib/types'
@@ -619,6 +622,10 @@ export default function PatternsPage() {
   const [insight, setInsight] = useState<WeeklyInsight | null>(null)
   const [insightLoading, setInsightLoading] = useState(true)
   const [reviewQueue, setReviewQueue] = useState<GroupSuggestion[]>([])
+  // "Check now" in the review section: nothing runs the check by itself, so this starts it.
+  const [checking, setChecking] = useState(false)
+  const [checkResult, setCheckResult] = useState<AutoAssignResult | null>(null)
+  const [checkFailed, setCheckFailed] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -683,6 +690,37 @@ export default function PatternsPage() {
       // Member counts may have changed — refresh the group list quietly.
       void fetchGroups().then(setGroups)
     })
+  }
+
+  // Only a group with enough confirmed items (the backend's auto_assignment_active) is checked against.
+  const readyGroupCount = groups.filter((group) => group.auto_assignment_active).length
+
+  async function handleCheckNow() {
+    setChecking(true)
+    setCheckFailed(false)
+    setCheckResult(null)
+    try {
+      const result = await runAutoAssignment()
+      setCheckResult(result)
+      // New suggestions and automatic additions land in the queue; member counts may have changed.
+      void refreshReviewQueue()
+        .then(setReviewQueue)
+        .catch(() => undefined) // keep the queue already shown
+      void fetchGroups().then(setGroups)
+    } catch {
+      setCheckFailed(true)
+    } finally {
+      setChecking(false)
+    }
+  }
+
+  function checkSummary(result: AutoAssignResult): string {
+    if (result.skipped) return 'A check is already running. Give it a moment.'
+    if (result.auto_accepted === 0 && result.suggested === 0) return 'Nothing new matched. The queue is as it was.'
+    const parts = []
+    if (result.auto_accepted > 0) parts.push(`${result.auto_accepted} added automatically`)
+    if (result.suggested > 0) parts.push(`${result.suggested} waiting for your yes`)
+    return `Checked your recent items: ${parts.join(', ')}.`
   }
 
   // Throws on a refused delete, so the row can say so and stay in the list.
@@ -832,6 +870,33 @@ export default function PatternsPage() {
               confirmed both agree, the item is added and shown here, where one click undoes it. Anything less
               certain waits for your yes. Only items you confirmed ever teach Echo.
             </p>
+            <div className="mb-5 flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={() => void handleCheckNow()}
+                disabled={checking || readyGroupCount === 0}
+                className="btn-ghost inline-flex items-center gap-2 text-xs disabled:opacity-50"
+              >
+                <RefreshCw size={13} aria-hidden="true" className={checking ? 'motion-safe:animate-spin' : ''} />
+                {checking ? 'checking…' : 'check recent items now'}
+              </button>
+              {readyGroupCount === 0 ? (
+                <span className="meta text-ink-faint">
+                  Echo starts checking once a group has {AUTO_SORT_AFTER} items you confirmed.
+                </span>
+              ) : (
+                checkResult && (
+                  <span role="status" className="meta text-ink-soft">
+                    {checkSummary(checkResult)}
+                  </span>
+                )
+              )}
+              {checkFailed && (
+                <span role="alert" className="meta text-ink-soft">
+                  Couldn’t run the check just now. Try again in a moment.
+                </span>
+              )}
+            </div>
             <ReviewQueue suggestions={reviewQueue} onDecide={handleDecide} />
           </section>
         </div>

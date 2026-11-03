@@ -15,6 +15,7 @@ import {
   demoRegret,
   demoRules,
 } from './demoData'
+import { todayIso } from './format'
 import type {
   AssignResult,
   CategoryItem,
@@ -502,6 +503,34 @@ export function fetchReviewQueue(): Promise<GroupSuggestion[]> {
   )
 }
 
+/** What one auto-assignment run did (POST /wellbeing/groups/auto-assign). */
+export interface AutoAssignResult {
+  scored: number
+  suggested: number
+  auto_accepted: number
+  skipped?: string
+}
+
+/**
+ * Check the most recent items against every group that has enough confirmed items, now.
+ * A failure reaches the caller; nothing is faked in demo mode.
+ */
+export async function runAutoAssignment(): Promise<AutoAssignResult> {
+  if (demoMode) throw new Error('Nothing is stored in demo mode')
+  try {
+    return await request<AutoAssignResult>('/wellbeing/groups/auto-assign', { method: 'POST' }, 120000)
+  } catch (error) {
+    void probeBackend()
+    throw error
+  }
+}
+
+/** The review queue again after a run. Unlike fetchReviewQueue, a failure does not turn into an empty list. */
+export async function refreshReviewQueue(): Promise<GroupSuggestion[]> {
+  if (demoMode) return []
+  return (await request<{ suggestions: GroupSuggestion[] }>('/wellbeing/groups/review')).suggestions
+}
+
 export function decideSuggestion(suggestionId: string, accept: boolean): Promise<{ decision: string }> {
   return withFallback(
     () =>
@@ -646,4 +675,53 @@ export function updateCaptureSettings(update: Partial<CaptureSettings>): Promise
     () => request<CaptureSettings>('/settings', { method: 'POST', body: JSON.stringify(update) }),
     () => ({ ...DEMO_CAPTURE_SETTINGS, ...update }),
   )
+}
+
+export interface ExclusionLists {
+  excluded_domains: string[]
+  excluded_senders: string[]
+}
+
+/**
+ * Save the "keep out" lists and return what the server now holds (it lowercases, de-duplicates and
+ * sorts them). Unlike the capture toggles, a failure is NOT hidden behind demo data: these lists are a
+ * privacy control, so the caller must know when a site or sender was not actually added.
+ */
+export async function saveExclusions(update: Partial<ExclusionLists>): Promise<ExclusionLists> {
+  if (demoMode) throw new Error('Nothing is saved in demo mode')
+  try {
+    const saved = await request<CaptureSettings>('/settings', { method: 'POST', body: JSON.stringify(update) })
+    return { excluded_domains: saved.excluded_domains, excluded_senders: saved.excluded_senders }
+  } catch (error) {
+    void probeBackend()
+    throw error
+  }
+}
+
+/**
+ * Download everything Echo stored about the user's items (GET /export) as a file. The file holds titles,
+ * sources, times, engagement, senders, URLs and channels; never the full text, the search vectors or
+ * any Google sign-in. A failure reaches the caller.
+ */
+export async function downloadExport(format: 'json' | 'csv'): Promise<void> {
+  if (demoMode) throw new Error('Nothing is stored in demo mode')
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 60000)
+  try {
+    const response = await fetch(`${API_BASE}/export?format=${format}`, { signal: controller.signal })
+    if (!response.ok) throw await errorFrom(response)
+    const url = URL.createObjectURL(await response.blob())
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `echo_export_${todayIso()}.${format}`
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    URL.revokeObjectURL(url)
+  } catch (error) {
+    void probeBackend()
+    throw error
+  } finally {
+    clearTimeout(timer)
+  }
 }
