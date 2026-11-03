@@ -307,7 +307,8 @@
           contentExtract,
           wordCount: countWords(contentExtract),
           referrer: document.referrer || "",
-          isAppPage: detectApplicationPage()
+          isAppPage: detectApplicationPage(),
+          pageVisible: document.visibilityState === "visible"
         },
         () => {
           const lastError = chrome.runtime.lastError;
@@ -326,6 +327,10 @@
   }
 
   window.addEventListener("scroll", computeScrollDepth, { passive: true });
+
+  // Tell the background worker at once when the page is hidden or shown again,
+  // instead of waiting for the next 5 s signal.
+  document.addEventListener("visibilitychange", () => sendSignal("CHROME_PAGE_SIGNAL"));
 
   document.addEventListener(
     "click",

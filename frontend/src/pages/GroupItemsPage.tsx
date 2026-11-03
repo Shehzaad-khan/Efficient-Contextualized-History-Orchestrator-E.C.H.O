@@ -5,19 +5,13 @@ import { ArrowLeft, Check, Plus, Search } from 'lucide-react'
 import PageTitle from '../components/PageTitle'
 import SourceBadge from '../components/SourceBadge'
 import { ApiError, assignToGroup, fetchGroupItems, fetchGroups, fetchRecent } from '../lib/api'
-import { formatWhen } from '../lib/format'
+import { asUtc, formatWhen } from '../lib/format'
 import type { GroupMember, MemoryItem, UserGroup } from '../lib/types'
 
 // The most the backend's recent-items route gives (backend/wellbeing.py `/recent`, le=100).
 const PICKER_ITEMS = 100
 // Confirmed members needed before Echo starts suggesting items by similarity (A42.3).
 const CONFIRMED_FOR_AUTO_SORT = 5
-
-/** The backend sends naive UTC timestamps (no zone); read them as UTC, not local time. */
-function asUtc(iso: string | null): string | null {
-  if (!iso) return iso
-  return /[zZ]|[+-]\d\d:?\d\d$/.test(iso) ? iso : `${iso}Z`
-}
 
 function itemLocation(item: MemoryItem): string {
   if (item.source_type === 'gmail') return item.sender ?? ''
@@ -183,7 +177,7 @@ export default function GroupItemsPage() {
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
                         <SourceBadge source={item.source_type} />
-                        <span className="meta text-ink-faint">{formatWhen(item.last_accessed_at ?? item.created_at)}</span>
+                        <span className="meta text-ink-faint">{formatWhen(asUtc(item.last_accessed_at ?? item.created_at))}</span>
                       </div>
                       <p className="mt-1 truncate text-sm text-ink-soft">{item.title || '(untitled)'}</p>
                       {itemLocation(item) && <p className="truncate text-xs text-ink-mute">{itemLocation(item)}</p>}

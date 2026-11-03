@@ -69,6 +69,12 @@ export interface MemoryItem {
   is_short?: boolean | null
 }
 
+/** One page of the newest-first item list; `next_cursor` is null on the last page. */
+export interface RecentPage {
+  items: MemoryItem[]
+  next_cursor: string | null
+}
+
 export interface GroupTime {
   group_name: string
   total_seconds: number

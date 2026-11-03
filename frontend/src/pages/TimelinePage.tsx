@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { ExternalLink, Flag } from 'lucide-react'
+import { ArrowDown, ExternalLink, Flag, LoaderCircle } from 'lucide-react'
 import gsap from 'gsap'
 import { ScrollTrigger } from 'gsap/ScrollTrigger'
 import PageTitle from '../components/PageTitle'
 import SourceBadge from '../components/SourceBadge'
-import { fetchRecent, toggleRegret } from '../lib/api'
-import { dayLabel, formatWhen } from '../lib/format'
+import { fetchRecentPage, toggleRegret } from '../lib/api'
+import { asUtc, dayLabel, formatWhen } from '../lib/format'
 import type { MemoryItem } from '../lib/types'
 
 gsap.registerPlugin(ScrollTrigger)
@@ -67,7 +67,7 @@ function TimelineEntry({ item, index }: { item: MemoryItem; index: number }) {
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-3">
               <SourceBadge source={item.source_type} />
-              <span className="meta text-ink-faint">{formatWhen(item.last_accessed_at ?? item.created_at)}</span>
+              <span className="meta text-ink-faint">{formatWhen(asUtc(item.last_accessed_at ?? item.created_at))}</span>
             </div>
             <h3 className="mt-2 truncate text-[15px] font-medium text-ink">{item.title || '(untitled)'}</h3>
           </div>
@@ -91,7 +91,7 @@ function TimelineEntry({ item, index }: { item: MemoryItem; index: number }) {
                   </div>
                   <div>
                     <dt className="meta">captured</dt>
-                    <dd className="mt-1 text-sm text-ink-soft">{formatWhen(item.created_at)}</dd>
+                    <dd className="mt-1 text-sm text-ink-soft">{formatWhen(asUtc(item.created_at))}</dd>
                   </div>
                   {item.is_short && (
                     <div>
@@ -133,22 +133,52 @@ function TimelineEntry({ item, index }: { item: MemoryItem; index: number }) {
   )
 }
 
+const PAGE_SIZE = 40
+
+/** `older` appended after `current`, leaving out items already shown (a day can span two pages). */
+function appendUnique(current: MemoryItem[], older: MemoryItem[]): MemoryItem[] {
+  const seen = new Set(current.map((item) => item.memory_id))
+  return [...current, ...older.filter((item) => !seen.has(item.memory_id))]
+}
+
 export default function TimelinePage() {
   const [items, setItems] = useState<MemoryItem[] | null>(null)
+  const [nextCursor, setNextCursor] = useState<string | null>(null)
+  const [loadingOlder, setLoadingOlder] = useState(false)
+  const [olderFailed, setOlderFailed] = useState(false)
   const threadRef = useRef<HTMLDivElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     let cancelled = false
-    void fetchRecent(40).then((data) => {
-      if (!cancelled) setItems(data)
+    void fetchRecentPage(PAGE_SIZE).then((page) => {
+      if (cancelled) return
+      setItems(page.items)
+      setNextCursor(page.next_cursor)
     })
     return () => {
       cancelled = true
     }
   }, [])
 
+  async function loadOlder() {
+    if (nextCursor === null || loadingOlder) return
+    setLoadingOlder(true)
+    setOlderFailed(false)
+    try {
+      const page = await fetchRecentPage(PAGE_SIZE, nextCursor)
+      setItems((current) => appendUnique(current ?? [], page.items))
+      setNextCursor(page.next_cursor)
+    } catch {
+      setOlderFailed(true) // what is shown stays; the button below tries again
+    } finally {
+      setLoadingOlder(false)
+    }
+  }
+
   // GSAP + ScrollTrigger: the thread draws itself as you read down the page.
+  // Runs again when older items are appended: the cleanup kills the old trigger, and the
+  // new one measures the taller list.
   useEffect(() => {
     if (!items || !threadRef.current || !listRef.current) return
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
@@ -170,7 +200,7 @@ export default function TimelinePage() {
   const grouped = useMemo(() => {
     const groups = new Map<string, MemoryItem[]>()
     for (const item of items ?? []) {
-      const key = dayLabel(item.last_accessed_at ?? item.created_at)
+      const key = dayLabel(asUtc(item.last_accessed_at ?? item.created_at))
       const list = groups.get(key) ?? []
       list.push(item)
       groups.set(key, list)
@@ -217,6 +247,49 @@ export default function TimelinePage() {
           ))}
         </div>
       </div>
+
+      {/* Outside the list, so the thread ends at the last item */}
+      {items !== null && items.length > 0 && (
+        <div className="relative pb-4 pl-10">
+          {/* The thread carries on, dotted and fading, down to the button */}
+          <span
+            aria-hidden="true"
+            className="absolute left-4 top-0 h-8 border-l border-dashed border-ember-500/40"
+          />
+          <span
+            aria-hidden="true"
+            className="absolute left-[13px] top-8 h-[7px] w-[7px] rounded-full bg-ember-500/70"
+          />
+          {nextCursor !== null ? (
+            <div className="flex flex-wrap items-center gap-4 pt-6">
+              <button
+                type="button"
+                onClick={() => void loadOlder()}
+                disabled={loadingOlder}
+                className="btn-ghost group inline-flex items-center gap-2.5 border-ember-500/30 bg-night-850 px-5 py-2.5 text-ink shadow-raise hover:-translate-y-0.5 hover:border-ember-500/60 hover:shadow-[0_0_28px_-8px_rgba(245,169,71,0.45)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ember-500/40 disabled:cursor-wait disabled:opacity-70 disabled:hover:translate-y-0 motion-reduce:transition-none motion-reduce:hover:translate-y-0"
+              >
+                {loadingOlder ? (
+                  <LoaderCircle size={15} aria-hidden="true" className="text-ember-400 motion-safe:animate-spin" />
+                ) : (
+                  <ArrowDown
+                    size={15}
+                    aria-hidden="true"
+                    className="text-ember-400 transition duration-300 motion-safe:group-hover:translate-y-0.5"
+                  />
+                )}
+                <span>{loadingOlder ? 'loading…' : 'Load older'}</span>
+              </button>
+              {olderFailed && (
+                <span role="status" className="meta text-ink-faint">
+                  Couldn't load older items — press the button to try again.
+                </span>
+              )}
+            </div>
+          ) : (
+            <p className="pt-6 font-display text-base italic text-ink-mute">That's everything Echo kept.</p>
+          )}
+        </div>
+      )}
     </div>
   )
 }

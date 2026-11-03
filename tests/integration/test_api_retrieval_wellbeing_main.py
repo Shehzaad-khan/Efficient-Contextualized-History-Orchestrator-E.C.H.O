@@ -187,7 +187,7 @@ def boom(*args, **kwargs):
 def test_wellbeing_read_routes_pass_the_data_through(wellbeing_client, monkeypatch):
     monkeypatch.setattr(wb, "daily_summary", lambda day: {"day": "2026-10-05", "total_seconds": 60})
     monkeypatch.setattr(wb, "activity_heatmap", lambda a, b: [{"hour": 1}])
-    monkeypatch.setattr(wb, "recent_items", lambda limit: [{"memory_id": uuid.UUID(ID)}])
+    monkeypatch.setattr(wb, "recent_items", lambda limit, before=None: [{"memory_id": uuid.UUID(ID)}])
     monkeypatch.setattr(wb, "rebuild_sessions_for_day", lambda day: {"sessions": 2})
     monkeypatch.setattr(wb, "ensure_sessions_for_day", lambda day: None)
     monkeypatch.setattr(wb, "sessions_for_day", lambda day: [])
@@ -199,6 +199,72 @@ def test_wellbeing_read_routes_pass_the_data_through(wellbeing_client, monkeypat
     assert wellbeing_client.get("/wellbeing/sessions").json()["sessions"] == []
     assert wellbeing_client.get("/wellbeing/analytics/heatmap?days=0").status_code == 422
     assert wellbeing_client.get("/wellbeing/analytics/daily?day=nonsense").status_code == 422
+
+
+def _recent_rows(count):
+    """`count` rows newest first, one minute apart, shaped like recent_items (with sort_ts)."""
+    from datetime import datetime, timedelta
+
+    start = datetime(2026, 11, 3, 12, 0)
+    return [
+        {"memory_id": uuid.UUID(int=index + 1), "title": f"t{index}", "sort_ts": start - timedelta(minutes=index)}
+        for index in range(count)
+    ]
+
+
+def test_recent_returns_a_cursor_while_older_rows_exist_and_null_on_the_last_page(wellbeing_client, monkeypatch):
+    """Shows: limit+1 rows are fetched; the extra one only proves 'more exists' and is not returned."""
+    calls = []
+    monkeypatch.setattr(wb, "recent_items", lambda limit, before=None: calls.append((limit, before)) or _recent_rows(3))
+    body = wellbeing_client.get("/wellbeing/recent?limit=2").json()
+    assert calls == [(3, None)]
+    assert [item["title"] for item in body["items"]] == ["t0", "t1"]
+    assert all("sort_ts" not in item for item in body["items"])
+    assert body["next_cursor"] is not None
+
+    monkeypatch.setattr(wb, "recent_items", lambda limit, before=None: _recent_rows(2))
+    last_page = wellbeing_client.get("/wellbeing/recent?limit=2").json()
+    assert len(last_page["items"]) == 2 and last_page["next_cursor"] is None
+    monkeypatch.setattr(wb, "recent_items", lambda limit, before=None: [])
+    assert wellbeing_client.get("/wellbeing/recent").json() == {"items": [], "next_cursor": None}
+
+
+def test_recent_cursor_round_trips_into_the_next_query(wellbeing_client, monkeypatch):
+    """Shows: the cursor of page 1 is the (time, id) of its LAST item, and page 2 asks for rows older than that."""
+    from datetime import datetime
+
+    rows = _recent_rows(3)
+    monkeypatch.setattr(wb, "recent_items", lambda limit, before=None: rows)
+    cursor = wellbeing_client.get("/wellbeing/recent?limit=2").json()["next_cursor"]
+
+    calls = []
+    monkeypatch.setattr(wb, "recent_items", lambda limit, before=None: calls.append((limit, before)) or [])
+    assert wellbeing_client.get("/wellbeing/recent", params={"limit": 2, "before": cursor}).status_code == 200
+    assert calls == [(3, (datetime(2026, 11, 3, 11, 59), str(uuid.UUID(int=2))))]
+
+
+def test_recent_cursor_with_a_time_zone_is_read_as_naive_utc(wellbeing_client, monkeypatch):
+    import base64
+
+    calls = []
+    monkeypatch.setattr(wb, "recent_items", lambda limit, before=None: calls.append(before) or [])
+    raw = f"2026-11-03T17:30:00+05:30|{ID}"
+    cursor = base64.urlsafe_b64encode(raw.encode()).decode()
+    assert wellbeing_client.get("/wellbeing/recent", params={"before": cursor}).status_code == 200
+    from datetime import datetime
+    assert calls == [(datetime(2026, 11, 3, 12, 0), ID)]
+
+
+@pytest.mark.parametrize("cursor", [
+    "not-base64!!", "bm90aGluZw==",  # not base64; 'nothing' (no separator)
+    "MjAyNi0xMS0wM1QxMjowMDowMHxub3QtYS11dWlk",  # valid time, id is not a uuid
+    "bm90LWEtdGltZXwwMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDE=",  # time is not a time
+    "w6k=",  # not ASCII
+])
+def test_recent_with_a_malformed_cursor_is_a_422_and_never_queries(wellbeing_client, monkeypatch, cursor):
+    monkeypatch.setattr(wb, "recent_items", boom)
+    response = wellbeing_client.get("/wellbeing/recent", params={"before": cursor})
+    assert response.status_code == 422
 
 
 def test_heatmap_can_show_an_earlier_week(wellbeing_client, monkeypatch):

@@ -15,8 +15,9 @@
  *    ingestion/chrome/intent_filter.py, which re-checks every page. The
  *    app-domain and sensitive-term lists are not kept here: they come from
  *    GET /chrome/rules (A9.5, see "Capture rules" below).
- *    Dwell time is counted here (1 s ticks, active tab of the focused window,
- *    user not idle). chrome_tracker.js adds scroll depth, interactions and the
+ *    Dwell time is counted here (1 s ticks, active tab of the last focused window
+ *    that is not minimized, page visible, user not idle). chrome_tracker.js adds
+ *    scroll depth, interactions, page visibility and the
  *    readable text through CHROME_PAGE_SIGNAL every 5 s, and
  *    CHROME_PAGE_UNLOAD when the page goes away.
  *
@@ -52,9 +53,8 @@ const SEND_RETRY_DELAY_MS = 30000;
 
 // tabId -> state of the page currently open in that tab.
 const activeChromeTabs = new Map();
-let windowFocused = true;
 let userIdle = false;
-let currentActiveChromeTabId = null;
+const dbg = (...args) => console.log("[Echo DEBUG]", new Date().toLocaleTimeString(), ...args); // DEBUG-TEMP
 
 const CHROME_APPLICATION_PATH_SNIPPETS = ["github.com/issues", "github.com/pulls"];
 const CHROME_IGNORED_QUERY_PARAMS = new Set([
@@ -349,7 +349,8 @@ function newChromePageState(url, canonicalUrl, title) {
     contentExtract: "",
     wordCount: 0,
     referrer: "",
-    isAppPage: isAppPageUrl(canonicalUrl)
+    isAppPage: isAppPageUrl(canonicalUrl),
+    pageVisible: true // last visibilityState the page script reported
   };
 }
 
@@ -367,6 +368,7 @@ function ensureChromeTabState(tab) {
 
   const existing = activeChromeTabs.get(tab.id);
   if (shouldSkipChromeUrl(tab.url, tab.incognito)) {
+    dbg("page SKIPPED", { tabId: tab.id, hasRules: Boolean(chromeRules), incognito: tab.incognito, scheme: String(tab.url).split(":")[0] }); // DEBUG-TEMP
     if (existing) {
       retireChromeTab(tab.id);
     }
@@ -531,14 +533,54 @@ function retireChromeTab(tabId) {
   return finalizeChromePage(tabState);
 }
 
-// Dwell clock: one tick per second for the active tab of the focused window.
+/**
+ * The tab the user can see now: the active tab of the last focused window, unless
+ * that window is minimized. "Last focused" stays valid while Chrome reports no
+ * focused window (it does so after the address bar is used), which the
+ * onFocusChanged events do not: they never report the focus back.
+ */
+async function visibleChromeTabId() {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    if (!tab || tab.id === undefined) {
+      return null;
+    }
+    const chromeWindow = await chrome.windows.get(tab.windowId);
+    return chromeWindow.state === "minimized" ? null : tab.id;
+  } catch (error) {
+    return null; // the tab or window closed between the two calls
+  }
+}
+
+// Dwell clock: one tick per second for the tab the user can see.
 setInterval(async () => {
-  if (!windowFocused || userIdle || currentActiveChromeTabId === null) {
+  // DEBUG-TEMP: one line per second, only for pages that are not yet sent.
+  const dbgTabId = await visibleChromeTabId();
+  const dbgTab = dbgTabId === null ? null : activeChromeTabs.get(dbgTabId);
+  if (!dbgTab || !dbgTab.sentToBackend) {
+    dbg("tick", {
+      userIdle,
+      visibleTab: dbgTabId,
+      host: dbgTab ? dbgTab.domain : null,
+      pageVisible: dbgTab ? dbgTab.pageVisible : null,
+      dwell: dbgTab ? dbgTab.dwellSeconds : null,
+      scroll: dbgTab ? dbgTab.scrollDepth : null,
+      clicks: dbgTab ? dbgTab.interactionCount : null,
+      phase1: dbgTab ? dbgTab.phase1Passed : null,
+      phase2: dbgTab ? dbgTab.phase2Passed : null
+    });
+  }
+  if (userIdle) {
     return;
   }
 
-  const tabState = activeChromeTabs.get(currentActiveChromeTabId);
-  if (!tabState) {
+  const visibleTabId = await visibleChromeTabId();
+  if (visibleTabId === null) {
+    return;
+  }
+
+  const tabState = activeChromeTabs.get(visibleTabId);
+  if (!tabState || !tabState.pageVisible) {
     return;
   }
 
@@ -558,10 +600,8 @@ setInterval(async () => {
 async function trackActiveTabOfWindow(query) {
   try {
     const [tab] = await chrome.tabs.query({ active: true, ...query });
-    // No tab found (e.g. a devtools window): keep the current one rather than
-    // overwrite a tab that a newer event has already set.
+    // No tab found (e.g. a devtools window): nothing to start tracking.
     if (tab) {
-      currentActiveChromeTabId = tab.id;
       await ensureChromeRules();
       ensureChromeTabState(tab);
     }
@@ -574,7 +614,7 @@ async function trackActiveTabOfWindow(query) {
 trackActiveTabOfWindow({ lastFocusedWindow: true });
 
 chrome.tabs.onActivated.addListener(async ({ tabId }) => {
-  currentActiveChromeTabId = tabId;
+  dbg("tabs.onActivated", { tabId }); // DEBUG-TEMP
   try {
     const tab = await chrome.tabs.get(tabId);
     await ensureChromeRules();
@@ -586,21 +626,19 @@ chrome.tabs.onActivated.addListener(async ({ tabId }) => {
 });
 
 chrome.windows.onFocusChanged.addListener((windowId) => {
-  windowFocused = windowId !== chrome.windows.WINDOW_ID_NONE;
+  dbg("windows.onFocusChanged (no longer gates dwell)", { windowId, none: windowId === chrome.windows.WINDOW_ID_NONE }); // DEBUG-TEMP
   // Switching windows fires no onActivated, so look up that window's active tab.
-  if (windowFocused) {
+  if (windowId !== chrome.windows.WINDOW_ID_NONE) {
     trackActiveTabOfWindow({ windowId });
   }
 });
 
 chrome.idle.onStateChanged.addListener((state) => {
+  dbg("idle.onStateChanged", { state }); // DEBUG-TEMP
   userIdle = state === "idle" || state === "locked";
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
-  if (currentActiveChromeTabId === tabId) {
-    currentActiveChromeTabId = null;
-  }
   retireChromeTab(tabId);
 });
 
@@ -608,11 +646,9 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   // changeInfo.url covers single-page-app navigation, which may never
   // reach status "complete" again.
   if (changeInfo.status === "complete" || changeInfo.url) {
+    dbg("tabs.onUpdated", { tabId, status: changeInfo.status, active: tab.active, windowId: tab.windowId }); // DEBUG-TEMP
     await ensureChromeRules();
     ensureChromeTabState(tab);
-    if (tab.active) {
-      currentActiveChromeTabId = tabId;
-    }
   }
 });
 
@@ -640,6 +676,17 @@ function handleChromePageMessage(message, sender, sendResponse) {
 
   // The content script reports the live URL, which is newer than tab.url
   // after a single-page-app navigation.
+  dbg("content signal", { tabId: tab.id, tabActive: tab.active, pageVisible: message.pageVisible, scroll: message.scrollDepth, clicks: message.interactionCount }); // DEBUG-TEMP
+  // A hidden document at another address in this tab (a page Chrome prepared in the
+  // background) must not replace the page the user is reading: its signals would
+  // restart the dwell clock every 5 s.
+  if (message.pageVisible === false && message.url && tab.url
+      && canonicalizeChromeUrl(message.url) !== canonicalizeChromeUrl(tab.url)) {
+    dbg("ignored hidden document of another address", { tabId: tab.id }); // DEBUG-TEMP
+    sendResponse({ ok: true });
+    return false;
+  }
+
   const tabState = ensureChromeTabState({ ...tab, url: message.url || tab.url, title: message.title || tab.title });
   if (!tabState) {
     sendResponse({ ok: false, error: "tab_skipped" });
@@ -652,6 +699,7 @@ function handleChromePageMessage(message, sender, sendResponse) {
   tabState.wordCount = Math.max(tabState.wordCount, Number(message.wordCount || 0));
   tabState.referrer = message.referrer || tabState.referrer;
   tabState.isAppPage = Boolean(message.isAppPage || tabState.isAppPage);
+  tabState.pageVisible = message.pageVisible !== false;
   sendResponse({ ok: true });
   return false;
 }

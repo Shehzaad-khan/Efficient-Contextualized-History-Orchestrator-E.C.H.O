@@ -25,6 +25,7 @@ import type {
   MemoryItem,
   QueryResponse,
   QueryStep,
+  RecentPage,
   RegretAnalytics,
   RegretReminder,
   RuleSuggestion,
@@ -312,6 +313,27 @@ export function fetchRecent(limit = 30): Promise<MemoryItem[]> {
   return withFallback(
     async () => (await request<{ items: MemoryItem[] }>(`/wellbeing/recent?limit=${limit}`)).items,
     () => demoRecent,
+  )
+}
+
+/**
+ * One page of the newest-first item list. `before` is the previous page's `next_cursor`.
+ * Unlike the first page, an older page that fails is NOT replaced by demo data: it would
+ * be appended to the real list, so the caller gets the error and keeps what it shows.
+ */
+export function fetchRecentPage(limit = 40, before?: string): Promise<RecentPage> {
+  return withFallback(
+    async () => {
+      const page = await request<Partial<RecentPage> & { items: MemoryItem[] }>(
+        `/wellbeing/recent${queryString({ limit, before })}`,
+      )
+      // A backend that is not restarted yet sends no cursor: that means "no older page".
+      return { items: page.items, next_cursor: page.next_cursor ?? null }
+    },
+    () => {
+      if (before) throw new Error('No older items in demo mode')
+      return { items: demoRecent, next_cursor: null }
+    },
   )
 }
 

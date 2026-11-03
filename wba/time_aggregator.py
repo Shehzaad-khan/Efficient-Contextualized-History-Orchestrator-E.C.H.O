@@ -266,18 +266,37 @@ def source_link(row: dict[str, Any]) -> str | None:
     return None
 
 
-def recent_items(limit: int = 10) -> list[dict[str, Any]]:
+RECENT_SORT_TS = "COALESCE(me.last_accessed_at, m.first_ingested_at)"
+
+# Keyset page (not OFFSET): items arrive continuously, so an offset would skip or
+# repeat rows between two pages. The cursor is the (sort time, memory_id) of the
+# last row already shown; memory_id breaks ties between equal timestamps.
+RECENT_BEFORE_SQL = f"AND ({RECENT_SORT_TS}, m.memory_id) < (:before_ts, CAST(:before_id AS uuid))"
+
+
+def recent_items(limit: int = 10, before: tuple[datetime, str] | None = None) -> list[dict[str, Any]]:
     """Last N items across all sources for the dashboard/extension popup.
 
     Ordered by last open; items never opened (unread Gmail) fall back to their
     ingestion time. `url` opens the original for every source (D6.7): the page
     for Chrome, the Gmail thread, or the YouTube video. The ids it is built from
     are not returned.
+
+    `before` = (sort time, memory_id) of the last item already shown: the next
+    page starts right after it. Every row carries `sort_ts` (naive UTC, the value
+    it is ordered by) so the caller can build the next cursor; the caller removes
+    it before the row goes to the browser.
     """
+    params: dict[str, Any] = {"limit": limit}
+    before_clause = ""
+    if before is not None:
+        params["before_ts"], params["before_id"] = before
+        before_clause = RECENT_BEFORE_SQL
     rows = postgresql_manager.fetchall(
-        """
+        f"""
         SELECT m.memory_id, m.source_type, m.title, m.created_at,
                me.last_accessed_at,
+               {RECENT_SORT_TS} AS sort_ts,
                cm.url, cm.domain,
                gm.sender, gm.thread_id, gm.email_id,
                ym.channel_name, ym.is_short, ym.video_id
@@ -287,14 +306,15 @@ def recent_items(limit: int = 10) -> list[dict[str, Any]]:
         LEFT JOIN gmail_metadata   gm ON m.memory_id = gm.memory_id
         LEFT JOIN youtube_metadata ym ON m.memory_id = ym.memory_id
         WHERE m.is_deleted = FALSE
-        ORDER BY COALESCE(me.last_accessed_at, m.first_ingested_at) DESC
+        {before_clause}
+        ORDER BY {RECENT_SORT_TS} DESC, m.memory_id DESC
         LIMIT :limit
         """,
-        {"limit": limit},
+        params,
     )
     for row in rows:
         row["url"] = source_link(row)
         for key in ("thread_id", "email_id", "video_id"):
             row.pop(key, None)
-    logger.debug("recent_items limit=%d -> %d rows", limit, len(rows))
+    logger.debug("recent_items limit=%d paged=%s -> %d rows", limit, before is not None, len(rows))
     return rows

@@ -146,6 +146,52 @@ def test_recent_items_link_every_source_to_its_original(monkeypatch):
     assert "gm.thread_id" in captured["sql"] and "ym.video_id" in captured["sql"]
 
 
+def _capture_recent_query(monkeypatch, rows=()):
+    seen = {}
+
+    def fake_fetchall(query, params=None):
+        seen["sql"], seen["params"] = " ".join(query.split()), params
+        return [dict(row) for row in rows]
+
+    monkeypatch.setattr(ta.postgresql_manager, "fetchall", fake_fetchall)
+    return seen
+
+
+def test_recent_items_without_a_cursor_has_no_keyset_clause(monkeypatch):
+    """Shows: the default call is the same first-page query as before, with the id as tie-breaker."""
+    seen = _capture_recent_query(monkeypatch)
+    ta.recent_items(5)
+    assert seen["params"] == {"limit": 5}
+    assert "before_ts" not in seen["sql"] and "OFFSET" not in seen["sql"]
+    assert "ORDER BY COALESCE(me.last_accessed_at, m.first_ingested_at) DESC, m.memory_id DESC LIMIT :limit" in seen["sql"]
+
+
+def test_recent_items_before_a_cursor_pages_by_keyset_with_the_id_breaking_ties(monkeypatch):
+    """Shows: the next page is 'strictly older than (time, id)', so rows with an equal time are neither skipped nor repeated."""
+    seen = _capture_recent_query(monkeypatch)
+    cursor_time = datetime(2026, 11, 3, 12, 30, 5, 250000)
+    cursor_id = "3f2a0c1e-0000-4000-8000-000000000001"
+    ta.recent_items(40, (cursor_time, cursor_id))
+    assert seen["params"] == {"limit": 40, "before_ts": cursor_time, "before_id": cursor_id}
+    assert (
+        "AND (COALESCE(me.last_accessed_at, m.first_ingested_at), m.memory_id) < (:before_ts, CAST(:before_id AS uuid))"
+        in seen["sql"]
+    )
+    # The paging condition sits in the WHERE part, before the ordering.
+    assert seen["sql"].index("is_deleted = FALSE") < seen["sql"].index(":before_ts") < seen["sql"].index("ORDER BY")
+
+
+def test_recent_items_selects_the_sort_time_for_the_cursor_and_keeps_the_ids_private(monkeypatch):
+    seen = _capture_recent_query(monkeypatch, rows=[{
+        "memory_id": "m1", "source_type": "gmail", "sort_ts": datetime(2026, 11, 3, 9, 0),
+        "thread_id": "t1", "email_id": "e1", "video_id": None, "url": None,
+    }])
+    [row] = ta.recent_items(1)
+    assert "COALESCE(me.last_accessed_at, m.first_ingested_at) AS sort_ts" in seen["sql"]
+    assert row["sort_ts"] == datetime(2026, 11, 3, 9, 0)  # the route builds the cursor from it, then removes it
+    assert row["url"].endswith("/t1") and {"thread_id", "email_id", "video_id"}.isdisjoint(row)
+
+
 def test_heatmap_marks_cells_that_have_a_regret(monkeypatch):
     calls = iter([
         [{"day_of_week": 1, "hour": 22, "item_count": 3, "total_seconds": 900},

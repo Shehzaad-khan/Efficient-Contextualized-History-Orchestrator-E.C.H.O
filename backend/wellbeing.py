@@ -10,7 +10,7 @@ Endpoints (prefix /wellbeing):
     Analytics:
         GET  /analytics/daily                  — daily summary (time, categories, regret, focus)
         GET  /analytics/heatmap                — hour × day activity matrix with regret markers (days, end_day)
-        GET  /recent                           — last N items across all sources
+        GET  /recent                           — last N items across all sources; `before` = cursor for older pages
     Sessions:
         POST /sessions/rebuild                 — (re)compute sessions for a day
         GET  /sessions                         — stored sessions for a day + focus scores
@@ -47,8 +47,9 @@ Rules for every route:
     - Never log notes, titles, group names or rule values — ids and counts only.
 """
 
+import base64
 import logging
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Literal, Optional
 from uuid import UUID
 
@@ -168,13 +169,45 @@ def analytics_heatmap(
         raise _server_error("analytics/heatmap")
 
 
-@router.get("/recent")
-def recent(limit: int = Query(10, ge=1, le=100)):
+def _encode_recent_cursor(sort_ts: datetime, memory_id: UUID) -> str:
+    """Opaque cursor for /recent: urlsafe base64 of '<iso time>|<memory_id>'."""
+    raw = f"{sort_ts.isoformat()}|{memory_id}"
+    return base64.urlsafe_b64encode(raw.encode("ascii")).decode("ascii")
+
+
+def _decode_recent_cursor(cursor: str) -> tuple[datetime, str]:
+    """Reverse of `_encode_recent_cursor`; any malformed cursor is a 422, never a 500."""
     try:
-        # memory_id comes back as a UUID; FastAPI's encoder writes it as a string.
-        return {"items": recent_items(limit)}
+        raw = base64.urlsafe_b64decode(cursor.encode("ascii")).decode("ascii")
+        iso_time, memory_id = raw.split("|")
+        sort_ts = datetime.fromisoformat(iso_time)
+        if sort_ts.tzinfo is not None:  # stored times are naive UTC
+            sort_ts = sort_ts.astimezone(timezone.utc).replace(tzinfo=None)
+        return sort_ts, str(UUID(memory_id))
+    except (ValueError, UnicodeError):  # binascii.Error is a ValueError
+        raise HTTPException(status_code=422, detail="Malformed 'before' cursor")
+
+
+@router.get("/recent")
+def recent(
+    limit: int = Query(10, ge=1, le=100),
+    before: Optional[str] = Query(None, max_length=200, description="Cursor from the previous page's next_cursor"),
+):
+    # Keyset paging: one row more than asked tells whether an older page exists.
+    after = _decode_recent_cursor(before) if before else None
+    try:
+        rows = recent_items(limit + 1, after)
     except Exception:
         raise _server_error("recent")
+    page = rows[:limit]
+    last = page[-1] if page else None
+    has_more = len(rows) > limit and last is not None and last.get("sort_ts") is not None
+    next_cursor = _encode_recent_cursor(last["sort_ts"], last["memory_id"]) if has_more and last else None
+    for row in page:
+        row.pop("sort_ts", None)  # only the cursor needs it
+    logger.debug("/wellbeing recent: %d items, more=%s", len(page), next_cursor is not None)
+    # memory_id comes back as a UUID; FastAPI's encoder writes it as a string.
+    return {"items": page, "next_cursor": next_cursor}
 
 
 # ── Sessions ──────────────────────────────────────────────────────────────────
