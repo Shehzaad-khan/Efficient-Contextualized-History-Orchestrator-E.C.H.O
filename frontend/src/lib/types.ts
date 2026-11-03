@@ -67,6 +67,8 @@ export interface MemoryItem {
   sender?: string | null
   channel_name?: string | null
   is_short?: boolean | null
+  /** True while the item is marked as a regret (the Timeline offers "undo" for it). */
+  regretted?: boolean
 }
 
 /** An item behind one category's time on a day; `total_seconds` is the time it adds to that category. */

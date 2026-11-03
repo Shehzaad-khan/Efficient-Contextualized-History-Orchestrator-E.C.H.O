@@ -3,9 +3,10 @@ import { motion } from 'framer-motion'
 import PageTitle from '../components/PageTitle'
 import Counter from '../components/Counter'
 import SourceBadge from '../components/SourceBadge'
-import { fetchRegretAnalytics } from '../lib/api'
+import Switch from '../components/Switch'
+import { fetchRegretAnalytics, refreshRegretAnalytics, toggleRegret } from '../lib/api'
 import { formatDuration, formatWhen } from '../lib/format'
-import type { RegretAnalytics } from '../lib/types'
+import type { RegretAnalytics, RegrettedItem } from '../lib/types'
 
 const EASE_OUT = [0.22, 1, 0.36, 1] as const
 
@@ -37,6 +38,11 @@ function HourSparks({ byHour }: { byHour: RegretAnalytics['by_hour'] }) {
 
 export default function ReflectionsPage() {
   const [analytics, setAnalytics] = useState<RegretAnalytics | null>(null)
+  // Items whose mark was switched off stay in the list (so a slip can be switched back on); this holds
+  // each item's real state as the server last reported it. No entry yet = still marked, as listed.
+  const [marks, setMarks] = useState<Record<string, boolean>>({})
+  const [busyId, setBusyId] = useState<string | null>(null)
+  const [failedId, setFailedId] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -45,6 +51,27 @@ export default function ReflectionsPage() {
       cancelled = true
     }
   }, [])
+
+  const isMarked = (item: RegrettedItem) => marks[item.memory_id] ?? true
+
+  /** The same route marks and un-marks; the reply says which one happened. */
+  async function flipMark(item: RegrettedItem) {
+    const id = item.memory_id
+    setBusyId(id)
+    setFailedId(null)
+    try {
+      const result = await toggleRegret(id, undefined, isMarked(item))
+      setMarks((current) => ({ ...current, [id]: result.regretted }))
+      // The rate, hours and groups change with the mark; the item rows stay as listed.
+      refreshRegretAnalytics()
+        .then((fresh) => setAnalytics((current) => (current ? { ...fresh, items: current.items } : current)))
+        .catch(() => undefined) // keep the figures already shown
+    } catch {
+      setFailedId(id) // the mark stays as it was
+    } finally {
+      setBusyId(null)
+    }
+  }
 
   return (
     <div>
@@ -85,7 +112,7 @@ export default function ReflectionsPage() {
             <div className="bg-night-850 px-6 py-6">
               <p className="meta">items currently marked</p>
               <p className="mt-2 font-display text-4xl text-ink" style={{ fontVariationSettings: '"opsz" 48' }}>
-                <Counter value={analytics.items.length} />
+                <Counter value={analytics.items.filter(isMarked).length} />
               </p>
             </div>
           </div>
@@ -127,16 +154,32 @@ export default function ReflectionsPage() {
                 {analytics.items.map((item, index) => (
                   <motion.li
                     key={item.memory_id}
-                    className="card card-hover px-5 py-4"
+                    className={`card card-hover px-5 py-4 transition-opacity duration-300 ${isMarked(item) ? '' : 'opacity-60'}`}
                     initial={{ opacity: 0, y: 12 }}
-                    whileInView={{ opacity: 1, y: 0 }}
+                    whileInView={{ opacity: isMarked(item) ? 1 : 0.6, y: 0 }}
                     viewport={{ once: true, margin: '-30px' }}
                     transition={{ duration: 0.45, ease: EASE_OUT, delay: (index % 5) * 0.05 }}
                   >
                     <div className="flex flex-wrap items-center gap-3">
                       <SourceBadge source={item.source_type} />
                       <span className="meta text-ink-faint">{formatWhen(item.last_marked_at ?? item.created_at)}</span>
+                      <div className="ml-auto flex items-center gap-3">
+                        <span className="meta whitespace-nowrap text-ink-faint" aria-hidden="true">
+                          {isMarked(item) ? 'marked' : 'unmarked'}
+                        </span>
+                        <Switch
+                          checked={isMarked(item)}
+                          onChange={() => void flipMark(item)}
+                          disabled={busyId === item.memory_id}
+                          label={`Regret mark on: ${item.title || 'untitled'}`}
+                        />
+                      </div>
                     </div>
+                    {failedId === item.memory_id && (
+                      <p role="alert" className="mt-2 text-xs leading-5 text-ink-soft">
+                        Couldn’t update the mark just now — it’s as it was. Try again in a moment.
+                      </p>
+                    )}
                     <p className="mt-2 text-[15px] font-medium text-ink">{item.title || '(untitled)'}</p>
                     {item.latest_note && (
                       <p

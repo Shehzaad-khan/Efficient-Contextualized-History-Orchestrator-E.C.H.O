@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { ArrowDown, ExternalLink, Flag, LoaderCircle, Trash2 } from 'lucide-react'
+import { ArrowDown, ExternalLink, Flag, LoaderCircle, Trash2, Undo2 } from 'lucide-react'
 import gsap from 'gsap'
 import { ScrollTrigger } from 'gsap/ScrollTrigger'
 import PageTitle from '../components/PageTitle'
@@ -36,20 +36,28 @@ function TimelineEntry({
   onDeleted: (memoryId: string) => void
 }) {
   const [open, setOpen] = useState(false)
-  const [marked, setMarked] = useState(false)
+  // The mark's real state: it comes with the item, so a reload shows it, and it follows the server's reply.
+  const [regretted, setRegretted] = useState(item.regretted ?? false)
+  const [markBusy, setMarkBusy] = useState(false)
+  const [markError, setMarkError] = useState(false)
   const [note, setNote] = useState('')
   // Delete is permanent, so it asks first: "Delete" / "Keep", like deleting a past chat.
   const [confirming, setConfirming] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState(false)
 
-  async function markRegret() {
+  /** The route flips the mark, so the same call marks and un-marks; the reply says which one happened. */
+  async function flipRegret(withNote?: string) {
+    setMarkBusy(true)
+    setMarkError(false)
     try {
-      await toggleRegret(item.memory_id, note.trim() || undefined)
-      setMarked(true)
+      const result = await toggleRegret(item.memory_id, withNote, regretted)
+      setRegretted(result.regretted)
       setNote('')
     } catch {
-      /* stays unmarked; nothing judgmental to say */
+      setMarkError(true) // the mark stays as it was
+    } finally {
+      setMarkBusy(false)
     }
   }
 
@@ -131,8 +139,19 @@ function TimelineEntry({
                       <ExternalLink size={13} aria-hidden="true" /> {OPEN_LABEL[item.source_type] ?? 'open source'}
                     </a>
                   )}
-                  {marked ? (
-                    <span className="meta text-ember-300">marked — your call, no judgment</span>
+                  {regretted ? (
+                    <div className="flex flex-1 flex-wrap items-center gap-3">
+                      <span className="meta text-ember-300">marked — your call, no judgment</span>
+                      <button
+                        type="button"
+                        onClick={() => void flipRegret()}
+                        disabled={markBusy}
+                        className="btn-ghost inline-flex items-center gap-2 text-xs disabled:opacity-50"
+                        aria-label={`Undo the regret mark: ${item.title || 'untitled'}`}
+                      >
+                        <Undo2 size={13} aria-hidden="true" /> {markBusy ? 'undoing…' : 'undo'}
+                      </button>
+                    </div>
                   ) : (
                     <div className="flex flex-1 flex-wrap items-center gap-2">
                       <input
@@ -142,8 +161,13 @@ function TimelineEntry({
                         aria-label="Regret note"
                         className="input-study min-w-40 flex-1 px-3 py-1.5 text-xs"
                       />
-                      <button type="button" onClick={() => void markRegret()} className="btn-ghost inline-flex items-center gap-2 text-xs">
-                        <Flag size={13} aria-hidden="true" /> mark regret
+                      <button
+                        type="button"
+                        onClick={() => void flipRegret(note.trim() || undefined)}
+                        disabled={markBusy}
+                        className="btn-ghost inline-flex items-center gap-2 text-xs disabled:opacity-50"
+                      >
+                        <Flag size={13} aria-hidden="true" /> {markBusy ? 'marking…' : 'mark regret'}
                       </button>
                     </div>
                   )}
@@ -158,6 +182,12 @@ function TimelineEntry({
                     </button>
                   )}
                 </div>
+
+                {markError && (
+                  <p role="alert" className="mt-2 text-xs leading-5 text-ink-soft">
+                    Couldn’t update the mark just now — it’s as it was. Try again in a moment.
+                  </p>
+                )}
 
                 {confirming && (
                   <div className="mt-3 rounded-card bg-night-800 px-4 py-3" role="alertdialog" aria-label="Confirm delete">

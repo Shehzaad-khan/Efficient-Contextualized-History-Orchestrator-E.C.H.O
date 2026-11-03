@@ -2191,6 +2191,19 @@ Added 2026-10-27 by the owner while reviewing the screens (D6.5 to D6.7). Unlike
   still flagged); (4) restart the backend and the frontend; (5) click Delete on a test item on the Timeline page and check it is gone from search.
 - **Left on purpose:** user-group soft delete (`user_groups.is_active`, the pause/resume screen D5) is a different feature and stays.
 
+### D8. Undo a regret mark (Timeline and Reflections) — [x] decided and BUILT 2026-11-03 (his live check still to do)
+- **Gap:** the backend already un-marks (`POST /wellbeing/regret/{id}` is a toggle: an odd number of events = marked, the log is append-only),
+  but the Timeline only ever marked, and it did not know an item was already marked, so after a reload "mark regret" on a marked item
+  silently un-marked it while the page said "marked".
+- **Built:** `/wellbeing/recent` rows carry `regretted` (`wba/time_aggregator.py`, a grouped join on `regret_events`). The Timeline entry shows
+  "marked" with an **undo** button for marked items (the note box and "mark regret" for the others) and follows the state the route replies with.
+  Reflections: each flagged entry has a switch (`components/Switch.tsx`); switching off keeps the entry in the list, dimmed and labelled
+  "unmarked", so a slip can be switched back on; the rate, hours, groups and "items currently marked" refresh, and after a reload the entry is gone.
+  `toggleRegret` no longer hides a failed request behind demo data: the mark stays as it was and a short message is shown.
+- **Tests (591 pass offline):** the `regretted` column, the mark / un-mark / mark-again round trip over HTTP, the recent list and the Reflections
+  list following it. Browser run on a real PostgreSQL: marks persist across reloads, undo adds a second event (nothing deleted), the failure
+  paths keep the old state.
+
 ---
 
 ## E. Later — after the review AND Step 2 are complete

@@ -193,6 +193,15 @@ def test_recent_items_selects_the_sort_time_for_the_cursor_and_keeps_the_ids_pri
     assert row["url"].endswith("/t1") and {"thread_id", "email_id", "video_id"}.isdisjoint(row)
 
 
+def test_recent_items_say_whether_each_item_is_currently_marked_as_a_regret(monkeypatch):
+    """Shows: the Timeline can offer "undo" because every row carries `regretted` (an odd number of toggle events)."""
+    seen = _capture_recent_query(monkeypatch)
+    ta.recent_items(5)
+    assert "COALESCE(rg.marks, 0) % 2 = 1 AS regretted" in seen["sql"]
+    assert "FROM regret_events GROUP BY memory_id" in seen["sql"]
+    assert "WHERE" not in seen["sql"]          # no soft-delete flag, and the first page has no cursor condition either
+
+
 def test_heatmap_marks_cells_that_have_a_regret(monkeypatch):
     calls = iter([
         [{"day_of_week": 1, "hour": 22, "item_count": 3, "total_seconds": 900},
