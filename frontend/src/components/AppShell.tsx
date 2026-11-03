@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
-import { Clock3, MessageCircle, Moon, Settings2, Waves } from 'lucide-react'
+import { Clock3, MessageCircle, Settings2, Target, Waves } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import Lenis from 'lenis'
 import gsap from 'gsap'
@@ -25,8 +25,8 @@ interface NavEntry {
 const MAIN_NAV: NavEntry[] = [
   { to: '/', label: 'Recall', icon: MessageCircle, hint: 'Ask your memory' },
   { to: '/timeline', label: 'Timeline', icon: Clock3, hint: 'What Echo kept' },
-  { to: '/patterns', label: 'Patterns', icon: Waves, hint: 'Where time went' },
-  { to: '/reflections', label: 'Reflections', icon: Moon, hint: 'Your own regret marks' },
+  { to: '/patterns', label: 'Patterns', icon: Waves, hint: 'Time & reflections' },
+  { to: '/groups', label: 'Groups', icon: Target, hint: 'What you work toward' },
 ]
 
 // Pinned to the bottom of the desktop rail; the mobile bar lists it last.

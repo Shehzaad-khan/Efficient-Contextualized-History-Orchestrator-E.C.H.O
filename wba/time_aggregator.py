@@ -300,6 +300,69 @@ def items_in_system_group(group_name: str, day: date, limit: int = 100) -> list[
     return rows
 
 
+# "All time" for the user-group queries: TIME_UNION_SQL wants a range, so give it one that holds every row.
+_ALL_TIME_START = datetime(1970, 1, 1)
+
+
+def _all_time_range() -> dict[str, datetime]:
+    return {"start_utc": _ALL_TIME_START, "end_utc": datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=1)}
+
+
+def time_in_user_groups() -> dict[str, int]:
+    """Total time spent on the items of each user (goal) group, all time: {group_id: seconds}.
+
+    Same rows as every other time total (TIME_UNION_SQL). Groups whose items have no time are absent.
+    An item in two groups counts in both, like its membership does.
+    """
+    rows = postgresql_manager.fetchall(
+        f"""
+        SELECT mug.group_id, COALESCE(SUM(t.time_seconds), 0) AS total_seconds
+        FROM memory_user_groups mug
+        JOIN ({TIME_UNION_SQL}) AS t ON t.memory_id = mug.memory_id
+        GROUP BY mug.group_id
+        """,
+        _all_time_range(),
+    )
+    return {str(row["group_id"]): int(row["total_seconds"] or 0) for row in rows}
+
+
+def items_in_user_group(group_id: str, limit: int = 200) -> list[dict[str, Any]]:
+    """The members of one user (goal) group with the time spent on each, all time, most time first.
+
+    Members with no recorded time are listed too (0 seconds). An item with several visits is one row
+    with the summed seconds. Each row has the display fields of `recent_items` plus `total_seconds`.
+    """
+    rows = postgresql_manager.fetchall(
+        f"""
+        SELECT m.memory_id, m.source_type, m.title, m.created_at,
+               COALESCE(SUM(t.time_seconds), 0) AS total_seconds,
+               MAX(t.activity_at) AS last_accessed_at,
+               cm.url, cm.domain,
+               gm.sender, gm.thread_id, gm.email_id,
+               ym.channel_name, ym.is_short, ym.video_id
+        FROM memory_user_groups mug
+        JOIN memory_items m ON m.memory_id = mug.memory_id
+        LEFT JOIN ({TIME_UNION_SQL}) AS t ON t.memory_id = m.memory_id
+        LEFT JOIN chrome_metadata  cm ON m.memory_id = cm.memory_id
+        LEFT JOIN gmail_metadata   gm ON m.memory_id = gm.memory_id
+        LEFT JOIN youtube_metadata ym ON m.memory_id = ym.memory_id
+        WHERE mug.group_id = :group_id
+        GROUP BY m.memory_id, m.source_type, m.title, m.created_at,
+                 cm.url, cm.domain, gm.sender, gm.thread_id, gm.email_id,
+                 ym.channel_name, ym.is_short, ym.video_id
+        ORDER BY total_seconds DESC, m.created_at DESC, m.memory_id
+        LIMIT :limit
+        """,
+        {**_all_time_range(), "group_id": group_id, "limit": limit},
+    )
+    for row in rows:
+        row["url"] = source_link(row)
+        for key in ("thread_id", "email_id", "video_id"):
+            row.pop(key, None)
+    logger.debug("items_in_user_group %s -> %d rows", group_id, len(rows))
+    return rows
+
+
 RECENT_SORT_TS = "COALESCE(me.last_accessed_at, m.first_ingested_at)"
 
 # Keyset page (not OFFSET): items arrive continuously, so an offset would skip or

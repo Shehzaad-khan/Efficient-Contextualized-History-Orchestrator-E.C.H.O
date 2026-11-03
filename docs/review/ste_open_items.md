@@ -2183,6 +2183,74 @@ Added 2026-10-27 by the owner while reviewing the screens (D6.5 to D6.7). Unlike
     a valid create wrote the group, 6 members, 6 `accepted` + `reviewed` suggestions and 3 normalized rules; the wizard in a browser,
     start to finish against that backend, created a group with 5 members and 3 rules and showed the banner. **Not checked:** the owner's
     own `echo_db`, and the full `backend.main` app (Gmail/ENP left out on purpose). His running backend must be restarted to load the route.
+  - **D6.9 (owner, 2026-11-03): Groups get their own tab, and Reflections joins Patterns.** Goal groups are something the user manages, not a time
+    analytic, and Reflections repeated Patterns' regret ticks and categories. The sidebar is now Recall, Timeline, Patterns, Groups, Settings (5, the
+    same count as before). `PatternsPage.tsx` is a small page with a **Time | Reflections** switch (`components/ViewSwitch.tsx`, a WAI-ARIA tab list;
+    the view is `?view=reflections`); the two views are `TimeView.tsx` (the old Patterns minus groups) and `ReflectionsView.tsx` (the old Reflections page).
+    Both stay mounted so a picked day survives a look at the other view. `GroupsPage.tsx` holds the group list, the "group created" banner and the Sunday
+    review with "check recent items now" (moved as they were, plus a loading state so the empty-state text no longer flashes before the list arrives).
+    `/reflections` redirects to `/patterns?view=reflections` (outside the page shell: inside it the page-change animation did not finish). The guided
+    flow, the items page and the rules page now return to `/groups`. The tab is named "Reflections" and the heatmap legend says "a moment you flagged";
+    the Timeline button, the reminder card and the weekly reflection text still use "regret" (not changed, he only named the tab). Frontend only.
+    **Checks:** `npm run build` clean; in a browser (demo data): both views, switch by click and arrow keys, the redirect, the guided flow back to `/groups`
+    with its banner, 375 px width (no page-wide horizontal scroll). **Not checked:** against his live backend.
+  - **D6.10 (owner, 2026-11-03): the day's sessions open from the stat row, and the Time view is laid out by period.** "5 sessions" was a bare
+    number. Now the "sessions" and "avg session" cards open a list of the day's sessions (`SessionList` in `TimeView.tsx`): start time, time spent
+    (a bar against the day's longest), main category and item count; each session opens to its items in the order used, with a time and the seconds
+    per item and a plain "Chrome → YouTube" flow line. One new route, `GET /wellbeing/sessions/{session_id}/items` (`wba/wellbeing_analytics.py`
+    `items_in_session`): the same activity rows as the session itself (`TIME_UNION_SQL`) limited to its time span and members, so the items add up to
+    the session's `total_duration_seconds`. The API's `focus_score` is not shown (no scores). Layout: the day stepper sits above the day's cards, the
+    week stepper above the heatmap and reflection (before, the week stepper sat above stats that follow the day); stat cards are separate raised cards
+    with an icon; "time by category" is one row per category (label, bar, value) from `md` up. **Checks:** 2 new tests (route, 404/422, plain 500);
+    `pytest` 585 passed + the 1 failing OCR test that fails without this change too; `npm run build` clean. **Run on a throwaway PostgreSQL 16 (his
+    database untouched):** a session of 3 items (one visited twice, one 0-second visit) returned them in order with 180 / 300 / 200 s = the session's
+    680 s; the other session's item did not leak in; an unknown id is 404, a malformed one 422; an item deleted afterwards drops out. Browser (demo data):
+    open, expand, change day with the panel open, 375 px width without sideways scroll. **Not checked:** his live backend (restart it for the new route).
+  - **D6.11 (owner, 2026-11-04): Reflections explains itself and its categories open.** The hour chart of flagged moments now says what a bar is and
+    that it covers every flag still on (the backend query has no date limit), names the busiest hour (or the hovered one), shows counts on the bars,
+    labels the hours like the heatmap and sums four parts of the day. Each category row opens the flagged items in it (`FlagCategories`); for that
+    `regretted_items()` now returns `group_name` (join to `system_groups`; `test_regret_marks.py` checks it). Only items still flagged are listed, and the
+    panel says "Showing the latest N of M" when more than the 50 the route returns are flagged. The "view" caption on the Time | Reflections switch is gone.
+    `npm run build` clean; browser check on demo data (open, open two at once, close). **Not checked:** his live backend (restart it for `group_name`; until
+    then the panels say "No items to show for this category").
+  - **D6.12 (owner, 2026-11-04): the Reflections stat band names its periods, and a Reminders card says what a reminder needs.** The band is three cards
+    like the Time view's (`components/StatCard.tsx`, now shared): "flagged share · today" (with a bar and "33m of 4h 23m today"), "time on flagged items · today",
+    "items flagged · all time". New `ReminderPanel`: the switch (the same backend flag as Settings; the Settings switch's saved copy is kept in step), the three
+    conditions in plain words (a long sitting of 15+ minutes, 3+ flags near this hour in 30 days, a note he wrote), the limits (2 a day, 2 hours apart, page open),
+    and per content type "Ready · around 10 PM–12 AM" or what is missing (flags so far / needs a note). Backend: `GET /wellbeing/regret/reminders/status`
+    (`reminder_status()` in `wba/regret_system.py`, `habit_hours_by_source()` in `wba/pattern_detector.py` = the same ±1-hour rule as
+    `has_habitual_regret_pattern` for all 24 hours at once); it only reads, never issues a reminder. **Checks:** 5 new tests (hours follow the band rule incl. midnight
+    wrap, status says what is missing and snooze fills the count, Redis down, the route, its plain 500); `pytest` 590 passed + the 1 failing OCR test that fails without this change too;
+    `npm run build` clean. **Run on a throwaway PostgreSQL 16 (his database untouched):** 3 YouTube flags at 22:40, 23:20 and 00:10 gave hours [23]; an un-flagged item and a
+    45-day-old flag were not counted; a type with a note but no habit was "not ready". Browser (demo data): the cards, the switch off and on, 375 px width. **Not
+    checked:** his live backend and Redis (restart the backend for the new route), and a real reminder appearing (that needs a live session plus a habit).
+  - **D6.13 (owner, 2026-11-04): Reflections and Settings are rebuilt for symmetry and plain words; the Reminders card moved to Settings.** Reflections is full-width
+    sections, each symmetric inside (stat band of 3, hour chart beside the four parts of the day, categories as label / bar / count rows, flagged items two to a row).
+    Settings was restructured twice at his request. Now: one page of chapters, each symmetric inside, in 15 px text with the switch's meaning said in each position
+    ("Saving new emails." / "Paused. New emails are not saved."): what Echo saves (3 equal tiles), what it leaves out (sites and senders, 2 cards, inputs aligned),
+    how long it remembers (3 radio cards, permanent-deletion warning), reminders (the single switch plus the three conditions; the per-source "where you stand" rows and
+    the second switch are gone), your data (download and the promise). The backend connection is a small pill at the bottom right. **Removed: the "Memory indexing" switch**
+    (also the "Search by meaning" always-on tile he asked to drop): it only changed a copy saved in the browser, nothing in the backend or the ENP worker read it
+    (checked by search), so it controlled nothing. `GET /wellbeing/regret/reminders/status` stays and still feeds the switch's starting value and the card's numbers;
+    its per-source part is no longer shown. `npm run build` clean; browser check at 910 px and 375 px (no sideways scroll; equal tile, card and input heights). Frontend only.
+    **Not checked:** his live backend.
+  - **D6.14 (owner, 2026-11-04): the new-goal flow is open on the page, with larger text.** First built as a centred box 768 px wide and as tall as the window, with steps on top,
+    buttons pinned inside it and one scroller between. He saw that in a short window the first step itself scrolled inside the box, with the optional field cut off, and asked for
+    it open instead. Now there is no box: a centred 768 px column with the steps and a progress line on top, the step below it on the page's own scroll, and a floating pill-shaped action bar
+    (Back / Next) that stays at the bottom of the window. The one inner scroller is the item list on step 2, on its own surface, and it takes all the height the window leaves (the page is exactly window-high on that step; the list is a flex child). Each item is one line (source, title and where it is from, time) and the footnote, the separate back row and the heading's intro line are gone or folded away, so at 900 px high the list is 458 px (51% of the window, 9 items) and at 760 px it is 353 px (7 items). In a window shorter than 780 px the list step tightens further (smaller step circles, a 24 px heading, no five-segment bar, slimmer search, rows and buttons): at 640 px high the list is 240 px with 5.9 items.
+    The wheel anywhere on the page scrolls that list while it has room in that direction and otherwise scrolls the page (a wheel listener forwards it and stops it reaching the page's smooth
+    scrolling; `data-lenis-prevent` and `overscroll-contain` are on the list). The page title was dropped, text is 15 to 18 px (was 10 to 15), the add-hint form is larger on both pages that
+    use it, "how it works" is three one-line rows, and `ScrollList` takes `className` / `listClassName`. **Checks:** `npm run build` clean; in a browser (1200 x 900): step 1 fits without any
+    scrolling and no box remains; on step 2 a wheel over the heading moved the list 200 px; the action bar sits at the bottom and did not cover the name field. **Not checked:** a real mouse wheel
+    on his machine, windows shorter than about 700 px (the bar floats over content below the fold there), and steps 3 and 4 after this change.
+  - **D6.15 (owner, 2026-11-04): the Groups page leads with the goals, and each goal opens to its items and time.** The goals and the Sunday review were two equal columns;
+    the review is occasional and often empty, so the goals are now full-width cards, one per row (a two-column grid left one goal alone on the left with the right side empty; larger text, labelled Items / Rules / Delete buttons) and the review is a strip below them
+    (one line when empty, the waiting items with labelled buttons when not; the long explanation is behind a toggle). The status line on a goal now says what is true, not an activity: "Ready. Echo suggests matches when it checks." (a calm tick; matching runs only on "Check recent items now" or a scheduler), "N items are waiting in the review" (the only state with the amber glow), or "N more examples and Echo can start suggesting". Each card has a "What's inside" dropdown showing the time
+    spent on the group at a glance and, opened, its items with the time on each (most first) and the total. Backend: `time_in_user_groups()` and `items_in_user_group()` in
+    `wba/time_aggregator.py` (all time, from `TIME_UNION_SQL`; nothing new is stored: time is still summed on demand), routes `GET /wellbeing/groups/time` (declared before the
+    `{group_id}` routes) and `GET /wellbeing/groups/{id}/time`. **Checks:** 2 new tests (the routes, plain 500s); on a throwaway PostgreSQL 16 (his database untouched): a group of 4 items
+    summed 180 (two visits, one 40 days old) + 300 + 200 + 0 = 680 s, a no-time member was listed last with 0, an item in two groups counted in both, an unknown group gave [], a deleted
+    item dropped out; browser (demo data): open, list, total, close. **Not checked:** his live backend (restart it for the two routes).
   - **Follow-up 2026-11-02 (his decision): the keyed routes are gone.** `GET /retrieval/session/{id}` (diagnostic) and
     `DELETE /retrieval/session/{id}`, the `X-API-Key` check and `ECHO_API_KEY` were removed from `backend/retrieval.py`: nothing called
     them (frontend, extension, MCP server, scripts), `GET` / `DELETE /retrieval/sessions/{id}` do the same work, and the key protected

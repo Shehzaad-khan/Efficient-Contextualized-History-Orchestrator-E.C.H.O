@@ -241,6 +241,56 @@ def sessions_for_day(day: date) -> list[dict[str, Any]]:
     return rows
 
 
+def items_in_session(session_id: str) -> list[dict[str, Any]] | None:
+    """The items inside one stored session, in the order they were used; None when no such session.
+
+    Built from the same activity rows as the session itself (`time_aggregator.TIME_UNION_SQL`),
+    limited to the session's own time span and members, so the seconds add up to the session's
+    `total_duration_seconds`. An item visited twice in the session is one row with both visits
+    added. Each row has the display fields of `recent_items` plus `total_seconds` and `activity_at`
+    (its first moment in the session, naive UTC). Items deleted after the session was built are
+    left out.
+    """
+    session = postgresql_manager.fetchone(
+        "SELECT session_start, session_end FROM sessions WHERE session_id = :session_id",
+        {"session_id": session_id},
+    )
+    if session is None:
+        return None
+    rows = postgresql_manager.fetchall(
+        f"""
+        SELECT m.memory_id, m.source_type, m.title, m.created_at,
+               COALESCE(SUM(t.time_seconds), 0) AS total_seconds,
+               MIN(t.activity_at) AS activity_at,
+               cm.url, cm.domain,
+               gm.sender, gm.thread_id, gm.email_id,
+               ym.channel_name, ym.is_short, ym.video_id
+        FROM ({time_aggregator.TIME_UNION_SQL}) AS t
+        JOIN session_memory_map smm ON smm.memory_id = t.memory_id AND smm.session_id = :session_id
+        JOIN memory_items m ON m.memory_id = t.memory_id
+        LEFT JOIN chrome_metadata  cm ON m.memory_id = cm.memory_id
+        LEFT JOIN gmail_metadata   gm ON m.memory_id = gm.memory_id
+        LEFT JOIN youtube_metadata ym ON m.memory_id = ym.memory_id
+        GROUP BY m.memory_id, m.source_type, m.title, m.created_at,
+                 cm.url, cm.domain, gm.sender, gm.thread_id, gm.email_id,
+                 ym.channel_name, ym.is_short, ym.video_id
+        ORDER BY MIN(t.activity_at), m.memory_id
+        """,
+        {
+            "session_id": session_id,
+            "start_utc": session["session_start"],
+            # session_end is the last activity point itself; the range end is exclusive.
+            "end_utc": session["session_end"] + timedelta(microseconds=1),
+        },
+    )
+    for row in rows:
+        row["url"] = time_aggregator.source_link(row)
+        for key in ("thread_id", "email_id", "video_id"):
+            row.pop(key, None)
+    logger.debug("items_in_session %s -> %d items", session_id, len(rows))
+    return rows
+
+
 def fragmentation_for_day(day: date) -> dict[str, Any]:
     """fragmentation = sessions_per_day / average_session_duration_minutes (local day)."""
     row = postgresql_manager.fetchone(

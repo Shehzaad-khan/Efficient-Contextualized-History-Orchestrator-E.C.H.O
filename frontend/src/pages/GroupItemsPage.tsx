@@ -92,10 +92,10 @@ export default function GroupItemsPage() {
   return (
     <div>
       <Link
-        to="/patterns"
+        to="/groups"
         className="meta mb-6 inline-flex items-center gap-1.5 text-ink-mute transition hover:text-ink-soft"
       >
-        <ArrowLeft size={12} aria-hidden="true" /> patterns
+        <ArrowLeft size={12} aria-hidden="true" /> groups
       </Link>
 
       <PageTitle

@@ -39,7 +39,12 @@ import redis
 
 from ste import postgresql_manager
 from ste.redis_manager import get_sync_client
-from wba.pattern_detector import has_habitual_regret_pattern
+from wba.pattern_detector import (
+    HABITUAL_LOOKBACK_DAYS,
+    HABITUAL_MIN_OCCURRENCES,
+    habit_hours_by_source,
+    has_habitual_regret_pattern,
+)
 from wba.time_aggregator import TIME_UNION_SQL, local_day_range_utc, total_time
 
 logger = logging.getLogger(__name__)
@@ -233,10 +238,11 @@ def regret_by_category() -> list[dict[str, Any]]:
 
 
 def regretted_items(limit: int = 50) -> list[dict[str, Any]]:
-    """Currently regretted items with their latest note, for the analytics view."""
+    """Currently regretted items with their latest note and system group, for the analytics view."""
     return postgresql_manager.fetchall(
         "WITH " + CURRENTLY_REGRETTED_CTE + """
         SELECT m.memory_id, m.source_type, m.title, m.created_at,
+               sg.group_name AS group_name,
                (SELECT re.regret_note FROM regret_events re
                 WHERE re.memory_id = m.memory_id AND re.regret_note IS NOT NULL
                 ORDER BY re.marked_at DESC LIMIT 1) AS latest_note,
@@ -244,6 +250,7 @@ def regretted_items(limit: int = 50) -> list[dict[str, Any]]:
                 WHERE re.memory_id = m.memory_id) AS last_marked_at
         FROM regretted r
         JOIN memory_items m ON m.memory_id = r.memory_id
+        JOIN system_groups sg ON sg.system_group_id = m.system_group_id
         ORDER BY last_marked_at DESC
         LIMIT :limit
         """,
@@ -305,6 +312,60 @@ def snooze_reminders_today() -> bool:
         return False
     logger.info("Regret reminders snoozed for today")
     return True
+
+
+def reminder_status() -> dict[str, Any]:
+    """What the Reflections page shows about reminders: the switch, today's count, and for each
+    content type whether a reminder could fire (a habit near some hours AND a note of the user's own).
+
+    Read-only; changes nothing and issues no reminder. `available` is False when Redis cannot be
+    reached (reminders are off then, see the module docstring).
+    """
+    available = False
+    enabled = False
+    sent_today = 0
+    client = _redis()
+    if client is not None:
+        try:
+            enabled = not client.exists(_DISABLED_KEY)
+            sent_today = int(client.get(f"echo:regret:reminder:total:{date.today().isoformat()}") or 0)
+            available = True
+        except redis.RedisError as exc:
+            logger.warning("Regret reminder status: Redis error (%s)", type(exc).__name__)
+
+    with_notes = {
+        row["source_type"]
+        for row in postgresql_manager.fetchall(
+            "WITH " + CURRENTLY_REGRETTED_CTE + """
+            SELECT DISTINCT m.source_type
+            FROM regret_events re
+            JOIN regretted r ON r.memory_id = re.memory_id
+            JOIN memory_items m ON m.memory_id = re.memory_id
+            WHERE re.regret_note IS NOT NULL
+            """
+        )
+    }
+    sources = []
+    for source_type, habit in habit_hours_by_source().items():
+        has_note = source_type in with_notes
+        sources.append({
+            "source_type": source_type,
+            "flags": habit["marks"],
+            "hours": habit["hours"],
+            "has_note": has_note,
+            "ready": bool(habit["hours"]) and has_note,
+        })
+    return {
+        "available": available,
+        "enabled": enabled,
+        "sent_today": sent_today,
+        "daily_limit": MAX_REMINDERS_TOTAL_PER_DAY,
+        "min_session_minutes": MIN_SESSION_MINUTES_FOR_REMINDER,
+        "cooldown_hours": REMINDER_COOLDOWN_SECONDS // 3600,
+        "min_flags": HABITUAL_MIN_OCCURRENCES,
+        "lookback_days": HABITUAL_LOOKBACK_DAYS,
+        "sources": sources,
+    }
 
 
 def maybe_get_reminder(source_type: str, current_session_minutes: int) -> Optional[dict[str, Any]]:

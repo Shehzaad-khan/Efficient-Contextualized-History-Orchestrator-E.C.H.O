@@ -323,6 +323,47 @@ def test_heatmap_can_show_an_earlier_week(wellbeing_client, monkeypatch):
     assert wellbeing_client.get("/wellbeing/analytics/heatmap?end_day=soon").status_code == 422
 
 
+def test_session_items_route_returns_the_items_or_404(wellbeing_client, monkeypatch):
+    """Shows: the Sessions list can open one session; an unknown or malformed id never reaches the query as a 500."""
+    from backend import wellbeing as wb
+
+    asked: list[str] = []
+
+    def fake_items(session_id):
+        asked.append(session_id)
+        return [{"memory_id": uuid.UUID(ID), "total_seconds": 90}] if session_id == ID else None
+
+    monkeypatch.setattr(wb, "items_in_session", fake_items)
+    body = wellbeing_client.get(f"/wellbeing/sessions/{ID}/items").json()
+    assert body["session_id"] == ID and body["items"][0]["memory_id"] == ID and body["items"][0]["total_seconds"] == 90
+    other = "00000000-0000-0000-0000-000000000000"
+    assert wellbeing_client.get(f"/wellbeing/sessions/{other}/items").status_code == 404
+    assert wellbeing_client.get("/wellbeing/sessions/not-a-uuid/items").status_code == 422
+    assert asked == [ID, other]  # the malformed id was refused before any lookup
+
+
+def test_reminder_status_route_returns_the_status(wellbeing_client, monkeypatch):
+    """Shows: the Reflections page can read what a reminder needs; the route only reads."""
+    from backend import wellbeing as wb
+
+    monkeypatch.setattr(wb, "reminder_status", lambda: {"enabled": True, "sources": []})
+    assert wellbeing_client.get("/wellbeing/regret/reminders/status").json() == {"enabled": True, "sources": []}
+
+
+def test_group_time_routes_return_time_per_group_and_per_item(wellbeing_client, monkeypatch):
+    """Shows: the Groups page can read what each goal group took and what is inside it; "time" is never read as a group id."""
+    from backend import wellbeing as wb
+
+    monkeypatch.setattr(wb, "time_in_user_groups", lambda: {ID: 600})
+    monkeypatch.setattr(wb, "items_in_user_group", lambda group_id: [{"memory_id": uuid.UUID(ID), "total_seconds": 600}])
+    assert wellbeing_client.get("/wellbeing/groups/time").json() == {"groups": {ID: 600}}
+    body = wellbeing_client.get(f"/wellbeing/groups/{ID}/time").json()
+    assert body["group_id"] == ID and body["total_seconds"] == 600 and body["items"][0]["total_seconds"] == 600
+    other = "00000000-0000-0000-0000-000000000000"
+    assert wellbeing_client.get(f"/wellbeing/groups/{other}/time").json()["total_seconds"] == 0   # a group with no time
+    assert wellbeing_client.get("/wellbeing/groups/not-a-uuid/time").status_code == 422
+
+
 @pytest.mark.parametrize("method, path, target", [
     ("get", "/wellbeing/analytics/daily", "daily_summary"), ("get", "/wellbeing/analytics/heatmap", "activity_heatmap"),
     ("get", "/wellbeing/recent", "recent_items"), ("post", "/wellbeing/sessions/rebuild", "rebuild_sessions_for_day"),
@@ -330,6 +371,9 @@ def test_heatmap_can_show_an_earlier_week(wellbeing_client, monkeypatch):
     ("post", "/wellbeing/groups/auto-assign", "run_auto_assignment"), ("get", "/wellbeing/insights/weekly", "generate_weekly_insight"),
     ("get", f"/wellbeing/groups/{ID}/items", "group_items"), ("get", f"/wellbeing/groups/{ID}/rules", "list_rules"),
     ("get", f"/wellbeing/groups/{ID}/rule-suggestions", "suggest_rules_for_group"),
+    ("get", f"/wellbeing/sessions/{ID}/items", "items_in_session"),
+    ("get", "/wellbeing/regret/reminders/status", "reminder_status"),
+    ("get", "/wellbeing/groups/time", "time_in_user_groups"), ("get", f"/wellbeing/groups/{ID}/time", "items_in_user_group"),
 ])
 def test_wellbeing_errors_are_plain_500s(wellbeing_client, monkeypatch, method, path, target):
     """Shows: a broken query never leaks its message to the browser."""

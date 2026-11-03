@@ -13,7 +13,10 @@ import {
   demoQueryReply,
   demoRecent,
   demoRegret,
+  demoReminderStatus,
   demoRules,
+  demoSessionItems,
+  demoSessions,
 } from './demoData'
 import { todayIso } from './format'
 import type {
@@ -22,6 +25,7 @@ import type {
   CreatedGroup,
   DailySummary,
   GroupMember,
+  GroupTimedItem,
   GroupRule,
   GroupSuggestion,
   HeatmapCell,
@@ -32,8 +36,10 @@ import type {
   RecentPage,
   RegretAnalytics,
   RegretReminder,
+  ReminderStatus,
   RuleSuggestion,
   RuleType,
+  SessionItem,
   SessionRow,
   SourceType,
   SessionMessages,
@@ -451,6 +457,26 @@ export function fetchRuleSuggestions(groupId: string): Promise<RuleSuggestion[]>
 }
 
 /** The group's members, newest assignment first. None in demo mode. */
+/** All-time seconds spent on each goal group's items: {group_id: seconds}. Demo numbers when the backend is unreachable. */
+export function fetchGroupTimes(): Promise<Record<string, number>> {
+  return withFallback(
+    async () => (await request<{ groups: Record<string, number> }>('/wellbeing/groups/time')).groups,
+    () => Object.fromEntries(demoGroups.map((group, index) => [group.group_id, 5400 - index * 1500])),
+  )
+}
+
+/** One goal group's items with the time spent on each (most first), and the group's total. */
+export function fetchGroupTime(groupId: string): Promise<{ total_seconds: number; items: GroupTimedItem[] }> {
+  return withFallback(
+    async () =>
+      request<{ total_seconds: number; items: GroupTimedItem[] }>(`/wellbeing/groups/${encodeURIComponent(groupId)}/time`),
+    () => {
+      const items = demoRecent.slice(0, 5).map((item, index) => ({ ...item, total_seconds: 1800 - index * 360 }))
+      return { total_seconds: items.reduce((sum, item) => sum + item.total_seconds, 0), items }
+    },
+  )
+}
+
 export function fetchGroupItems(groupId: string, limit = 200): Promise<GroupMember[]> {
   return withFallback(
     async () => (await request<{ items: GroupMember[] }>(`/wellbeing/groups/${groupId}/items?limit=${limit}`)).items,
@@ -621,6 +647,22 @@ export function fetchTodaySessions(day?: string): Promise<SessionRow[]> {
   )
 }
 
+/** The sessions of a local day (YYYY-MM-DD) for the Patterns page. Demo data when the backend is unreachable. */
+export function fetchDaySessions(day: string): Promise<SessionRow[]> {
+  return withFallback(
+    async () => (await request<{ sessions: SessionRow[] }>(`/wellbeing/sessions${queryString({ day })}`)).sessions,
+    () => demoSessions(day),
+  )
+}
+
+/** The items inside one session, in the order they were used. */
+export function fetchSessionItems(sessionId: string): Promise<SessionItem[]> {
+  return withFallback(
+    async () => (await request<{ items: SessionItem[] }>(`/wellbeing/sessions/${encodeURIComponent(sessionId)}/items`)).items,
+    () => demoSessionItems(sessionId),
+  )
+}
+
 /** The reminder check. Always null in demo mode: a reminder is the user's own note, never a made-up one. */
 export function fetchRegretReminder(sourceType: SourceType, sessionMinutes: number): Promise<RegretReminder | null> {
   return withFallback(
@@ -632,6 +674,11 @@ export function fetchRegretReminder(sourceType: SourceType, sessionMinutes: numb
       ).reminder,
     () => null,
   )
+}
+
+/** What a reminder needs, per content type, and whether reminders are on. Demo data when the backend is unreachable. */
+export function fetchReminderStatus(): Promise<ReminderStatus> {
+  return withFallback(() => request<ReminderStatus>('/wellbeing/regret/reminders/status'), () => demoReminderStatus)
 }
 
 export function snoozeRegretRemindersToday(): Promise<void> {

@@ -15,12 +15,15 @@ Endpoints (prefix /wellbeing):
     Sessions:
         POST /sessions/rebuild                 — (re)compute sessions for a day
         GET  /sessions                         — stored sessions for a day + focus scores
+        GET  /sessions/{session_id}/items      — the items inside one session, in order, with their seconds
     User groups:
         GET  /groups                           — list groups with member counts
         POST /groups                           — create an empty group
         POST /groups/with-items                — create a group with its first 5+ items and optional rules, all or nothing (new-goal flow)
         DELETE /groups/{group_id}              — deactivate (soft delete)
         GET  /groups/review                    — weekly review queue (Phase 3): pending + auto_accepted (A42)
+        GET  /groups/time                      — all-time seconds spent on each group's items
+        GET  /groups/{group_id}/time           — one group's items with the time on each, and its total
         POST /groups/auto-assign               — run hybrid classification (Phase 2); returns auto_accepted count
         GET  /groups/{group_id}/items          — confirmed members
         POST /groups/{group_id}/assign         — manual seeding (Phase 1)
@@ -33,6 +36,7 @@ Endpoints (prefix /wellbeing):
         POST /regret/{memory_id}               — toggle regret mark (with optional note)
         GET  /regret/analytics                 — rate, by hour, by category, item list
         GET  /regret/reminder                  — rate-limited reminder check
+        GET  /regret/reminders/status          — is it on, how many today, and which content types could fire
         POST /regret/reminders/settings        — enable/disable reminders
         POST /regret/reminders/snooze          — no more reminders until tomorrow
     Insights:
@@ -82,16 +86,18 @@ from wba.regret_system import (
     regret_by_hour,
     regret_rate,
     regretted_items,
+    reminder_status,
     reminders_enabled,
     set_reminders_enabled,
     snooze_reminders_today,
     toggle_regret,
 )
-from wba.time_aggregator import activity_heatmap, items_in_system_group, recent_items
+from wba.time_aggregator import activity_heatmap, items_in_system_group, items_in_user_group, recent_items, time_in_user_groups
 from wba.wellbeing_analytics import (
     daily_summary,
     ensure_sessions_for_day,
     fragmentation_for_day,
+    items_in_session,
     rebuild_sessions_for_day,
     sessions_for_day,
 )
@@ -259,6 +265,18 @@ def sessions(day: Optional[date] = Query(None, description="Defaults to today"))
         raise _server_error("sessions")
 
 
+@router.get("/sessions/{session_id}/items")
+def session_items(session_id: UUID):
+    # The items behind one row of the Sessions list on the Patterns page.
+    try:
+        items = items_in_session(str(session_id))
+    except Exception:
+        raise _server_error("sessions/items")
+    if items is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {"session_id": str(session_id), "items": items}
+
+
 # ── User groups ───────────────────────────────────────────────────────────────
 # Static paths (/groups/review, /groups/auto-assign) are declared before the
 # /groups/{group_id}/... routes, so "review" is never read as a group id.
@@ -325,6 +343,25 @@ def groups_auto_assign():
         return run_auto_assignment()
     except Exception:
         raise _server_error("groups auto-assign")
+
+
+@router.get("/groups/time")
+def groups_time():
+    # Static path: declared before /groups/{group_id}/..., so "time" is never read as a group id.
+    try:
+        return {"groups": time_in_user_groups()}
+    except Exception:
+        raise _server_error("groups time")
+
+
+@router.get("/groups/{group_id}/time")
+def group_time(group_id: UUID):
+    try:
+        items = items_in_user_group(str(group_id))
+        total = time_in_user_groups().get(str(group_id), 0)
+    except Exception:
+        raise _server_error("group time")
+    return {"group_id": str(group_id), "total_seconds": total, "items": items}
 
 
 @router.get("/groups/{group_id}/items")
@@ -435,6 +472,15 @@ def regret_reminder(
         return {"reminder": maybe_get_reminder(source_type, session_minutes)}
     except Exception:
         raise _server_error("regret reminder")
+
+
+@router.get("/regret/reminders/status")
+def regret_reminders_status():
+    # Read-only: shows what a reminder would need; never issues one.
+    try:
+        return reminder_status()
+    except Exception:
+        raise _server_error("regret reminders status")
 
 
 @router.post("/regret/reminders/settings")

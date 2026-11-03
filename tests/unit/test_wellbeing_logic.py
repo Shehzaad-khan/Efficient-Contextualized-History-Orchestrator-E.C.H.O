@@ -331,6 +331,57 @@ def test_habit_needs_three_marks_in_a_band_that_wraps_midnight(monkeypatch):
     assert pd.has_habitual_regret_pattern("youtube", 12) is False
 
 
+def _marks_at(source, hours):
+    """fetchall rows for standing marks: one mark at each given local hour."""
+    return [{"source_type": source, "hour": hour, "marks": 1} for hour in hours]
+
+
+def test_habit_hours_follow_the_same_band_rule_as_the_reminder_check(monkeypatch):
+    """Shows: an hour qualifies when the hour before, itself and the hour after hold 3 marks, wrapping midnight."""
+    rows = _marks_at("youtube", [22, 23, 0]) + _marks_at("chrome", [23, 0, 1]) + _marks_at("gmail", [3, 12]) + _marks_at("tiktok", [1, 1, 1])
+    monkeypatch.setattr(pd.postgresql_manager, "fetchall", lambda q, p=None: rows)
+    habits = pd.habit_hours_by_source()
+    assert habits["youtube"] == {"marks": 3, "hours": [23]}
+    assert habits["chrome"] == {"marks": 3, "hours": [0]}            # the band wraps: 23, 0, 1
+    assert habits["gmail"] == {"marks": 2, "hours": []}              # two marks are not a habit
+    assert "tiktok" not in habits                                    # only the three content types
+    # every hour it lists is one the reminder check itself accepts
+    for hour in habits["youtube"]["hours"]:
+        monkeypatch.setattr(pd.postgresql_manager, "scalar", lambda q, p=None: 3)
+        assert pd.has_habitual_regret_pattern("youtube", hour) is True
+
+
+def test_reminder_status_says_what_a_reminder_would_still_need(reminders, monkeypatch):
+    monkeypatch.setattr(rs, "habit_hours_by_source", lambda: {
+        "youtube": {"marks": 3, "hours": [23]}, "chrome": {"marks": 1, "hours": []}, "gmail": {"marks": 4, "hours": [9]},
+    })
+    monkeypatch.setattr(rs.postgresql_manager, "fetchall", lambda q, p=None: [{"source_type": "youtube"}])
+    status = rs.reminder_status()
+    by_source = {row["source_type"]: row for row in status["sources"]}
+    assert by_source["youtube"]["ready"] is True                      # a habit and a note
+    assert by_source["gmail"]["ready"] is False and by_source["gmail"]["has_note"] is False   # a habit, but no note of his own
+    assert by_source["chrome"]["ready"] is False and by_source["chrome"]["hours"] == []
+    assert (status["available"], status["enabled"], status["sent_today"], status["daily_limit"]) == (True, True, 0, 2)
+    assert (status["min_session_minutes"], status["min_flags"], status["lookback_days"]) == (15, 3, 30)
+    rs.set_reminders_enabled(False)
+    assert rs.reminder_status()["enabled"] is False
+    rs.set_reminders_enabled(True)
+    rs.snooze_reminders_today()
+    assert rs.reminder_status()["sent_today"] == 2                    # snooze fills the day's count
+
+
+def test_reminder_status_reports_redis_down_without_failing(monkeypatch):
+    def broken():
+        raise RuntimeError("no redis")
+
+    monkeypatch.setattr(rs, "get_sync_client", broken)
+    monkeypatch.setattr(rs, "habit_hours_by_source", lambda: {"youtube": {"marks": 0, "hours": []}})
+    monkeypatch.setattr(rs.postgresql_manager, "fetchall", lambda q, p=None: [])
+    status = rs.reminder_status()
+    assert (status["available"], status["enabled"]) == (False, False)
+    assert status["sources"][0]["ready"] is False
+
+
 def test_regret_time_patterns_name_the_weekday(monkeypatch):
     answers = iter([[{"hour": 22, "regret_count": 3}], [{"day_of_week": 0, "regret_count": 3}, {"day_of_week": None, "regret_count": 1}]])
     monkeypatch.setattr(pd.postgresql_manager, "fetchall", lambda q, p=None: next(answers))

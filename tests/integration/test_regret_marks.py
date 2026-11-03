@@ -50,6 +50,7 @@ def test_an_un_marked_item_leaves_the_reflections_list(client):
     memory_id = seed("flagged then cleared")
     client.post(f"/wellbeing/regret/{memory_id}", json={"note": "scrolled too long"})
     assert [item["title"] for item in rs.regretted_items()] == ["flagged then cleared"]
+    assert rs.regretted_items()[0]["group_name"] == "misc"   # the Reflections category list groups by this
     client.post(f"/wellbeing/regret/{memory_id}")
     assert rs.regretted_items() == []
 

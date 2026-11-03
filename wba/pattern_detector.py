@@ -125,6 +125,39 @@ def has_habitual_regret_pattern(source_type: str, hour: int) -> bool:
     return found
 
 
+def habit_hours_by_source(lookback_days: int = HABITUAL_LOOKBACK_DAYS) -> dict[str, dict[str, Any]]:
+    """For each content type: its standing regret marks in the window, and the local hours at which
+    `has_habitual_regret_pattern` would say yes (the hours a reminder could appear).
+
+    Same rule as `has_habitual_regret_pattern`, for all 24 hours and three types in one query: an
+    hour qualifies when the marks of that type at the hour before, the hour itself and the hour
+    after (wrapping midnight) add up to HABITUAL_MIN_OCCURRENCES or more.
+    """
+    rows = postgresql_manager.fetchall(
+        standing_marks_sql() + """
+        SELECT m.source_type, sm.regret_hour AS hour, COUNT(*) AS marks
+        FROM standing_marks sm
+        JOIN memory_items m ON m.memory_id = sm.memory_id
+        WHERE sm.regret_hour IS NOT NULL
+          AND sm.marked_at >= :since
+        GROUP BY m.source_type, sm.regret_hour
+        """,
+        {"since": _lookback_start(lookback_days)},
+    )
+    marks: dict[str, list[int]] = {source: [0] * 24 for source in ("gmail", "chrome", "youtube")}
+    for row in rows:
+        if row["source_type"] in marks:
+            marks[row["source_type"]][int(row["hour"]) % 24] += int(row["marks"])
+    result: dict[str, dict[str, Any]] = {}
+    for source, per_hour in marks.items():
+        hours = [
+            hour for hour in range(24)
+            if per_hour[(hour - 1) % 24] + per_hour[hour] + per_hour[(hour + 1) % 24] >= HABITUAL_MIN_OCCURRENCES
+        ]
+        result[source] = {"marks": sum(per_hour), "hours": hours}
+    return result
+
+
 def peak_activity_hours(start_day: date, end_day: date, top_n: int = 3) -> list[dict[str, Any]]:
     """Local hours of day with the most engaged items — 'peak_hours' insight input.
 

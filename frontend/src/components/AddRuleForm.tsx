@@ -64,7 +64,7 @@ export default function AddRuleForm({ onAdd }: { onAdd: (type: RuleType, value: 
             setError(null)
           }}
           aria-label="What should Echo look for?"
-          className="input-study w-auto px-3 py-2 text-sm"
+          className="input-study w-auto px-4 py-2.5 text-base"
         >
           {RULE_TYPES.map((type) => (
             <option key={type} value={type}>
@@ -79,15 +79,15 @@ export default function AddRuleForm({ onAdd }: { onAdd: (type: RuleType, value: 
               value={start}
               onChange={(event) => setStart(event.target.value)}
               aria-label="First day"
-              className="input-study w-auto px-3 py-2 text-sm"
+              className="input-study w-auto px-4 py-2.5 text-base"
             />
-            <span className="meta text-ink-faint">to</span>
+            <span className="text-[15px] text-ink-faint">to</span>
             <input
               type="date"
               value={end}
               onChange={(event) => setEnd(event.target.value)}
               aria-label="Last day"
-              className="input-study w-auto px-3 py-2 text-sm"
+              className="input-study w-auto px-4 py-2.5 text-base"
             />
           </>
         ) : (
@@ -97,21 +97,21 @@ export default function AddRuleForm({ onAdd }: { onAdd: (type: RuleType, value: 
             placeholder={RULE_KINDS[ruleType].placeholder}
             aria-label={RULE_KINDS[ruleType].label}
             maxLength={500}
-            className="input-study w-auto min-w-40 flex-1 px-3 py-2 text-sm"
+            className="input-study w-auto min-w-40 flex-1 px-4 py-2.5 text-base"
           />
         )}
         <button
           type="submit"
           disabled={saving || !ruleValue}
-          className="btn-ghost inline-flex items-center gap-1.5 disabled:opacity-40"
+          className="btn-ghost inline-flex items-center gap-1.5 px-5 py-2.5 text-base disabled:opacity-40"
           aria-label="Add hint"
         >
-          <Plus size={14} aria-hidden="true" /> {saving ? 'adding…' : 'add'}
+          <Plus size={16} aria-hidden="true" /> {saving ? 'adding…' : 'add'}
         </button>
       </div>
-      <p className="mt-2 text-xs leading-5 text-ink-mute">{RULE_KINDS[ruleType].hint}</p>
+      <p className="mt-3 text-[15px] leading-6 text-ink-mute">{RULE_KINDS[ruleType].hint}</p>
       {error && (
-        <p role="alert" className="mt-1.5 text-xs text-youtube">
+        <p role="alert" className="mt-2 text-[15px] text-youtube">
           {error}
         </p>
       )}

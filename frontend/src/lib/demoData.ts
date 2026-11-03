@@ -9,6 +9,9 @@ import type {
   MemoryItem,
   QueryResponse,
   RegretAnalytics,
+  ReminderStatus,
+  SessionItem,
+  SessionRow,
   UserGroup,
   WeeklyInsight,
 } from './types'
@@ -86,6 +89,22 @@ export const demoRules: Record<string, GroupRule[]> = {
   g3: [],
 }
 
+export const demoReminderStatus: ReminderStatus = {
+  available: true,
+  enabled: true,
+  sent_today: 0,
+  daily_limit: 2,
+  min_session_minutes: 15,
+  cooldown_hours: 2,
+  min_flags: 3,
+  lookback_days: 30,
+  sources: [
+    { source_type: 'youtube', flags: 4, hours: [22, 23], has_note: true, ready: true },
+    { source_type: 'chrome', flags: 2, hours: [], has_note: true, ready: false },
+    { source_type: 'gmail', flags: 0, hours: [], has_note: false, ready: false },
+  ],
+}
+
 export const demoRegret: RegretAnalytics = {
   rate: { regret_rate_percent: 12.4, regretted_seconds: 1960, total_seconds: 15780 },
   by_hour: [
@@ -100,9 +119,9 @@ export const demoRegret: RegretAnalytics = {
     { group_name: 'study', regret_count: 1, total_seconds: 420 },
   ],
   items: [
-    { memory_id: 'r1', source_type: 'youtube', title: 'Shorts session — late night', created_at: hoursAgo(28), latest_note: 'an hour before the exam, again', last_marked_at: hoursAgo(27) },
-    { memory_id: 'r2', source_type: 'chrome', title: 'Endless feed scroll — r/all', created_at: hoursAgo(50), latest_note: 'meant to read one thread', last_marked_at: hoursAgo(49) },
-    { memory_id: 'r3', source_type: 'youtube', title: 'Autoplay rabbit hole after tutorial', created_at: hoursAgo(75), latest_note: null, last_marked_at: hoursAgo(74) },
+    { memory_id: 'r1', source_type: 'youtube', title: 'Shorts session — late night', group_name: 'entertainment', created_at: hoursAgo(28), latest_note: 'an hour before the exam, again', last_marked_at: hoursAgo(27) },
+    { memory_id: 'r2', source_type: 'chrome', title: 'Endless feed scroll — r/all', group_name: 'misc', created_at: hoursAgo(50), latest_note: 'meant to read one thread', last_marked_at: hoursAgo(49) },
+    { memory_id: 'r3', source_type: 'youtube', title: 'Autoplay rabbit hole after tutorial', group_name: 'entertainment', created_at: hoursAgo(75), latest_note: null, last_marked_at: hoursAgo(74) },
   ],
 }
 
@@ -131,4 +150,53 @@ export function demoQueryReply(query: string): QueryResponse {
     result_count: 3,
     parsed_intent: { sources: ['gmail', 'chrome', 'youtube'], query_clean: query },
   }
+}
+
+/** Nine sessions for any day: start (hour, minute), minutes active, main category, items. Matches `demoDaily.sessions`. */
+const DEMO_SESSION_PLAN: [number, number, number, string, number][] = [
+  [8, 15, 12, 'personal', 2],
+  [9, 5, 48, 'study', 5],
+  [11, 20, 18, 'work', 3],
+  [13, 10, 9, 'misc', 2],
+  [14, 30, 41, 'study', 4],
+  [16, 0, 22, 'work', 3],
+  [18, 25, 35, 'entertainment', 4],
+  [20, 10, 14, 'entertainment', 2],
+  [22, 40, 22, 'entertainment', 3],
+]
+
+/** Naive UTC string for a local clock time on `day`, the way the backend sends times. */
+function naiveUtc(day: string, hour: number, minute: number): string {
+  const [year, month, date] = day.split('-').map(Number)
+  return new Date(year, month - 1, date, hour, minute).toISOString().slice(0, 19)
+}
+
+export function demoSessions(day: string): SessionRow[] {
+  return DEMO_SESSION_PLAN.map(([hour, minute, minutes, group, items], index) => ({
+    session_id: `demo-s${index}`,
+    session_start: naiveUtc(day, hour, minute),
+    session_end: naiveUtc(day, hour, minute + Math.max(1, minutes - 3)),
+    total_duration_seconds: minutes * 60,
+    dominant_group: group,
+    item_count: items,
+    source_switch_count: Math.max(0, items - 2),
+  }))
+}
+
+/** The items of one demo session: its share of the demo items, spread over its minutes. */
+export function demoSessionItems(sessionId: string): SessionItem[] {
+  const index = Number(sessionId.replace('demo-s', ''))
+  const plan = DEMO_SESSION_PLAN[Number.isInteger(index) ? index : 0]
+  if (!plan) return []
+  const [hour, minute, minutes, , count] = plan
+  const today = new Date().toISOString().slice(0, 10)
+  return Array.from({ length: count }, (_, position) => {
+    const base = demoRecent[(index + position) % demoRecent.length]
+    return {
+      ...base,
+      memory_id: `${sessionId}-${position}`,
+      total_seconds: Math.round((minutes * 60) / count),
+      activity_at: naiveUtc(today, hour, minute + Math.floor((position * minutes) / count)),
+    }
+  })
 }

@@ -8,6 +8,7 @@ import {
   setReminderSettings,
   snoozeRegretRemindersToday,
 } from '../lib/api'
+import { rememberRemindersSetting } from '../lib/reminderSetting'
 import type { RegretReminder } from '../lib/types'
 
 const EASE_OUT = [0.22, 1, 0.36, 1] as const
@@ -21,23 +22,10 @@ const SESSION_GAP_MINUTES = 20
 
 const SOURCE_LABEL = { gmail: 'Gmail', chrome: 'the web', youtube: 'YouTube' } as const
 
-// The Settings page keeps its switches under this key; keep "Regret reminders" there in step.
-const SETTINGS_STORAGE_KEY = 'echo-settings'
-
 /** The backend sends naive UTC timestamps; read them as UTC rather than local time. */
 function utcMs(value: string): number {
   const hasZone = /[zZ]|[+-]\d\d:?\d\d$/.test(value)
   return new Date(hasZone ? value : `${value}Z`).getTime()
-}
-
-function rememberRemindersOff(): void {
-  try {
-    const stored = window.localStorage.getItem(SETTINGS_STORAGE_KEY)
-    const current = stored ? (JSON.parse(stored) as Record<string, unknown>) : {}
-    window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify({ ...current, regretReminders: false }))
-  } catch {
-    // Storage blocked: the backend flag is what counts, only the Settings switch would lag.
-  }
 }
 
 /**
@@ -101,7 +89,7 @@ export default function RegretReminderNotice() {
 
   function disable() {
     dismiss()
-    rememberRemindersOff()
+    rememberRemindersSetting(false)
     void setReminderSettings(false)
   }
 

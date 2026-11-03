@@ -146,6 +146,11 @@ export interface GroupMember {
   assigned_at: string | null
 }
 
+/** A member of a goal group with the time spent on it, all time (GET /wellbeing/groups/{id}/time). */
+export interface GroupTimedItem extends MemoryItem {
+  total_seconds: number
+}
+
 /** What the new-goal flow sends: the group with its first items and optional rules, created together. */
 export interface NewGroupInput {
   group_name: string
@@ -189,6 +194,8 @@ export interface RegrettedItem {
   created_at: string | null
   latest_note: string | null
   last_marked_at: string | null
+  /** The system group the item belongs to; absent from older backends. */
+  group_name?: string
 }
 
 export interface RegretAnalytics {
@@ -204,6 +211,18 @@ export interface SessionRow {
   session_start: string
   session_end: string
   total_duration_seconds: number
+  /** The system group with the most time in the session; null when none of its items has one. */
+  dominant_group?: string | null
+  /** Distinct items in the session. */
+  item_count?: number
+  /** Times the source changed between two items (Chrome to YouTube is one). */
+  source_switch_count?: number
+}
+
+/** An item inside one session (GET /wellbeing/sessions/{id}/items); `activity_at` is its first moment there, naive UTC. */
+export interface SessionItem extends MemoryItem {
+  total_seconds: number
+  activity_at: string
 }
 
 /** A regret reminder (GET /wellbeing/regret/reminder): always the user's own earlier note. */
@@ -211,6 +230,32 @@ export interface RegretReminder {
   source_type: SourceType
   your_note: string
   options: string[]
+}
+
+/** One content type in `ReminderStatus`: could a reminder fire for it, and if not, what is missing. */
+export interface ReminderSource {
+  source_type: SourceType
+  /** Standing flags of this type in the lookback window. */
+  flags: number
+  /** Local hours (0-23) at which a habit exists, so a reminder could appear. */
+  hours: number[]
+  /** A currently flagged item of this type has a note the user wrote. */
+  has_note: boolean
+  ready: boolean
+}
+
+/** GET /wellbeing/regret/reminders/status: the switch, today's count and what each type still needs. */
+export interface ReminderStatus {
+  /** False when the reminder store (Redis) cannot be reached; reminders are off then. */
+  available: boolean
+  enabled: boolean
+  sent_today: number
+  daily_limit: number
+  min_session_minutes: number
+  cooldown_hours: number
+  min_flags: number
+  lookback_days: number
+  sources: ReminderSource[]
 }
 
 export interface WeeklyInsight {
