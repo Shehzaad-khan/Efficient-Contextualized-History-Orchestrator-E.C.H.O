@@ -262,6 +262,44 @@ def source_link(row: dict[str, Any]) -> str | None:
     return None
 
 
+def items_in_system_group(group_name: str, day: date, limit: int = 100) -> list[dict[str, Any]]:
+    """Items behind one category's time on a local day, longest time first.
+
+    Same rows as `time_by_system_group` (TIME_UNION_SQL), so these items add up to
+    that category's total. An item with several visits is one row with the summed
+    seconds. Each row has the display fields of `recent_items` plus `total_seconds`.
+    """
+    rows = postgresql_manager.fetchall(
+        f"""
+        SELECT m.memory_id, m.source_type, m.title, m.created_at,
+               COALESCE(SUM(t.time_seconds), 0) AS total_seconds,
+               MAX(t.activity_at) AS last_accessed_at,
+               cm.url, cm.domain,
+               gm.sender, gm.thread_id, gm.email_id,
+               ym.channel_name, ym.is_short, ym.video_id
+        FROM ({TIME_UNION_SQL}) AS t
+        JOIN memory_items m ON m.memory_id = t.memory_id
+        JOIN system_groups sg ON sg.system_group_id = t.system_group_id
+        LEFT JOIN chrome_metadata  cm ON m.memory_id = cm.memory_id
+        LEFT JOIN gmail_metadata   gm ON m.memory_id = gm.memory_id
+        LEFT JOIN youtube_metadata ym ON m.memory_id = ym.memory_id
+        WHERE sg.group_name = :group_name
+        GROUP BY m.memory_id, m.source_type, m.title, m.created_at,
+                 cm.url, cm.domain, gm.sender, gm.thread_id, gm.email_id,
+                 ym.channel_name, ym.is_short, ym.video_id
+        ORDER BY total_seconds DESC, m.memory_id
+        LIMIT :limit
+        """,
+        {**local_day_range_utc(day, day), "group_name": group_name, "limit": limit},
+    )
+    for row in rows:
+        row["url"] = source_link(row)
+        for key in ("thread_id", "email_id", "video_id"):
+            row.pop(key, None)
+    logger.debug("items_in_system_group %s %s -> %d rows", group_name, day, len(rows))
+    return rows
+
+
 RECENT_SORT_TS = "COALESCE(me.last_accessed_at, m.first_ingested_at)"
 
 # Keyset page (not OFFSET): items arrive continuously, so an offset would skip or

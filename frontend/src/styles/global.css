@@ -98,6 +98,13 @@
            focus:shadow-[0_0_0_3px_rgba(245,169,71,0.12)];
   }
 
+  /* A scrollbar you can see: lists that scroll inside a card (ScrollList). Chrome ignores the
+     ::-webkit rules once scrollbar-color is set, so the standard properties carry the look. */
+  .scroll-visible {
+    scrollbar-width: auto;
+    scrollbar-color: rgba(245, 169, 71, 0.5) rgba(255, 255, 255, 0.06);
+  }
+
   .shimmer-line {
     @apply animate-shimmer bg-gradient-to-r from-transparent via-ember-500/30 to-transparent;
     background-size: 200% 100%;

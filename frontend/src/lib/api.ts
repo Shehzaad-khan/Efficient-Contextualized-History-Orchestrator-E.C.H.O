@@ -18,12 +18,15 @@ import {
 import { todayIso } from './format'
 import type {
   AssignResult,
+  CategoryItem,
+  CreatedGroup,
   DailySummary,
   GroupMember,
   GroupRule,
   GroupSuggestion,
   HeatmapCell,
   MemoryItem,
+  NewGroupInput,
   QueryResponse,
   QueryStep,
   RecentPage,
@@ -310,6 +313,15 @@ export function fetchHeatmap(days = 7, endDay?: string): Promise<HeatmapCell[]> 
   )
 }
 
+/** The items behind one category's time on `day` (YYYY-MM-DD), longest time first. */
+export function fetchCategoryItems(day: string, group: string): Promise<CategoryItem[]> {
+  return withFallback(
+    async () =>
+      (await request<{ items: CategoryItem[] }>(`/wellbeing/analytics/category-items${queryString({ day, group })}`)).items,
+    () => demoRecent.slice(0, 4).map((item, index) => ({ ...item, total_seconds: 600 - index * 150 })),
+  )
+}
+
 export function fetchRecent(limit = 30): Promise<MemoryItem[]> {
   return withFallback(
     async () => (await request<{ items: MemoryItem[] }>(`/wellbeing/recent?limit=${limit}`)).items,
@@ -345,21 +357,50 @@ export function fetchGroups(): Promise<UserGroup[]> {
   )
 }
 
-export function createGroup(name: string, description?: string): Promise<UserGroup> {
-  return withFallback(
-    () =>
-      request<UserGroup>('/wellbeing/groups', {
-        method: 'POST',
-        body: JSON.stringify({ group_name: name, description: description ?? null }),
-      }),
-    () => ({
+/**
+ * Create a goal group together with its first items and optional rules; the backend does all of it
+ * or none of it. A live failure is NOT replaced by demo data (the group must not look created when
+ * it was not): the caller gets an ApiError, with the backend's reason for a refused value (400).
+ * In demo mode the group exists in this browser only.
+ */
+export async function createGroupWithItems(input: NewGroupInput): Promise<CreatedGroup> {
+  if (demoMode) {
+    return {
       group_id: `demo-${Date.now()}`,
-      group_name: name,
-      description: description ?? null,
-      member_count: 0,
-      auto_assignment_active: false,
-    }),
-  )
+      group_name: input.group_name,
+      description: input.description,
+      member_count: input.memory_ids.length,
+      confirmed_count: input.memory_ids.length,
+      auto_assignment_active: true,
+      rules: [],
+    }
+  }
+  try {
+    return await request<CreatedGroup>('/wellbeing/groups/with-items', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    })
+  } catch (error) {
+    void probeBackend()
+    throw error
+  }
+}
+
+/**
+ * Delete a goal group. The backend only hides it (its rules stop running, no item is
+ * deleted). Like addRule, a live failure is NOT replaced by demo data: the group must
+ * not vanish from the screen when it was not removed. A group that is already gone
+ * (404) counts as deleted; in demo mode it is removed in this browser only.
+ */
+export async function deleteGroup(groupId: string): Promise<void> {
+  if (demoMode) return
+  try {
+    await request<{ is_active: boolean }>(`/wellbeing/groups/${encodeURIComponent(groupId)}`, { method: 'DELETE' })
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) return
+    void probeBackend()
+    throw error
+  }
 }
 
 /** All rules of a group, paused ones included (the rules screen shows both). */

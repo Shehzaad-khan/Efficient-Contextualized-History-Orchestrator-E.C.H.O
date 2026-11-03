@@ -10,13 +10,15 @@ Endpoints (prefix /wellbeing):
     Analytics:
         GET  /analytics/daily                  — daily summary (time, categories, regret, focus)
         GET  /analytics/heatmap                — hour × day activity matrix with regret markers (days, end_day)
+        GET  /analytics/category-items         — the items behind one category's time on a day (group, day)
         GET  /recent                           — last N items across all sources; `before` = cursor for older pages
     Sessions:
         POST /sessions/rebuild                 — (re)compute sessions for a day
         GET  /sessions                         — stored sessions for a day + focus scores
     User groups:
         GET  /groups                           — list groups with member counts
-        POST /groups                           — create group
+        POST /groups                           — create an empty group
+        POST /groups/with-items                — create a group with its first 5+ items and optional rules, all or nothing (new-goal flow)
         DELETE /groups/{group_id}              — deactivate (soft delete)
         GET  /groups/review                    — weekly review queue (Phase 3): pending + auto_accepted (A42)
         POST /groups/auto-assign               — run hybrid classification (Phase 2); returns auto_accepted count
@@ -58,8 +60,10 @@ from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 
 from wba.group_manager import (
+    MIN_CONFIRMED_FOR_KNN,
     add_rule,
     create_group,
+    create_group_with_items,
     deactivate_group,
     decide_suggestion,
     group_items,
@@ -83,7 +87,7 @@ from wba.regret_system import (
     snooze_reminders_today,
     toggle_regret,
 )
-from wba.time_aggregator import activity_heatmap, recent_items
+from wba.time_aggregator import activity_heatmap, items_in_system_group, recent_items
 from wba.wellbeing_analytics import (
     daily_summary,
     ensure_sessions_for_day,
@@ -97,6 +101,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/wellbeing", tags=["Wellbeing Analytics"])
 
 ReminderSourceType = Literal["gmail", "chrome", "youtube"]
+SystemGroupName = Literal["work", "study", "entertainment", "personal", "misc"]
 
 
 def _server_error(route: str) -> HTTPException:
@@ -123,6 +128,13 @@ class RuleCreateRequest(BaseModel):
 
 class RuleActiveRequest(BaseModel):
     active: bool
+
+
+class GroupWithItemsRequest(BaseModel):
+    group_name: str = Field(..., min_length=1, max_length=100)
+    description: Optional[str] = Field(None, max_length=500)
+    memory_ids: list[UUID] = Field(..., min_length=MIN_CONFIRMED_FOR_KNN, max_length=200)
+    rules: list[RuleCreateRequest] = Field(default_factory=list, max_length=20)
 
 
 class ManualAssignRequest(BaseModel):
@@ -167,6 +179,19 @@ def analytics_heatmap(
         }
     except Exception:
         raise _server_error("analytics/heatmap")
+
+
+@router.get("/analytics/category-items")
+def analytics_category_items(
+    group: SystemGroupName = Query(..., description="One of the five system groups"),
+    day: Optional[date] = Query(None, description="Defaults to today"),
+):
+    # The items behind one bar of 'time by category' (Patterns page dropdown).
+    try:
+        target = day or date.today()
+        return {"day": target.isoformat(), "group": group, "items": items_in_system_group(group, target)}
+    except Exception:
+        raise _server_error("analytics/category-items")
 
 
 def _encode_recent_cursor(sort_ts: datetime, memory_id: UUID) -> str:
@@ -255,6 +280,23 @@ def groups_create(request: GroupCreateRequest):
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception:
         raise _server_error("groups create")
+
+
+@router.post("/groups/with-items", status_code=201)
+def groups_create_with_items(request: GroupWithItemsRequest):
+    """The guided new-goal flow: the group, its first items and its rules, all or nothing."""
+    try:
+        return create_group_with_items(
+            request.group_name,
+            request.description,
+            [str(memory_id) for memory_id in request.memory_ids],
+            [(rule.rule_type, rule.rule_value) for rule in request.rules],
+        )
+    except ValueError as exc:
+        # empty name, fewer than 5 different items, an unknown item, a bad rule
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception:
+        raise _server_error("groups create with items")
 
 
 @router.delete("/groups/{group_id}")

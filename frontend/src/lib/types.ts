@@ -71,6 +71,11 @@ export interface MemoryItem {
   regretted?: boolean
 }
 
+/** An item behind one category's time on a day; `total_seconds` is the time it adds to that category. */
+export interface CategoryItem extends MemoryItem {
+  total_seconds: number
+}
+
 /** One page of the newest-first item list; `next_cursor` is null on the last page. */
 export interface RecentPage {
   items: MemoryItem[]
@@ -139,6 +144,19 @@ export interface GroupMember {
   title: string | null
   created_at: string | null
   assigned_at: string | null
+}
+
+/** What the new-goal flow sends: the group with its first items and optional rules, created together. */
+export interface NewGroupInput {
+  group_name: string
+  description: string | null
+  memory_ids: string[]
+  rules: { rule_type: RuleType; rule_value: string }[]
+}
+
+/** The answer of POST /wellbeing/groups/with-items. */
+export interface CreatedGroup extends UserGroup {
+  rules: GroupRule[]
 }
 
 /** The answer of POST /wellbeing/groups/{id}/assign (manual seeding). */

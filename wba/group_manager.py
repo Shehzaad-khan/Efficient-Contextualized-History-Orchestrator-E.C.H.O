@@ -192,14 +192,13 @@ def deactivate_group(group_id: str) -> bool:
 
 # ── Rules ─────────────────────────────────────────────────────────────────────
 
-def add_rule(group_id: str, rule_type: str, rule_value: str) -> dict[str, Any]:
-    """Add a rule (the user approved it). Raises ValueError for a bad type or value.
+def _normalize_rule(rule_type: str, rule_value: str) -> str:
+    """The value as it is stored (lowercase, DB design Table 14). Raises ValueError for a bad type or value.
 
     An empty value is refused: an empty keyword would match every title.
     """
     if rule_type not in VALID_RULE_TYPES:
         raise ValueError(f"rule_type must be one of {sorted(VALID_RULE_TYPES)}")
-    # Stored lowercase per DB design Table 14.
     value = (rule_value or "").strip().lower()
     if rule_type == "sender":
         value = value.lstrip("@")
@@ -209,23 +208,34 @@ def add_rule(group_id: str, rule_type: str, rule_value: str) -> dict[str, Any]:
         raise ValueError("rule_value must not be empty")
     if rule_type == "time_window":
         _parse_time_window(value)  # raises ValueError when malformed
+    return value
 
+
+def _insert_rule(connection: Any, group_id: str, rule_type: str, value: str) -> dict[str, Any]:
+    """INSERT one already-normalized rule on `connection` (the caller owns the transaction)."""
+    row = dict(
+        connection.execute(
+            text(
+                """
+                INSERT INTO group_rules (group_id, rule_type, rule_value)
+                VALUES (:group_id, :rule_type, :rule_value)
+                RETURNING rule_id, group_id, rule_type, rule_value, is_active, created_at, match_count
+                """
+            ),
+            {"group_id": group_id, "rule_type": rule_type, "rule_value": value},
+        ).mappings().one()
+    )
+    return {**row, "rule_id": str(row["rule_id"]), "group_id": str(row["group_id"])}
+
+
+def add_rule(group_id: str, rule_type: str, rule_value: str) -> dict[str, Any]:
+    """Add a rule (the user approved it). Raises ValueError for a bad type or value."""
+    value = _normalize_rule(rule_type, rule_value)
     # A transaction, not fetchone (see create_group): fetchone would roll the INSERT back.
     with postgresql_manager.transaction() as connection:
-        row = dict(
-            connection.execute(
-                text(
-                    """
-                    INSERT INTO group_rules (group_id, rule_type, rule_value)
-                    VALUES (:group_id, :rule_type, :rule_value)
-                    RETURNING rule_id, group_id, rule_type, rule_value, is_active, created_at, match_count
-                    """
-                ),
-                {"group_id": group_id, "rule_type": rule_type, "rule_value": value},
-            ).mappings().one()
-        )
-    logger.info("Group rule added: rule_id=%s group_id=%s type=%s", row["rule_id"], group_id, rule_type)
-    return {**row, "rule_id": str(row["rule_id"]), "group_id": str(row["group_id"])}
+        rule = _insert_rule(connection, group_id, rule_type, value)
+    logger.info("Group rule added: rule_id=%s group_id=%s type=%s", rule["rule_id"], group_id, rule_type)
+    return rule
 
 
 def list_rules(group_id: str, include_inactive: bool = False) -> list[dict[str, Any]]:
@@ -671,53 +681,77 @@ def manual_assign(memory_id: str, group_id: str) -> dict[str, Any]:
     Raises ValueError when the item or the active group does not exist.
     """
     with postgresql_manager.transaction() as connection:
-        item_exists = connection.execute(
-            text("SELECT 1 FROM memory_items WHERE memory_id = :memory_id"),
-            {"memory_id": memory_id},
-        ).first()
-        if not item_exists:
-            raise ValueError(f"No memory item found for memory_id={memory_id}")
-        group_exists = connection.execute(
-            text("SELECT 1 FROM user_groups WHERE group_id = :group_id AND is_active = TRUE"),
-            {"group_id": group_id},
-        ).first()
-        if not group_exists:
-            raise ValueError(f"No active group found for group_id={group_id}")
+        added = _assign_by_hand(connection, memory_id, group_id)
 
-        added = connection.execute(
+    member_count, confirmed_count = _member_counts(group_id)
+    logger.info("Manual assign memory_id=%s group_id=%s added=%s", memory_id, group_id, bool(added))
+    return {
+        "memory_id": memory_id,
+        "group_id": group_id,
+        "member_count": member_count,
+        "confirmed_count": confirmed_count,
+        "auto_assignment_active": confirmed_count >= MIN_CONFIRMED_FOR_KNN,
+    }
+
+
+def _assign_by_hand(connection: Any, memory_id: str, group_id: str) -> int:
+    """The write behind a manual add, on `connection` (the caller owns the transaction).
+
+    Checks the item and the active group exist (ValueError otherwise), writes the membership and
+    its already-accepted suggestion row. Returns 1 when a membership was added, 0 when the item was
+    already a member (an A42 auto-add is then confirmed instead).
+    """
+    item_exists = connection.execute(
+        text("SELECT 1 FROM memory_items WHERE memory_id = :memory_id"),
+        {"memory_id": memory_id},
+    ).first()
+    if not item_exists:
+        raise ValueError(f"No memory item found for memory_id={memory_id}")
+    group_exists = connection.execute(
+        text("SELECT 1 FROM user_groups WHERE group_id = :group_id AND is_active = TRUE"),
+        {"group_id": group_id},
+    ).first()
+    if not group_exists:
+        raise ValueError(f"No active group found for group_id={group_id}")
+
+    added = connection.execute(
+        text(
+            """
+            INSERT INTO memory_user_groups (memory_id, group_id)
+            VALUES (:memory_id, :group_id)
+            ON CONFLICT DO NOTHING
+            """
+        ),
+        {"memory_id": memory_id, "group_id": group_id},
+    ).rowcount
+    if added:
+        connection.execute(
             text(
                 """
-                INSERT INTO memory_user_groups (memory_id, group_id)
-                VALUES (:memory_id, :group_id)
-                ON CONFLICT DO NOTHING
+                INSERT INTO group_suggestions
+                    (memory_id, group_id, rule_score, knn_score, decision, reviewed, decided_at)
+                VALUES (:memory_id, :group_id, NULL, NULL, 'accepted', TRUE, NOW())
                 """
             ),
             {"memory_id": memory_id, "group_id": group_id},
-        ).rowcount
-        if added:
-            connection.execute(
-                text(
-                    """
-                    INSERT INTO group_suggestions
-                        (memory_id, group_id, rule_score, knn_score, decision, reviewed, decided_at)
-                    VALUES (:memory_id, :group_id, NULL, NULL, 'accepted', TRUE, NOW())
-                    """
-                ),
-                {"memory_id": memory_id, "group_id": group_id},
-            )
-        else:
-            # Already a member through the confident path (A42): assigning it by hand confirms it.
-            connection.execute(
-                text(
-                    """
-                    UPDATE group_suggestions
-                    SET decision = 'accepted', reviewed = TRUE, decided_at = NOW()
-                    WHERE memory_id = :memory_id AND group_id = :group_id AND decision = 'auto_accepted'
-                    """
-                ),
-                {"memory_id": memory_id, "group_id": group_id},
-            )
+        )
+    else:
+        # Already a member through the confident path (A42): assigning it by hand confirms it.
+        connection.execute(
+            text(
+                """
+                UPDATE group_suggestions
+                SET decision = 'accepted', reviewed = TRUE, decided_at = NOW()
+                WHERE memory_id = :memory_id AND group_id = :group_id AND decision = 'auto_accepted'
+                """
+            ),
+            {"memory_id": memory_id, "group_id": group_id},
+        )
+    return added
 
+
+def _member_counts(group_id: str) -> tuple[int, int]:
+    """(all members, confirmed members) of a group, deleted items excluded."""
     counts = postgresql_manager.fetchone(
         """
         SELECT COUNT(*) AS member_count,
@@ -728,15 +762,59 @@ def manual_assign(memory_id: str, group_id: str) -> dict[str, Any]:
         """,
         {"group_id": group_id},
     )
-    member_count = counts["member_count"]
-    confirmed_count = int(counts["confirmed_count"] or 0)
-    logger.info("Manual assign memory_id=%s group_id=%s added=%s", memory_id, group_id, bool(added))
+    return int(counts["member_count"] or 0), int(counts["confirmed_count"] or 0)
+
+
+def create_group_with_items(
+    group_name: str,
+    description: Optional[str],
+    memory_ids: list[str],
+    rules: list[tuple[str, str]],
+) -> dict[str, Any]:
+    """Create a group, its first items and its rules in ONE transaction (the guided "new goal" flow).
+
+    A group exists only when it starts with at least MIN_CONFIRMED_FOR_KNN distinct items the
+    user picked by hand; rules are optional. Everything is checked before or inside the one
+    transaction, so a refused rule or a vanished item leaves no group behind.
+
+    Raises ValueError for an empty name, too few distinct items, an unknown item, or a bad rule.
+    """
+    name = (group_name or "").strip()
+    if not name:
+        raise ValueError("group_name must not be empty")
+    distinct_ids = list(dict.fromkeys(memory_ids))  # keeps the picked order, drops repeats
+    if len(distinct_ids) < MIN_CONFIRMED_FOR_KNN:
+        raise ValueError(f"pick at least {MIN_CONFIRMED_FOR_KNN} different items to start a group")
+    normalized = list(dict.fromkeys((rule_type, _normalize_rule(rule_type, rule_value)) for rule_type, rule_value in rules))
+
+    with postgresql_manager.transaction() as connection:
+        group = dict(
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO user_groups (group_name, description)
+                    VALUES (:group_name, :description)
+                    RETURNING group_id, group_name, description, is_active, created_at
+                    """
+                ),
+                {"group_name": name, "description": description},
+            ).mappings().one()
+        )
+        group_id = str(group["group_id"])
+        for memory_id in distinct_ids:
+            _assign_by_hand(connection, memory_id, group_id)
+        created_rules = [_insert_rule(connection, group_id, rule_type, value) for rule_type, value in normalized]
+
+    member_count, confirmed_count = _member_counts(group_id)
+    # Group names are the user's own labels — logged by id only.
+    logger.info("User group created with %d items and %d rules: %s", len(distinct_ids), len(created_rules), group_id)
     return {
-        "memory_id": memory_id,
+        **group,
         "group_id": group_id,
-        "member_count": int(member_count or 0),
+        "member_count": member_count,
         "confirmed_count": confirmed_count,
         "auto_assignment_active": confirmed_count >= MIN_CONFIRMED_FOR_KNN,
+        "rules": created_rules,
     }
 
 
