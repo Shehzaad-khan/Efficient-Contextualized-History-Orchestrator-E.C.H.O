@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { ExternalLink, Flag } from 'lucide-react'
+import { ExternalLink, Flag, Trash2 } from 'lucide-react'
 import gsap from 'gsap'
 import { ScrollTrigger } from 'gsap/ScrollTrigger'
 import PageTitle from '../components/PageTitle'
 import SourceBadge from '../components/SourceBadge'
-import { fetchRecent, toggleRegret } from '../lib/api'
+import { deleteItem, fetchRecent, toggleRegret } from '../lib/api'
 import { dayLabel, formatWhen } from '../lib/format'
 import type { MemoryItem } from '../lib/types'
 
@@ -26,10 +26,22 @@ const OPEN_LABEL: Record<MemoryItem['source_type'], string> = {
   youtube: 'open on youtube',
 }
 
-function TimelineEntry({ item, index }: { item: MemoryItem; index: number }) {
+function TimelineEntry({
+  item,
+  index,
+  onDeleted,
+}: {
+  item: MemoryItem
+  index: number
+  onDeleted: (memoryId: string) => void
+}) {
   const [open, setOpen] = useState(false)
   const [marked, setMarked] = useState(false)
   const [note, setNote] = useState('')
+  // Delete is permanent, so it asks first: "Delete" / "Keep", like deleting a past chat.
+  const [confirming, setConfirming] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState(false)
 
   async function markRegret() {
     try {
@@ -38,6 +50,18 @@ function TimelineEntry({ item, index }: { item: MemoryItem; index: number }) {
       setNote('')
     } catch {
       /* stays unmarked; nothing judgmental to say */
+    }
+  }
+
+  async function confirmDelete() {
+    setDeleting(true)
+    setDeleteError(false)
+    try {
+      await deleteItem(item.memory_id)
+      onDeleted(item.memory_id) // the entry leaves the list; this component unmounts
+    } catch {
+      setDeleteError(true)
+      setDeleting(false)
     }
   }
 
@@ -123,7 +147,52 @@ function TimelineEntry({ item, index }: { item: MemoryItem; index: number }) {
                       </button>
                     </div>
                   )}
+                  {!confirming && (
+                    <button
+                      type="button"
+                      onClick={() => setConfirming(true)}
+                      className="btn-ghost inline-flex items-center gap-2 text-xs"
+                      aria-label={`Delete memory: ${item.title || 'untitled'}`}
+                    >
+                      <Trash2 size={13} aria-hidden="true" /> delete
+                    </button>
+                  )}
                 </div>
+
+                {confirming && (
+                  <div className="mt-3 rounded-card bg-night-800 px-4 py-3" role="alertdialog" aria-label="Confirm delete">
+                    <p className="text-xs leading-5 text-ink-soft">
+                      Delete this memory for good? Its text, notes and search entry are removed everywhere, and this
+                      cannot be undone. If you visit the page again, Echo can keep it as a new memory.
+                    </p>
+                    <div className="mt-2 flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void confirmDelete()}
+                        disabled={deleting}
+                        className="btn-ghost border-youtube/40 px-3 py-1 font-mono text-xs normal-case text-youtube disabled:opacity-50"
+                      >
+                        {deleting ? 'deleting…' : 'Delete'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setConfirming(false)
+                          setDeleteError(false)
+                        }}
+                        disabled={deleting}
+                        className="btn-ghost px-3 py-1 font-mono text-xs normal-case disabled:opacity-50"
+                      >
+                        Keep
+                      </button>
+                    </div>
+                    {deleteError && (
+                      <p role="alert" className="mt-2 text-xs leading-5 text-ink-soft">
+                        Couldn’t delete it just now — it’s still here. Try again in a moment.
+                      </p>
+                    )}
+                  </div>
+                )}
               </div>
             </motion.div>
           )}
@@ -166,6 +235,10 @@ export default function TimelinePage() {
       trigger.kill()
     }
   }, [items])
+
+  function handleDeleted(memoryId: string) {
+    setItems((current) => (current ? current.filter((entry) => entry.memory_id !== memoryId) : current))
+  }
 
   const grouped = useMemo(() => {
     const groups = new Map<string, MemoryItem[]>()
@@ -210,7 +283,7 @@ export default function TimelinePage() {
               <h2 className="meta mb-4 pl-10 text-ember-400/90">{day}</h2>
               <ul className="space-y-3.5">
                 {dayItems.map((item, index) => (
-                  <TimelineEntry key={item.memory_id} item={item} index={index} />
+                  <TimelineEntry key={item.memory_id} item={item} index={index} onDeleted={handleDeleted} />
                 ))}
               </ul>
             </section>

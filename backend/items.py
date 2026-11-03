@@ -4,16 +4,19 @@ Echo Personal Memory System
 
 User data control routes (architecture §12.4 / §13.3):
 
-    DELETE /items/{memory_id}   — soft-delete a memory item (is_deleted=TRUE)
+    DELETE /items/{memory_id}   — forget one memory item for good (hard delete)
     GET    /export              — export all memory data as JSON or CSV
     GET    /settings            — current capture settings
     POST   /settings            — update capture settings (source toggles,
                                   domain exclusions, sender exclusions)
 
-Soft delete never destroys rows — is_deleted=TRUE hides the item from search
-(RSE filters on it) and from future exports. Export includes only non-deleted
-items and never includes FAISS vectors or OAuth material. Timestamps in the
-export are naive UTC, as stored.
+Delete is a hard delete: the row and everything hanging off it (metadata,
+engagement, regret notes, group links, attachments, visits), the FAISS vector and
+the item's Redis keys are removed, through the same function the retention job
+uses (ste/retention.py delete_items). There is no undo. Nothing blocks the same
+mail or page from being captured again later. Session totals and saved chats are
+left alone. Export never includes FAISS vectors or OAuth material. Timestamps in
+the export are naive UTC, as stored.
 
 Threading: plain `def` routes, run in FastAPI's threadpool (DB / Redis calls block).
 Logging: ids, counts and setting names only — never titles, URLs or exclusion lists.
@@ -33,6 +36,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from ste import postgresql_manager, settings_store
+from ste.retention import delete_items
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +74,6 @@ LEFT JOIN memory_engagement me ON m.memory_id = me.memory_id
 LEFT JOIN gmail_metadata    gm ON m.memory_id = gm.memory_id
 LEFT JOIN chrome_metadata   cm ON m.memory_id = cm.memory_id
 LEFT JOIN youtube_metadata  ym ON m.memory_id = ym.memory_id
-WHERE m.is_deleted = FALSE
 ORDER BY m.created_at DESC
 """
 
@@ -96,25 +99,22 @@ def _csv_cell(value: Any) -> Any:
 
 
 @router.delete("/items/{memory_id}")
-def soft_delete_item(memory_id: UUID):
-    """Soft-delete one memory item. CASCADE is not needed — the row stays,
-    flagged is_deleted, and every query path filters on that flag."""
+def delete_item(memory_id: UUID):
+    """Hard-delete one memory item from Postgres, FAISS and Redis."""
     try:
-        result = postgresql_manager.execute(
-            """
-            UPDATE memory_items
-            SET is_deleted = TRUE, last_updated_at = NOW()
-            WHERE memory_id = :memory_id AND is_deleted = FALSE
-            """,
+        exists = postgresql_manager.scalar(
+            "SELECT 1 FROM memory_items WHERE memory_id = :memory_id",
             {"memory_id": str(memory_id)},
         )
+        if exists:
+            delete_items([str(memory_id)])
     except Exception:
-        logger.exception("soft_delete_item failed for %s", memory_id)
+        logger.exception("delete_item failed for %s", memory_id)
         raise HTTPException(status_code=500, detail="Internal server error")
 
-    if result.rowcount == 0:
-        raise HTTPException(status_code=404, detail="Item not found or already deleted")
-    logger.info("Memory item %s soft-deleted", memory_id)
+    if not exists:
+        raise HTTPException(status_code=404, detail="Item not found")
+    logger.info("Memory item %s deleted", memory_id)
     return {"status": "deleted", "memory_id": str(memory_id)}
 
 

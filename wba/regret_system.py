@@ -60,7 +60,6 @@ CURRENTLY_REGRETTED_CTE = """
         SELECT re.memory_id
         FROM regret_events re
         JOIN memory_items m ON m.memory_id = re.memory_id
-        WHERE m.is_deleted = FALSE
         GROUP BY re.memory_id
         HAVING COUNT(*) % 2 = 1
     )
@@ -114,7 +113,7 @@ def toggle_regret(memory_id: str, note: Optional[str] = None) -> dict[str, Any]:
     Raises ValueError when the memory item does not exist.
     """
     exists = postgresql_manager.scalar(
-        "SELECT 1 FROM memory_items WHERE memory_id = :memory_id AND is_deleted = FALSE",
+        "SELECT 1 FROM memory_items WHERE memory_id = :memory_id",
         {"memory_id": memory_id},
     )
     if not exists:

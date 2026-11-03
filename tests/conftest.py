@@ -272,7 +272,7 @@ CREATE TABLE memory_items (
     source_id TEXT NOT NULL,
     title TEXT, raw_text TEXT, auto_keywords TEXT, preprocessed BOOLEAN DEFAULT 0,
     classified_by TEXT DEFAULT 'pending', created_at TIMESTAMP NOT NULL,
-    first_ingested_at TIMESTAMP, last_updated_at TIMESTAMP, is_deleted BOOLEAN DEFAULT 0,
+    first_ingested_at TIMESTAMP, last_updated_at TIMESTAMP,
     UNIQUE (source_type, source_id)
 );
 CREATE TABLE gmail_metadata (memory_id TEXT PRIMARY KEY, email_id TEXT NOT NULL, thread_id TEXT, sender TEXT,

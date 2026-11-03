@@ -53,6 +53,9 @@ ever wanted again, it will be recreated from `Echo_System_Design.md`, which is t
    The schema is now 17 tables: the 2026-10-24 batch (`scripts/migrations/2026-10-24_schema_batch.sql`) added
    `visits` (Table 17), `memory_items.search_vector` (+ GIN) and `gmail_attachments.extracted_text`, and dropped
    `memory_items.classification_confidence`. The code that fills and reads them was wired the same day.
+   D7 (2026-11-03) dropped `memory_items.is_deleted`: every delete is a hard delete (`ste/retention.py` `delete_items`, used by
+   `DELETE /items/{id}` and the retention job). Migration `scripts/migrations/2026-11-03_drop_is_deleted.sql` runs on the live database
+   AFTER `scripts/purge_soft_deleted.py --yes` (owner's live steps still to do).
    Unless a decision says otherwise: `system_group_id` must never be NULL (fallback 'misc'),
    and `UNIQUE(source_type, source_id)` dedup is sacred. There is deliberately no settings
    table — runtime settings live in Redis (`ste/settings_store.py`).
@@ -159,7 +162,7 @@ history if Review 2 needs it:
 `git checkout 16bde99 -- rsr/quality_evaluator.py rsr/query_quality_eval_set.py`
 (note its `_calculate_diversity` metric measures a prohibited feature — drop that part).
 
-Tests and CI (2026-10-26): `pytest --cov` runs 563 tests (unit / integration / system, `tests/`) at about 94 % line coverage with no live
+Tests and CI (2026-10-26): `pytest --cov` runs 575 tests (unit / integration / system, `tests/`) at about 94 % line coverage with no live
 service. `.github/workflows/ci.yml` runs compile, ruff, bandit (fails on HIGH), pytest (coverage gate 80 %) and the frontend type check
 and build on every push. Numbers, the replay of old commits and three findings (requirements.txt cannot be installed as written,
 package-lock.json lacks rollup's Linux binary, two `# nosec B613` comments): `docs/review/ci_cd_guide.md`. Keep the tests green; do not

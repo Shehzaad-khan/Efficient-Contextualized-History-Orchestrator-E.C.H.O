@@ -1220,7 +1220,7 @@ Built (21 Oct 2026):
 | `/ytc` | `POST /video-detected`, `POST /heartbeat`, `POST /video-closed` |
 | `/retrieval` | `POST /query`, `POST /query/stream`, `GET /sessions`, `GET /sessions/{id}`, `DELETE /sessions/{id}` (all open; no API key since 2026-11-02) |
 | `/wellbeing` (only with `ECHO_WBA_ENABLED=1`) | `GET /analytics/daily`, `GET /analytics/heatmap` (`days`, `end_day`), `GET /recent`, `POST /sessions/rebuild`, `GET /sessions`, `GET|POST /groups`, `DELETE /groups/{id}`, `GET /groups/review`, `POST /groups/auto-assign`, `GET /groups/{id}/items`, `POST /groups/{id}/assign`, `GET|POST /groups/{id}/rules`, `GET /groups/{id}/rule-suggestions`, `POST /suggestions/{id}/decision`, `POST /regret/{memory_id}`, `GET /regret/analytics`, `GET /regret/reminder`, `POST /regret/reminders/settings`, `GET /insights/weekly` |
-| no prefix | `DELETE /items/{memory_id}` (soft delete), `GET /export` (JSON or CSV, formula-injection guarded), `GET|POST /settings` |
+| no prefix | `DELETE /items/{memory_id}` (hard delete, D7), `GET /export` (JSON or CSV, formula-injection guarded), `GET|POST /settings` |
 
 Static paths (`/groups/review`) are declared before parametrized ones (`/groups/{group_id}/...`).
 Decided additions (built Thu–Sun): `GET /chrome/rules` (A9.5), `POST /ytc/revisit-check` (A34), a chat-session list (A27),
@@ -1275,10 +1275,14 @@ No local LLM, and it is not listed as future work (A31.5: college laptops cannot
 
 - Per-source capture toggles; excluded domains (host or subdomain); excluded senders (substring of the From address).
 - Pause toggle in the extension popup (A33, built Thu–Sun).
-- Delete one item: `DELETE /items/{id}` sets `is_deleted = TRUE` (soft). Text stays in PostgreSQL and the vector in FAISS.
+- Delete one item (D7, 2026-11-03): `DELETE /items/{id}` is a **hard delete**. It removes the `memory_items` row (child rows by CASCADE),
+  the FAISS vector and the item's Redis keys (attachment cache, ENP retry counter, Chrome revisit flag), through the same function the
+  retention job uses (`ste/retention.py` `delete_items`). There is no undo and no `is_deleted` flag any more. Nothing blocks the same mail
+  or page from being captured again later (its `UNIQUE(source_type, source_id)` key goes with the row). Session totals (`sessions`) and
+  saved chats are left alone by decision. The Timeline page has a Delete button (with a confirmation) next to "mark regret".
 - **Retention (A37, built Thu–Sun):** Settings → Retention: forever (default) / 1 year / 6 months. A job at backend startup
   **hard-deletes** items older than the window from every store: `memory_items` + child rows (CASCADE), FAISS vectors, Redis keys.
-- Export: `GET /export` as JSON or CSV (non-deleted items, no vectors, no OAuth material). A frontend export button is a stretch item (E2).
+- Export: `GET /export` as JSON or CSV (all stored items, no vectors, no OAuth material). A frontend export button is a stretch item (E2).
 - Regret reminders: disable; delete chats.
 
 ### 13.4 Development vs Final Data
@@ -1652,9 +1656,10 @@ Not in the schema: the legacy `gmail_memory` table was dropped on Neon on 2026-1
    Only `accepted` rows are used as KNN examples (A42.3).
 4. **Every capture is one atomic transaction** (Pattern A): item + source metadata + engagement (+ attachment rows,
    + visit row). Partial captures are never committed.
-5. **Soft delete for user deletes, hard delete only for retention.** `DELETE /items/{id}` sets `is_deleted = TRUE`; every query
-   filters on it. The retention job (A37, built Thu–Sun) hard-deletes items older than the user's window; ON DELETE CASCADE removes
-   child rows, and the job also removes FAISS vectors and Redis keys.
+5. **Every delete is a hard delete (D7, 2026-11-03; it replaced "soft delete for user deletes").** `DELETE /items/{id}` and the retention
+   job (A37, built Thu–Sun) both call `ste/retention.py` `delete_items`: the `memory_items` row goes, ON DELETE CASCADE removes the child
+   rows, and the same call removes the FAISS vector and the Redis keys. `memory_items.is_deleted` and its index were dropped (migration
+   `scripts/migrations/2026-11-03_drop_is_deleted.sql`).
 
 ## D3. Table Definitions
 
@@ -1686,7 +1691,7 @@ Why a table and not a string column: analytics join a named entity, and the CHEC
 | `created_at` | TIMESTAMP | NOT NULL | Source time: mail arrival (`internalDate`), first capture for Chrome/YouTube |
 | `first_ingested_at` | TIMESTAMP | `NOW()` | When Echo first stored it |
 | `last_updated_at` | TIMESTAMP | `NOW()` | Last change |
-| `is_deleted` | BOOLEAN | FALSE | Soft delete |
+| `is_deleted` | BOOLEAN | FALSE | **Dropped 2026-11-03 (D7).** User deletes are hard deletes now, so nothing is flagged |
 | `search_vector` | TSVECTOR | GIN index `idx_memory_items_search` | **New 2026-10-24 (A24.3, A4).** Full text for keyword search: title, full `raw_text`, keywords, subject, sender, domain, channel, attachment `extracted_text`. **Written by ENP** (step 9), not a generated column: a generated column cannot read the metadata and attachment tables. Backfilled for the 109 existing rows on 2026-10-24. ENP writes it in step 9 (`mark_item_processed`, same `UPDATE` that sets `preprocessed`; `raw_text` and attachment text each cut at 300,000 characters) and `rse/search_coordinator.py` reads it |
 
 Constraint: `unique_source_entry UNIQUE (source_type, source_id)`.
@@ -1909,7 +1914,6 @@ Remove turns it into `rejected` and deletes the membership. No schema change (`d
 | `idx_memory_items_group` | `memory_items (system_group_id)` | Category aggregation |
 | `idx_memory_items_created` | `memory_items (created_at DESC)` | Time ranges, Gmail arrival filter |
 | `idx_memory_items_unprocessed` | `memory_items (preprocessed) WHERE preprocessed = FALSE` | ENP queue (partial) |
-| `idx_memory_items_active` | `memory_items (is_deleted) WHERE is_deleted = FALSE` | Live rows (partial) |
 | `idx_gmail_email_id` | `gmail_metadata (email_id)` | Gmail id lookup, engagement route |
 | `idx_gmail_thread_id` | `gmail_metadata (thread_id)` | Thread context, neighbours |
 | `idx_gmail_sender` | `gmail_metadata (sender)` | Sender rules |

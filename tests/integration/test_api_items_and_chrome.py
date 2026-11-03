@@ -11,10 +11,12 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from backend import items as items_module
 from backend.items import router as items_router
 from ingestion.chrome import chrome_connector
 from ingestion.chrome.chrome_connector import router as chrome_router
 from ste import postgresql_manager as db
+from ste.retention import RetentionResult
 
 
 @pytest.fixture
@@ -158,22 +160,51 @@ def seed(title, source_id=None):
     return memory_id
 
 
-def test_delete_is_a_soft_delete_and_only_works_once(client):
+@pytest.fixture
+def deletions(monkeypatch):
+    """Stands in for ste.retention.delete_items (its SQL needs PostgreSQL uuid arrays; it has its own tests
+    in test_ste_helpers.py and a whole-journey test in tests/system). Records every call, removes the row."""
+    calls = []
+
+    def fake_delete_items(memory_ids):
+        calls.append(list(memory_ids))
+        for memory_id in memory_ids:
+            db.execute("DELETE FROM memory_items WHERE memory_id = :id", {"id": memory_id})
+        return RetentionResult(len(memory_ids), 1, 0)
+
+    monkeypatch.setattr(items_module, "delete_items", fake_delete_items)
+    return calls
+
+
+def test_delete_removes_the_item_for_good_and_only_works_once(client, deletions):
     memory_id = seed("to delete")
     assert client.delete(f"/items/{memory_id}").json() == {"status": "deleted", "memory_id": memory_id}
-    assert db.fetchall("SELECT is_deleted FROM memory_items")[0]["is_deleted"] == 1      # the row stays
-    assert client.delete(f"/items/{memory_id}").status_code == 404
+    assert deletions == [[memory_id]]
+    assert db.fetchall("SELECT * FROM memory_items") == []                      # hard delete: the row is gone
+    assert client.delete(f"/items/{memory_id}").status_code == 404              # a second delete finds nothing
+
+
+def test_deleting_an_unknown_or_malformed_id_changes_nothing(client, deletions):
+    seed("stays")
     assert client.delete(f"/items/{uuid.uuid4()}").status_code == 404
     assert client.delete("/items/not-a-uuid").status_code == 422
+    assert deletions == [] and len(db.fetchall("SELECT * FROM memory_items")) == 1
 
 
 def test_delete_database_error_is_a_plain_500(client, monkeypatch):
-    monkeypatch.setattr(db, "execute", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("secret detail")))
+    monkeypatch.setattr(db, "scalar", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("secret detail")))
     response = client.delete(f"/items/{uuid.uuid4()}")
     assert response.status_code == 500 and "secret detail" not in response.text
 
 
-def test_export_json_leaves_out_deleted_items(client):
+def test_a_failure_while_deleting_is_a_plain_500(client, monkeypatch):
+    memory_id = seed("to delete")
+    monkeypatch.setattr(items_module, "delete_items", lambda ids: (_ for _ in ()).throw(RuntimeError("faiss secret")))
+    response = client.delete(f"/items/{memory_id}")
+    assert response.status_code == 500 and "faiss secret" not in response.text
+
+
+def test_export_json_leaves_out_deleted_items(client, deletions):
     keep, gone = seed("kept"), seed("deleted one")
     client.delete(f"/items/{gone}")
     body = client.get("/export").json()

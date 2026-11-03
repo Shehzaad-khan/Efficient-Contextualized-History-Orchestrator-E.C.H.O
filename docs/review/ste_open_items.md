@@ -2173,6 +2173,24 @@ Added 2026-10-27 by the owner while reviewing the screens (D6.5 to D6.7). Unlike
     nothing else. Their two tests went with them (`test_session_admin_routes_need_the_api_key`, `test_clear_session_deletes_messages`);
     the open delete route keeps its own test. `ECHO_API_KEY` no longer needs to be set anywhere.
 
+### D7. Hard delete replaces soft delete — [x] decided and BUILT 2026-11-03 (owner's live steps still to do)
+- **Decision (owner, 2026-11-03):** remove soft delete completely. `DELETE /items/{id}` removes every trace of the item, and nothing blocks
+  it from being captured again later. Session totals (`sessions`) are left as they are, and saved chats (`message_store`) are not touched.
+- **Built:** `ste/retention.py` `delete_items()` is the one deletion path (Postgres row + CASCADE child rows, then the FAISS vector, then Redis:
+  attachment cache, ENP retry counter and the Chrome revisit flag); `purge_expired_items` (A37) and `DELETE /items/{id}` both call it.
+  All 45 `is_deleted = FALSE` filters were removed (rse/, wba/, enp/, backend/, scripts/). `scripts/setup_db.py` no longer has the column or
+  `idx_memory_items_active`. Timeline page: a "delete" button next to "mark regret", with a "Delete / Keep" confirmation
+  (`frontend/src/lib/api.ts` `deleteItem`, `TimelinePage.tsx`).
+- **Tests (575 pass offline):** `delete_items` order and Redis keys, Postgres failure stops before FAISS, Redis down never fails a delete, the route
+  (200, then 404, 422, plain 500s), a whole-journey system test (row, vector and Redis keys gone, the answer no longer finds it, the page can be
+  captured again). A browser click-through against a fake backend checked the confirmation, Keep, a failed delete (entry stays, message shown)
+  and a successful one (entry leaves the list).
+- **Owner's live steps, in this order:** (1) `pg_dump -Fc echo_db` into `C:\Users\mdshe\echo_backups\`; (2) stop the backend, then
+  `python scripts/purge_soft_deleted.py` (prints how many rows the old route had flagged; probably 0 or a few) and, if any, again with `--yes`;
+  (3) `psql -h localhost -U echo -d echo_db -v ON_ERROR_STOP=1 -f scripts/migrations/2026-11-03_drop_is_deleted.sql` (refuses to run while any row is
+  still flagged); (4) restart the backend and the frontend; (5) click Delete on a test item on the Timeline page and check it is gone from search.
+- **Left on purpose:** user-group soft delete (`user_groups.is_active`, the pause/resume screen D5) is a different feature and stays.
+
 ---
 
 ## E. Later — after the review AND Step 2 are complete

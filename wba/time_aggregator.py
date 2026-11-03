@@ -56,7 +56,6 @@ TIME_UNION_SQL = """
     FROM memory_items m
     JOIN memory_engagement me ON m.memory_id = me.memory_id
     WHERE m.source_type = 'gmail'
-      AND m.is_deleted = FALSE
       AND me.first_opened_at IS NOT NULL
       AND me.last_accessed_at >= :start_utc AND me.last_accessed_at < :end_utc
     UNION ALL
@@ -66,7 +65,6 @@ TIME_UNION_SQL = """
     FROM visits v
     JOIN memory_items m ON m.memory_id = v.memory_id
     WHERE m.source_type = 'chrome'
-      AND m.is_deleted = FALSE
       AND v.visited_at >= :start_utc AND v.visited_at < :end_utc
     UNION ALL
     SELECT m.memory_id, m.source_type, m.system_group_id,
@@ -75,7 +73,6 @@ TIME_UNION_SQL = """
     FROM visits v
     JOIN memory_items m ON m.memory_id = v.memory_id
     WHERE m.source_type = 'youtube'
-      AND m.is_deleted = FALSE
       AND v.dwell_seconds > 0
       AND v.visited_at >= :start_utc AND v.visited_at < :end_utc
 """
@@ -180,7 +177,6 @@ def shorts_summary(start_day: date, end_day: date) -> dict[str, Any]:
         JOIN memory_items m ON m.memory_id = v.memory_id
         JOIN youtube_metadata ym ON m.memory_id = ym.memory_id
         WHERE ym.is_short = TRUE
-          AND m.is_deleted = FALSE
           AND v.dwell_seconds > 0
           AND v.visited_at >= :start_utc AND v.visited_at < :end_utc
         """,
@@ -286,7 +282,6 @@ def recent_items(limit: int = 10) -> list[dict[str, Any]]:
         LEFT JOIN chrome_metadata  cm ON m.memory_id = cm.memory_id
         LEFT JOIN gmail_metadata   gm ON m.memory_id = gm.memory_id
         LEFT JOIN youtube_metadata ym ON m.memory_id = ym.memory_id
-        WHERE m.is_deleted = FALSE
         ORDER BY COALESCE(me.last_accessed_at, m.first_ingested_at) DESC
         LIMIT :limit
         """,

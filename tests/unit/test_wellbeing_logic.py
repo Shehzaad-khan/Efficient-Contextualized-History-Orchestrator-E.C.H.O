@@ -100,11 +100,11 @@ def test_local_day_range_covers_whole_local_days_as_naive_utc():
 
 
 def test_time_union_only_counts_opened_gmail_and_watched_youtube():
-    """Shows (§11.2): unread mail never counts; YouTube needs dwell > 0; deleted items never count."""
+    """Shows (§11.2): unread mail never counts; YouTube needs dwell > 0."""
     sql = " ".join(ta.TIME_UNION_SQL.split())
     assert "first_opened_at IS NOT NULL" in sql
     assert "v.dwell_seconds > 0" in sql
-    assert sql.count("m.is_deleted = FALSE") == 3
+    assert "is_deleted" not in sql      # deleted items are really gone, so no flag is checked
 
 
 def test_total_time_and_group_breakdowns_use_the_database_helpers(monkeypatch):

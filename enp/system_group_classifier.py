@@ -827,8 +827,7 @@ def recompute_centroids() -> Dict[str, int]:
         SELECT sg.group_name, m.source_type, m.memory_id
         FROM memory_items m
         JOIN system_groups sg ON m.system_group_id = sg.system_group_id
-        WHERE m.is_deleted = FALSE
-          AND m.preprocessed = TRUE
+        WHERE m.preprocessed = TRUE
           AND m.classified_by IN ('structural', 'user_override', 'llm')
         """
     )

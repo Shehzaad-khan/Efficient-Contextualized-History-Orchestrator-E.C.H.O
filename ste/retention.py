@@ -5,8 +5,13 @@ Echo Personal Memory System
 A37 data retention: the user picks how long items are kept (Settings →
 Retention: forever / 1 year / 6 months, stored with the capture settings). The
 job below runs once at backend startup and HARD-deletes every item older than
-that window from every store. Soft delete (`is_deleted`) is not enough here:
-the text would stay in Postgres and the vector in FAISS.
+that window from every store. Deleting is always a hard delete: there is no
+`is_deleted` flag any more, because a flag would leave the text in Postgres and the
+vector in FAISS.
+
+`delete_items()` is the single deletion path. The retention job calls it for expired
+items, and `DELETE /items/{id}` (backend/items.py) calls it for one item the user
+chose to forget. Both remove the item from every store.
 
 Age is `memory_items.created_at` — when the thing happened (mail received,
 page visited), not when Echo ingested it. 1 year = 365 days, 6 months = 183.
@@ -16,7 +21,8 @@ Order of deletion (the safe order if the job stops half way):
                    engagement, embedding_index, group links, attachments,
                    sessions map, regret events, visits) is ON DELETE CASCADE.
     2. FAISS     — remove the vectors, then save the index to disk.
-    3. Redis     — the attachment-text cache and the ENP retry counter.
+    3. Redis     — the attachment-text cache, the ENP retry counter and (Chrome) the
+                   24 h revisit flag of the page's URL.
   A crash after step 1 leaves vectors with no row: search ignores them (the
   result join finds nothing) and the next run does not see them. The reverse
   order would leave rows without vectors, which search can never find again.
@@ -26,7 +32,13 @@ Two guards keep a wrong setting or a wrong clock from wiping the data:
     - the job refuses to run when EVERY item is past the cutoff (a clock set
       far ahead, or no new item for the whole window).
 
-Logging: counts and the cutoff date only — never titles or ids.
+What a delete deliberately leaves alone (owner's decisions): the `sessions` rows and
+their stored totals, and the saved chat history (`message_store`).
+
+Nothing blocks the item from being captured again later (its dedup key goes with the
+row), so the same mail or page can be ingested as a new memory item.
+
+Logging: counts and the cutoff date only — never titles, URLs or ids.
 """
 
 from __future__ import annotations
@@ -37,7 +49,7 @@ from typing import NamedTuple
 
 from ste import postgresql_manager, settings_store
 from ste.faiss_manager import get_manager
-from ste.redis_manager import get_sync_client
+from ste.redis_manager import get_sync_client, revisit_key
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +58,8 @@ RETENTION_DAYS: dict[str, int] = {"1y": 365, "6m": 183}
 _EXPIRED_IDS_SQL = "SELECT memory_id::text AS memory_id FROM memory_items WHERE created_at < :cutoff"
 _NEWEST_ITEM_SQL = "SELECT MAX(created_at) FROM memory_items"
 _DELETE_SQL = "DELETE FROM memory_items WHERE memory_id = ANY(CAST(:ids AS uuid[]))"
+# Read BEFORE the delete: the revisit flag is keyed by the page URL, which dies with the row.
+_CHROME_URLS_SQL = "SELECT canonical_url FROM chrome_metadata WHERE memory_id = ANY(CAST(:ids AS uuid[]))"
 
 
 class RetentionResult(NamedTuple):
@@ -70,6 +84,46 @@ def _delete_redis_keys(memory_ids: list[str]) -> int:
     except Exception as exc:
         logger.warning("Retention: Redis cleanup stopped early (%d keys deleted): %s", deleted, exc)
     return deleted
+
+
+def _revisit_keys(memory_ids: list[str]) -> list[str]:
+    """Redis revisit-flag keys of the Chrome items among these ids (call before the delete)."""
+    rows = postgresql_manager.fetchall(_CHROME_URLS_SQL, {"ids": memory_ids})
+    return [revisit_key("chrome", row["canonical_url"]) for row in rows if row.get("canonical_url")]
+
+
+def _delete_revisit_keys(keys: list[str]) -> int:
+    """Best effort, like _delete_redis_keys: the flag expires after 24 h on its own."""
+    if not keys:
+        return 0
+    try:
+        return int(get_sync_client().delete(*keys))
+    except Exception as exc:
+        logger.warning("Delete: Redis revisit-flag cleanup failed: %s", exc)
+        return 0
+
+
+def delete_items(memory_ids: list[str]) -> RetentionResult:
+    """Hard-delete these items from Postgres, FAISS and Redis (order: see the module docstring).
+
+    Raises on a Postgres failure (nothing else was touched) and on a FAISS failure
+    (the row is already gone; search ignores the orphan vector because its result
+    join finds no row). Redis cleanup is best effort and never raises.
+    """
+    if not memory_ids:
+        return _NOTHING_DELETED
+
+    revisit_keys = _revisit_keys(memory_ids)
+
+    postgresql_manager.execute(_DELETE_SQL, {"ids": memory_ids})
+
+    manager = get_manager()
+    vectors_removed = manager.remove_many(memory_ids)
+    if vectors_removed:
+        manager.save_index()
+
+    redis_keys_deleted = _delete_redis_keys(memory_ids) + _delete_revisit_keys(revisit_keys)
+    return RetentionResult(len(memory_ids), vectors_removed, redis_keys_deleted)
 
 
 def purge_expired_items(now: datetime | None = None) -> RetentionResult:
@@ -108,21 +162,14 @@ def purge_expired_items(now: datetime | None = None) -> RetentionResult:
         logger.info("Retention %s: no item older than %s", retention, cutoff.date())
         return _NOTHING_DELETED
 
-    postgresql_manager.execute(_DELETE_SQL, {"ids": memory_ids})
-
-    manager = get_manager()
-    vectors_removed = manager.remove_many(memory_ids)
-    if vectors_removed:
-        manager.save_index()
-
-    redis_keys_deleted = _delete_redis_keys(memory_ids)
+    result = delete_items(memory_ids)
 
     logger.info(
         "Retention %s: deleted %d items older than %s (%d vectors, %d Redis keys)",
         retention,
-        len(memory_ids),
+        result.items_deleted,
         cutoff.date(),
-        vectors_removed,
-        redis_keys_deleted,
+        result.vectors_removed,
+        result.redis_keys_deleted,
     )
-    return RetentionResult(len(memory_ids), vectors_removed, redis_keys_deleted)
+    return result

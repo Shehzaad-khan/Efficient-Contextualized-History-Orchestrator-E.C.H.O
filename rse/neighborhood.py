@@ -57,8 +57,7 @@ LEFT JOIN youtube_metadata ym ON m.memory_id = ym.memory_id
 _THREAD_NEIGHBORS_SQL = f"""
 SELECT {_NEIGHBOR_COLUMNS}
 {_NEIGHBOR_JOINS}
-WHERE m.is_deleted = FALSE
-  AND gm.thread_id = %(thread_id)s
+WHERE gm.thread_id = %(thread_id)s
   AND m.memory_id <> %(memory_id)s::uuid
 ORDER BY ABS(EXTRACT(EPOCH FROM (m.created_at - %(created_at)s::timestamp))) ASC
 LIMIT %(limit)s
@@ -72,8 +71,7 @@ SELECT * FROM (
            ABS(EXTRACT(EPOCH FROM (m.created_at - %(created_at)s::timestamp))) AS distance
     {_NEIGHBOR_JOINS}
     JOIN session_memory_map peer ON peer.memory_id = m.memory_id
-    WHERE m.is_deleted = FALSE
-      AND m.memory_id <> %(memory_id)s::uuid
+    WHERE m.memory_id <> %(memory_id)s::uuid
       AND peer.session_id IN (
             SELECT session_id FROM session_memory_map WHERE memory_id = %(memory_id)s::uuid
       )
@@ -81,8 +79,7 @@ SELECT * FROM (
     SELECT {_NEIGHBOR_COLUMNS}, 1 AS priority,
            ABS(EXTRACT(EPOCH FROM (m.created_at - %(created_at)s::timestamp))) AS distance
     {_NEIGHBOR_JOINS}
-    WHERE m.is_deleted = FALSE
-      AND m.memory_id <> %(memory_id)s::uuid
+    WHERE m.memory_id <> %(memory_id)s::uuid
       AND m.source_type IN ('chrome', 'youtube')
       AND m.created_at BETWEEN %(created_at)s::timestamp - %(window)s * INTERVAL '1 minute'
                            AND %(created_at)s::timestamp + %(window)s * INTERVAL '1 minute'

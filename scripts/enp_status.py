@@ -53,16 +53,13 @@ def main() -> None:
                 SELECT source_type,
                        COUNT(*) FILTER (
                            WHERE preprocessed = FALSE
-                             AND is_deleted = FALSE
                              AND COALESCE(classified_by, 'pending') <> 'failed'
                        ),
                        COUNT(*) FILTER (
                            WHERE preprocessed = FALSE
-                             AND is_deleted = FALSE
                              AND classified_by = 'failed'
                        ),
-                       COUNT(*) FILTER (WHERE preprocessed = TRUE AND is_deleted = FALSE),
-                       COUNT(*) FILTER (WHERE is_deleted = TRUE)
+                       COUNT(*) FILTER (WHERE preprocessed = TRUE)
                 FROM memory_items
                 GROUP BY source_type
                 ORDER BY source_type
@@ -74,7 +71,6 @@ def main() -> None:
                 """
                 SELECT COUNT(*) FROM memory_items
                 WHERE preprocessed = FALSE
-                  AND is_deleted = FALSE
                   AND COALESCE(classified_by, 'pending') <> 'failed'
                 """
             )
@@ -84,7 +80,6 @@ def main() -> None:
                 """
                 SELECT COUNT(*) FROM memory_items
                 WHERE preprocessed = FALSE
-                  AND is_deleted = FALSE
                   AND classified_by = 'failed'
                 """
             )
@@ -104,7 +99,6 @@ def main() -> None:
                 LEFT JOIN embedding_index ei
                   ON ei.memory_id = mi.memory_id AND ei.is_active = TRUE
                 WHERE mi.preprocessed = TRUE
-                  AND mi.is_deleted = FALSE
                   AND ei.memory_id IS NULL
                 """
             )
@@ -117,7 +111,6 @@ def main() -> None:
                 JOIN memory_items mi ON mi.memory_id = ei.memory_id
                 WHERE ei.is_active = TRUE
                   AND mi.preprocessed = FALSE
-                  AND mi.is_deleted = FALSE
                 """
             )
             embedding_not_preprocessed = cur.fetchone()[0]
@@ -128,7 +121,6 @@ def main() -> None:
                     SELECT memory_id, source_type, title, first_ingested_at
                     FROM memory_items
                     WHERE preprocessed = FALSE
-                      AND is_deleted = FALSE
                       AND COALESCE(classified_by, 'pending') <> 'failed'
                     ORDER BY first_ingested_at ASC
                     LIMIT %s
@@ -149,9 +141,9 @@ def main() -> None:
     print(f"embedding_index active rows:  {embedding_rows}")
     print(f"FAISS meta memory_ids:        {faiss_count if faiss_count is not None else 'n/a'}")
     print()
-    print("By source (pending | failed | processed | deleted):")
-    for source, pend, failed_count, done, deleted in by_source:
-        print(f"  {source:8}  {pend:5}  {failed_count:5}  {done:5}  {deleted:5}")
+    print("By source (pending | failed | processed):")
+    for source, pend, failed_count, done in by_source:
+        print(f"  {source:8}  {pend:5}  {failed_count:5}  {done:5}")
     print()
     print("Drift checks:")
     print(f"  preprocessed=TRUE but no embedding_index: {processed_no_embedding}")
@@ -162,7 +154,7 @@ def main() -> None:
         # ENP only picks rows with preprocessed = FALSE, so these are never re-embedded on their own.
         print("  -> reset them so ENP re-embeds them on its next batches (backend running):")
         print("     UPDATE memory_items mi SET preprocessed = FALSE")
-        print("     WHERE preprocessed = TRUE AND is_deleted = FALSE AND NOT EXISTS (")
+        print("     WHERE preprocessed = TRUE AND NOT EXISTS (")
         print("       SELECT 1 FROM embedding_index ei WHERE ei.memory_id = mi.memory_id AND ei.is_active = TRUE);")
     if embedding_not_preprocessed:
         print("  -> nothing to do: they are pending, and ENP replaces their vectors when it processes them")
