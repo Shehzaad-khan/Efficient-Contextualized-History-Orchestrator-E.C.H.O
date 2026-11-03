@@ -427,6 +427,40 @@ def test_collect_weekly_aggregates_builds_the_payload(monkeypatch):
     assert data["total_hours"] == 2.0 and data["category_breakdown_percent"] == {"work": 50, "misc": 50}
     assert data["week_start"] == "2026-10-01" and data["peak_activity_hours"] == [10]
     assert data["shorts_time_minutes"] == 2
+    assert data["total_minutes"] == 120 and data["minutes_by_category"] == {"work": 60, "misc": 60}
+
+
+def test_collect_weekly_aggregates_adds_the_previous_week(monkeypatch):
+    """The 7 days before the week are summed as numbers only, so the reflection can say what changed."""
+    seen_ranges = []
+
+    def total_time(start, end):
+        seen_ranges.append((start, end))
+        return 7200 if start == date(2026, 10, 1) else 1800
+
+    monkeypatch.setattr(ig.time_aggregator, "total_time", total_time)
+    monkeypatch.setattr(ig.time_aggregator, "time_by_system_group",
+                        lambda a, b: [{"group_name": "work", "total_seconds": 1800 if a < date(2026, 10, 1) else 7200},
+                                      {"group_name": "misc", "total_seconds": 0}])
+    monkeypatch.setattr(ig.time_aggregator, "shorts_summary", lambda a, b: {})
+    monkeypatch.setattr(ig, "_weekly_regrets", lambda a, b: {"by_category": [], "peak_hours": []})
+    monkeypatch.setattr(ig, "ensure_sessions_for_range", lambda a, b: None)
+    monkeypatch.setattr(ig, "session_source_sequences", lambda a, b: [])
+    monkeypatch.setattr(ig, "peak_activity_hours", lambda a, b: [])
+    data = ig.collect_weekly_aggregates(date(2026, 10, 7))
+    assert (date(2026, 9, 24), date(2026, 9, 30)) in seen_ranges
+    assert data["previous_week"] == {
+        "week_start": "2026-09-24", "week_end": "2026-09-30",
+        "total_minutes": 30, "minutes_by_category": {"work": 30},
+    }
+    assert "http" not in str(data) and "title" not in str(data)
+
+
+def test_deterministic_summary_mentions_last_week_only_when_it_had_time():
+    with_previous = {**AGGREGATES, "previous_week": {"total_minutes": 45}}
+    assert "The week before: 45 minutes." in ig._deterministic_summary(with_previous)
+    empty_previous = {**AGGREGATES, "previous_week": {"total_minutes": 0}}
+    assert "The week before" not in ig._deterministic_summary(empty_previous)
 
 
 def test_weekly_regrets_shapes_rows(monkeypatch):
@@ -434,3 +468,26 @@ def test_weekly_regrets_shapes_rows(monkeypatch):
     monkeypatch.setattr(ig.postgresql_manager, "fetchall", lambda q, p=None: next(answers))
     assert ig._weekly_regrets(date(2026, 10, 1), date(2026, 10, 7)) == {
         "by_category": [{"category": "entertainment", "count": 2}], "peak_hours": [23]}
+
+
+def test_items_in_system_group_use_the_same_rows_as_the_category_total(monkeypatch):
+    """Shows: the category dropdown lists items from TIME_UNION_SQL (so they add up to the bar), with links and no private ids."""
+    rows = [
+        {"source_type": "gmail", "title": "Offer", "total_seconds": 300, "url": None,
+         "thread_id": "t9", "email_id": "e9", "video_id": None},
+        {"source_type": "chrome", "title": "Docs", "total_seconds": 60, "url": "https://docs.python.org/3/",
+         "thread_id": None, "email_id": None, "video_id": None},
+    ]
+    seen = {}
+
+    def fake_fetchall(query, params=None):
+        seen["sql"], seen["params"] = " ".join(query.split()), params
+        return [dict(row) for row in rows]
+
+    monkeypatch.setattr(ta.postgresql_manager, "fetchall", fake_fetchall)
+    items = ta.items_in_system_group("work", date(2026, 10, 5))
+    assert ta.TIME_UNION_SQL.split()[0] in seen["sql"] and "sg.group_name = :group_name" in seen["sql"]
+    assert seen["params"]["group_name"] == "work" and seen["params"]["limit"] == 100
+    assert seen["params"]["start_utc"] < seen["params"]["end_utc"]
+    assert [item["url"] for item in items] == ["https://mail.google.com/mail/u/0/#all/t9", "https://docs.python.org/3/"]
+    assert all("thread_id" not in item and "email_id" not in item and "video_id" not in item for item in items)

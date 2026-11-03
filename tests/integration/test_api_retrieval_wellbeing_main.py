@@ -201,6 +201,18 @@ def test_wellbeing_read_routes_pass_the_data_through(wellbeing_client, monkeypat
     assert wellbeing_client.get("/wellbeing/analytics/daily?day=nonsense").status_code == 422
 
 
+def test_category_items_route_validates_the_group_and_passes_the_day(wellbeing_client, monkeypatch):
+    calls = []
+    monkeypatch.setattr(wb, "items_in_system_group", lambda group, day: calls.append((group, day.isoformat())) or [{"title": "Docs"}])
+    body = wellbeing_client.get("/wellbeing/analytics/category-items?group=work&day=2026-10-05").json()
+    assert calls == [("work", "2026-10-05")]
+    assert body == {"day": "2026-10-05", "group": "work", "items": [{"title": "Docs"}]}
+    assert wellbeing_client.get("/wellbeing/analytics/category-items?group=hobbies").status_code == 422
+    assert wellbeing_client.get("/wellbeing/analytics/category-items").status_code == 422
+    monkeypatch.setattr(wb, "items_in_system_group", boom)
+    assert wellbeing_client.get("/wellbeing/analytics/category-items?group=misc").status_code == 500
+
+
 def _recent_rows(count):
     """`count` rows newest first, one minute apart, shaped like recent_items (with sort_ts)."""
     from datetime import datetime, timedelta

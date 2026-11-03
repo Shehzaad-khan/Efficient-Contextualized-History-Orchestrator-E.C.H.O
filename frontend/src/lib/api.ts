@@ -17,6 +17,7 @@ import {
 } from './demoData'
 import type {
   AssignResult,
+  CategoryItem,
   DailySummary,
   GroupMember,
   GroupRule,
@@ -306,6 +307,15 @@ export function fetchHeatmap(days = 7, endDay?: string): Promise<HeatmapCell[]> 
       (await request<{ cells: HeatmapCell[] }>(`/wellbeing/analytics/heatmap${queryString({ days, end_day: endDay })}`))
         .cells,
     () => demoHeatmap,
+  )
+}
+
+/** The items behind one category's time on `day` (YYYY-MM-DD), longest time first. */
+export function fetchCategoryItems(day: string, group: string): Promise<CategoryItem[]> {
+  return withFallback(
+    async () =>
+      (await request<{ items: CategoryItem[] }>(`/wellbeing/analytics/category-items${queryString({ day, group })}`)).items,
+    () => demoRecent.slice(0, 4).map((item, index) => ({ ...item, total_seconds: 600 - index * 150 })),
   )
 }
 

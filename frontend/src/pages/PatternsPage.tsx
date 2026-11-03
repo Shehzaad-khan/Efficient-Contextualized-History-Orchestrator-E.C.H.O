@@ -1,21 +1,22 @@
 import { useEffect, useMemo, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { Link } from 'react-router-dom'
-import { Check, ChevronLeft, ChevronRight, Plus, X } from 'lucide-react'
+import { Check, ChevronDown, ChevronLeft, ChevronRight, Plus, X } from 'lucide-react'
 import PageTitle from '../components/PageTitle'
 import Counter from '../components/Counter'
 import SourceBadge from '../components/SourceBadge'
 import {
   createGroup,
   decideSuggestion,
+  fetchCategoryItems,
   fetchDaily,
   fetchGroups,
   fetchHeatmap,
   fetchReviewQueue,
   fetchWeeklyInsight,
 } from '../lib/api'
-import { DOW_LABELS, formatDuration, isoDayLabel, shiftIsoDate, todayIso } from '../lib/format'
-import type { DailySummary, GroupSuggestion, HeatmapCell, UserGroup, WeeklyInsight } from '../lib/types'
+import { DOW_LABELS, HOUR_LABELS, formatDuration, isoDayLabel, shiftIsoDate, todayIso } from '../lib/format'
+import type { CategoryItem, DailySummary, GroupSuggestion, HeatmapCell, UserGroup, WeeklyInsight } from '../lib/types'
 
 const EASE_OUT = [0.22, 1, 0.36, 1] as const
 
@@ -34,115 +35,355 @@ function PeriodStepper({
   atToday: boolean
 }) {
   return (
-    <div className="flex items-center gap-1.5" role="group" aria-label={`Choose the ${label}`}>
-      <span className="meta mr-1 text-ink-faint">{label}</span>
+    <div
+      className="flex items-center gap-2 rounded-pill border border-ember-500/25 bg-night-850 py-1.5 pl-4 pr-1.5 shadow-raise"
+      role="group"
+      aria-label={`Choose the ${label}`}
+    >
+      <span className="meta mr-1 text-ember-400">{label}</span>
       <button
         type="button"
         onClick={() => onShift(-1)}
-        className="btn-ghost p-1.5"
+        className="flex h-8 w-8 items-center justify-center rounded-full border border-ember-500/30 bg-ember-500/10 text-ember-400 transition duration-200 ease-out hover:border-ember-400/60 hover:bg-ember-500/20 hover:text-ember-300 active:scale-[0.94]"
         aria-label={`Previous ${label}`}
         title={`Previous ${label}`}
       >
-        <ChevronLeft size={14} aria-hidden="true" />
+        <ChevronLeft size={16} aria-hidden="true" />
       </button>
-      <span className="min-w-[9.5rem] text-center font-mono text-xs text-ink-soft" aria-live="polite">
+      <span className="min-w-[9.5rem] text-center font-mono text-sm text-ink" aria-live="polite">
         {value}
       </span>
       <button
         type="button"
         onClick={() => onShift(1)}
         disabled={atToday}
-        className="btn-ghost p-1.5 disabled:opacity-30"
+        className="flex h-8 w-8 items-center justify-center rounded-full border border-ember-500/30 bg-ember-500/10 text-ember-400 transition duration-200 ease-out hover:border-ember-400/60 hover:bg-ember-500/20 hover:text-ember-300 active:scale-[0.94] disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-transparent disabled:text-ink-faint disabled:hover:bg-transparent"
         aria-label={`Next ${label}`}
         title={atToday ? 'Nothing after today' : `Next ${label}`}
       >
-        <ChevronRight size={14} aria-hidden="true" />
+        <ChevronRight size={16} aria-hidden="true" />
       </button>
     </div>
   )
 }
 
 /* ── Category bars — thin, editorial, no chart library ─────────────────── */
+type CategoryItemsState =
+  | { status: 'loading' }
+  | { status: 'error' }
+  | { status: 'ready'; items: CategoryItem[] }
+
+/** Under half a minute shows as "<1m"; formatDuration would round it to "0m". */
+function itemTime(seconds: number): string {
+  return seconds > 0 && seconds < 30 ? '<1m' : formatDuration(seconds)
+}
+
+function CategoryItemRow({ item }: { item: CategoryItem }) {
+  const title = item.title?.trim() || 'Untitled'
+  const detail = item.sender ?? item.channel_name ?? item.domain ?? null
+  const titleClass = 'block truncate text-sm text-ink-soft'
+  return (
+    <li className="flex items-center gap-3 py-2.5">
+      <div className="w-20 shrink-0">
+        <SourceBadge source={item.source_type} />
+      </div>
+      <div className="min-w-0 flex-1">
+        {item.url ? (
+          <a
+            href={item.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={`${titleClass} transition hover:text-ember-300`}
+            aria-label={`${title}. Opens in a new tab.`}
+          >
+            {title}
+          </a>
+        ) : (
+          <span className={titleClass}>{title}</span>
+        )}
+        {detail && <span className="mt-0.5 block truncate font-mono text-[11px] text-ink-faint">{detail}</span>}
+      </div>
+      <span className="shrink-0 font-mono text-xs text-ink-mute">{itemTime(item.total_seconds)}</span>
+    </li>
+  )
+}
+
+function CategoryItemsPanel({ id, state }: { id: string; state: CategoryItemsState | undefined }) {
+  let body: JSX.Element
+  if (!state || state.status === 'loading') {
+    body = <div className="h-16 animate-pulse rounded bg-night-800/60" aria-label="Loading items" />
+  } else if (state.status === 'error') {
+    body = <p className="text-sm text-ink-mute">Couldn't load these items. Close and open the category to try again.</p>
+  } else if (state.items.length === 0) {
+    body = <p className="text-sm text-ink-mute">No items for this category.</p>
+  } else {
+    body = (
+      <ul className="divide-y divide-white/[0.05]">
+        {state.items.map((item) => (
+          <CategoryItemRow key={item.memory_id} item={item} />
+        ))}
+      </ul>
+    )
+  }
+  return (
+    <motion.div
+      id={id}
+      initial={{ opacity: 0, y: -4 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.2, ease: EASE_OUT }}
+      className="mt-3 rounded-card border border-white/[0.06] bg-night-900/60 px-4 py-1"
+    >
+      {body}
+    </motion.div>
+  )
+}
+
+/** Each bar opens a list of the items behind it; the list loads on the first open. */
 function CategoryBars({ summary, dayText }: { summary: DailySummary; dayText: string }) {
+  const [open, setOpen] = useState<ReadonlySet<string>>(new Set())
+  const [loaded, setLoaded] = useState<Record<string, CategoryItemsState>>({})
   const max = Math.max(...summary.by_system_group.map((group) => group.total_seconds), 1)
   const rows = [...summary.by_system_group].sort(
     (a, b) => GROUP_ORDER.indexOf(a.group_name) - GROUP_ORDER.indexOf(b.group_name),
   )
+
+  function toggle(groupName: string) {
+    const wasOpen = open.has(groupName)
+    setOpen((current) => {
+      const next = new Set(current)
+      if (wasOpen) next.delete(groupName)
+      else next.add(groupName)
+      return next
+    })
+    // Closing never fetches; an open or finished load is reused; a failed one is retried.
+    const state = loaded[groupName]
+    if (wasOpen || state?.status === 'loading' || state?.status === 'ready') return
+    setLoaded((current) => ({ ...current, [groupName]: { status: 'loading' } }))
+    fetchCategoryItems(summary.day, groupName)
+      .then((items) => setLoaded((current) => ({ ...current, [groupName]: { status: 'ready', items } })))
+      .catch(() => setLoaded((current) => ({ ...current, [groupName]: { status: 'error' } })))
+  }
+
   return (
-    <div className="space-y-3.5" role="img" aria-label={`Time by category, ${dayText}`}>
+    <ul className="space-y-3.5" aria-label={`Time by category, ${dayText}`}>
       {rows.map((group, index) => {
         const percent = summary.total_seconds ? Math.round((group.total_seconds / summary.total_seconds) * 100) : 0
+        const isOpen = open.has(group.group_name)
+        const isEmpty = group.total_seconds === 0 && group.item_count === 0
+        const panelId = `category-items-${group.group_name}`
         return (
-          <div key={group.group_name}>
-            <div className="flex items-baseline justify-between gap-4">
-              <span className="text-sm capitalize text-ink-soft">{group.group_name}</span>
-              <span className="font-mono text-xs text-ink-mute">
-                {formatDuration(group.total_seconds)} · {percent}%
+          <li key={group.group_name}>
+            <button
+              type="button"
+              onClick={() => toggle(group.group_name)}
+              disabled={isEmpty}
+              aria-expanded={isOpen}
+              aria-controls={isOpen ? panelId : undefined}
+              title={isEmpty ? 'Nothing in this category' : isOpen ? 'Hide the items' : 'Show the items'}
+              className="group block w-full text-left disabled:cursor-default"
+            >
+              <span className="flex items-baseline justify-between gap-4">
+                <span className="flex items-center gap-1.5 text-sm capitalize text-ink-soft transition group-enabled:group-hover:text-ink">
+                  <ChevronDown
+                    size={14}
+                    aria-hidden="true"
+                    className={`shrink-0 transition-transform duration-200 ${isOpen ? 'rotate-0' : '-rotate-90'} ${
+                      isEmpty ? 'text-ink-faint opacity-40' : 'text-ember-400'
+                    }`}
+                  />
+                  {group.group_name}
+                </span>
+                <span className="font-mono text-xs text-ink-mute">
+                  {formatDuration(group.total_seconds)} · {percent}%
+                </span>
               </span>
-            </div>
-            <div className="mt-1.5 h-[3px] rounded-full bg-night-700/60">
-              <motion.div
-                className="h-full rounded-full bg-gradient-to-r from-ember-600 to-ember-400"
-                initial={{ width: '0%' }}
-                whileInView={{ width: `${(group.total_seconds / max) * 100}%` }}
-                viewport={{ once: true }}
-                transition={{ duration: 0.9, ease: EASE_OUT, delay: 0.15 + index * 0.07 }}
-              />
-            </div>
-          </div>
+              <span className="mt-1.5 block h-[3px] rounded-full bg-night-700/60">
+                <motion.span
+                  className="block h-full rounded-full bg-gradient-to-r from-ember-600 to-ember-400"
+                  initial={{ width: '0%' }}
+                  whileInView={{ width: `${(group.total_seconds / max) * 100}%` }}
+                  viewport={{ once: true }}
+                  transition={{ duration: 0.9, ease: EASE_OUT, delay: 0.15 + index * 0.07 }}
+                />
+              </span>
+            </button>
+            {isOpen && <CategoryItemsPanel id={panelId} state={loaded[group.group_name]} />}
+          </li>
         )
       })}
-    </div>
+    </ul>
   )
 }
 
 /* ── Hour × day heatmap — lamplight intensity, regret ticks ─────────────── */
-function Heatmap({ cells }: { cells: HeatmapCell[] }) {
-  const byKey = useMemo(() => {
-    const map = new Map<string, HeatmapCell>()
-    for (const cell of cells) map.set(`${cell.day_of_week}-${cell.hour}`, cell)
-    return map
-  }, [cells])
-  const max = Math.max(...cells.map((cell) => cell.total_seconds), 1)
+// Four brightness steps instead of a smooth fade: a step is easy to match against the legend.
+const HEAT_ALPHA = [0.25, 0.45, 0.7, 0.95] as const
+const HEAT_EMPTY = 'rgba(255,255,255,0.045)'
+
+function heatColor(step: number): string {
+  return `rgba(245, 169, 71, ${HEAT_ALPHA[step]})`
+}
+
+function hourText(hour: number): string {
+  return `${hour % 12 || 12}${hour < 12 ? 'am' : 'pm'}`
+}
+
+interface HeatRow {
+  iso: string
+  label: string
+  longLabel: string
+  isToday: boolean
+  totalSeconds: number
+  hours: (HeatmapCell | undefined)[]
+}
+
+interface HeatPick {
+  rowIndex: number
+  hour: number
+}
+
+function Heatmap({ cells, weekEnd }: { cells: HeatmapCell[]; weekEnd: string }) {
+  const [picked, setPicked] = useState<HeatPick | null>(null)
+
+  // One row per calendar day, oldest first, ending on the chosen day. The backend groups by
+  // weekday, and 7 consecutive days contain each weekday once, so weekday -> row is exact.
+  const rows = useMemo<HeatRow[]>(() => {
+    const byKey = new Map<string, HeatmapCell>()
+    for (const cell of cells) byKey.set(`${cell.day_of_week}-${cell.hour}`, cell)
+    const today = todayIso()
+    return Array.from({ length: 7 }, (_, index) => {
+      const iso = shiftIsoDate(weekEnd, index - 6)
+      const [year, month, dayOfMonth] = iso.split('-').map(Number)
+      const date = new Date(year, month - 1, dayOfMonth)
+      const weekday = date.getDay()
+      const hours = Array.from({ length: 24 }, (_, hour) => byKey.get(`${weekday}-${hour}`))
+      return {
+        iso,
+        label: iso === today ? 'today' : `${DOW_LABELS[weekday]} ${dayOfMonth}`,
+        longLabel: date.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'short' }),
+        isToday: iso === today,
+        totalSeconds: hours.reduce((sum, cell) => sum + (cell?.total_seconds ?? 0), 0),
+        hours,
+      }
+    })
+  }, [cells, weekEnd])
+
+  const maxSeconds = Math.max(...cells.map((cell) => cell.total_seconds), 1)
+
+  const busiest = useMemo<HeatPick | null>(() => {
+    let best: HeatPick | null = null
+    let bestSeconds = 0
+    rows.forEach((row, rowIndex) =>
+      row.hours.forEach((cell, hour) => {
+        if (cell && cell.total_seconds > bestSeconds) {
+          best = { rowIndex, hour }
+          bestSeconds = cell.total_seconds
+        }
+      }),
+    )
+    return best
+  }, [rows])
+
+  const shown = picked ?? busiest
+  let readout = 'No activity recorded in these days.'
+  if (shown) {
+    const row = rows[shown.rowIndex]
+    const cell = row.hours[shown.hour]
+    const when = `${row.longLabel}, ${hourText(shown.hour)}–${hourText((shown.hour + 1) % 24)}`
+    if (!cell || (cell.total_seconds === 0 && cell.item_count === 0)) {
+      readout = `${when} · nothing recorded`
+    } else {
+      const parts = [when, formatDuration(cell.total_seconds), `${cell.item_count} ${cell.item_count === 1 ? 'item' : 'items'}`]
+      if (cell.has_regret) parts.push('you marked a regret here')
+      readout = parts.join(' · ')
+    }
+    if (!picked) readout = `Busiest hour: ${readout}`
+  }
 
   return (
-    <div role="img" aria-label="Activity heatmap by hour and weekday; brighter cells mean more time; flagged cells carry a regret mark">
+    <div role="img" aria-label={`Activity heatmap, one row per day, one square per hour. ${readout}`}>
       <div className="overflow-x-auto pb-2">
-        <div className="min-w-[560px]">
-          {Array.from({ length: 7 }, (_, day) => (
-            <div key={day} className="flex items-center gap-1">
-              <span className="w-8 shrink-0 font-mono text-[9px] uppercase text-ink-faint">{DOW_LABELS[day]}</span>
-              {Array.from({ length: 24 }, (_, hour) => {
-                const cell = byKey.get(`${day}-${hour}`)
-                const intensity = cell ? cell.total_seconds / max : 0
-                return (
-                  <motion.span
-                    key={hour}
-                    initial={{ opacity: 0 }}
-                    whileInView={{ opacity: 1 }}
-                    viewport={{ once: true }}
-                    transition={{ duration: 0.3, delay: (day * 24 + hour) * 0.0015 }}
-                    title={cell ? `${DOW_LABELS[day]} ${hour}:00 — ${formatDuration(cell.total_seconds)}${cell.has_regret ? ' · regret marked' : ''}` : undefined}
-                    className="relative m-[1.5px] h-4 flex-1 rounded-[3px]"
-                    style={{
-                      backgroundColor:
-                        intensity === 0 ? 'rgba(255,255,255,0.03)' : `rgba(245, 169, 71, ${0.08 + intensity * 0.78})`,
-                    }}
-                  >
-                    {cell?.has_regret && (
-                      <span aria-hidden="true" className="absolute right-0 top-0 h-1 w-1 rounded-full bg-youtube" />
-                    )}
-                  </motion.span>
-                )
-              })}
-            </div>
-          ))}
-          <div className="mt-1 flex gap-1 pl-8">
-            {Array.from({ length: 24 }, (_, hour) => (
-              <span key={hour} className="m-[1.5px] flex-1 text-center font-mono text-[8px] text-ink-faint">
-                {hour % 6 === 0 ? `${hour === 0 ? 12 : hour > 12 ? hour - 12 : hour}${hour < 12 ? 'a' : 'p'}` : ''}
-              </span>
+        <div className="min-w-[600px]">
+          <p className="mb-4 min-h-[1.25rem] font-mono text-xs text-ember-300" aria-hidden="true">
+            {readout}
+          </p>
+
+          <div className="space-y-[3px]" onMouseLeave={() => setPicked(null)}>
+            {rows.map((row, rowIndex) => (
+              <div key={row.iso} className="flex items-center gap-2">
+                <span
+                  className={`w-14 shrink-0 font-mono text-[11px] uppercase ${row.isToday ? 'text-ember-400' : 'text-ink-mute'}`}
+                >
+                  {row.label}
+                </span>
+                <div className="flex flex-1 gap-[3px]">
+                  {row.hours.map((cell, hour) => {
+                    const hasActivity = !!cell && (cell.total_seconds > 0 || cell.item_count > 0)
+                    const step = hasActivity
+                      ? Math.min(HEAT_ALPHA.length - 1, Math.max(0, Math.ceil((cell.total_seconds / maxSeconds) * HEAT_ALPHA.length) - 1))
+                      : -1
+                    const isShown = shown?.rowIndex === rowIndex && shown.hour === hour
+                    return (
+                      <motion.span
+                        key={hour}
+                        initial={{ opacity: 0 }}
+                        whileInView={{ opacity: 1 }}
+                        viewport={{ once: true }}
+                        transition={{ duration: 0.3, delay: (rowIndex * 24 + hour) * 0.0015 }}
+                        onMouseEnter={() => setPicked({ rowIndex, hour })}
+                        onClick={() => setPicked({ rowIndex, hour })}
+                        className={`relative h-6 flex-1 cursor-default rounded-[4px] ${isShown ? 'ring-1 ring-ink' : ''}`}
+                        style={{ backgroundColor: step < 0 ? HEAT_EMPTY : heatColor(step) }}
+                      >
+                        {cell?.has_regret && (
+                          <span
+                            aria-hidden="true"
+                            className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-youtube ring-2 ring-night-850"
+                          />
+                        )}
+                      </motion.span>
+                    )
+                  })}
+                </div>
+                <span className="w-14 shrink-0 text-right font-mono text-[11px] text-ink-soft">
+                  {row.totalSeconds > 0 ? formatDuration(row.totalSeconds) : '—'}
+                </span>
+              </div>
             ))}
+          </div>
+
+          {/* Hour axis: a label every 3 hours, under the squares it names */}
+          <div className="mt-2 flex items-center gap-2" aria-hidden="true">
+            <span className="w-14 shrink-0" />
+            <div className="flex flex-1 gap-[3px]">
+              {HOUR_LABELS.map((text, hour) => (
+                <span key={hour} className="relative h-4 flex-1">
+                  {text && (
+                    <span className="absolute left-1/2 -translate-x-1/2 whitespace-nowrap font-mono text-[10px] text-ink-mute">
+                      {text}
+                    </span>
+                  )}
+                </span>
+              ))}
+            </div>
+            <span className="w-14 shrink-0 text-right font-mono text-[10px] uppercase text-ink-faint">total</span>
+          </div>
+
+          {/* Legend */}
+          <div className="mt-5 flex flex-wrap items-center gap-x-6 gap-y-2" aria-hidden="true">
+            <div className="flex items-center gap-1.5">
+              <span className="meta mr-1 text-[10px]">less</span>
+              <span className="h-3.5 w-3.5 rounded-[3px]" style={{ backgroundColor: HEAT_EMPTY }} />
+              {HEAT_ALPHA.map((_, step) => (
+                <span key={step} className="h-3.5 w-3.5 rounded-[3px]" style={{ backgroundColor: heatColor(step) }} />
+              ))}
+              <span className="meta ml-1 text-[10px]">more time</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="h-2 w-2 rounded-full bg-youtube" />
+              <span className="meta text-[10px]">a regret you marked</span>
+            </div>
+            <span className="meta text-[10px] text-ink-faint">one square = one hour · your local time</span>
           </div>
         </div>
       </div>
@@ -414,17 +655,17 @@ export default function PatternsPage() {
           Array.from({ length: 4 }, (_, index) => <div key={index} className="h-24 animate-pulse bg-night-850" />)}
       </motion.div>
 
-      <div className="mt-8 grid grid-cols-1 gap-8 xl:grid-cols-[1.2fr_1fr]">
+      {/* The heatmap gets the full width: 24 hour squares need more than half a screen to stay readable */}
+      <section className="card mt-8 p-6" aria-labelledby="heatmap-heading">
+        <h2 id="heatmap-heading" className="meta mb-5">
+          the week, hour by hour · {weekText}
+        </h2>
+        {cells ? <Heatmap cells={cells} weekEnd={weekEnd} /> : <div className="h-36 animate-pulse rounded bg-night-800/60" />}
+      </section>
+
+      <div className="mt-8 grid grid-cols-1 items-start gap-8 xl:grid-cols-[1.2fr_1fr]">
         {/* Left column */}
         <div className="space-y-8">
-          <section className="card p-6" aria-labelledby="heatmap-heading">
-            <h2 id="heatmap-heading" className="meta mb-5">
-              the week, hour by hour · {weekText}
-            </h2>
-            {cells ? <Heatmap cells={cells} /> : <div className="h-36 animate-pulse rounded bg-night-800/60" />}
-            <p className="meta mt-3 text-[9px] text-ink-faint">brighter = more time · red tick = a regret you marked</p>
-          </section>
-
           {insightLoading && !insight && <div className="card h-36 animate-pulse bg-night-850/60" aria-hidden="true" />}
           {insight && (
             <motion.section
@@ -446,10 +687,7 @@ export default function PatternsPage() {
               </p>
             </motion.section>
           )}
-        </div>
 
-        {/* Right column */}
-        <div className="space-y-8">
           <section className="card p-6" aria-labelledby="categories-heading">
             {/* D6.6: the card names its day, so it never reads as the week's numbers */}
             <h2 id="categories-heading" className="meta mb-5">
@@ -457,7 +695,7 @@ export default function PatternsPage() {
             </h2>
             {summary ? (
               summary.total_seconds > 0 ? (
-                <CategoryBars summary={summary} dayText={dayText} />
+                <CategoryBars key={summary.day} summary={summary} dayText={dayText} />
               ) : (
                 <p className="text-sm text-ink-mute">No time recorded {day === today ? 'yet today' : 'on this day'}.</p>
               )
@@ -465,7 +703,10 @@ export default function PatternsPage() {
               <div className="h-40 animate-pulse rounded bg-night-800/60" />
             )}
           </section>
+        </div>
 
+        {/* Right column */}
+        <div className="space-y-8">
           <section className="card p-6" aria-labelledby="groups-heading">
             <h2 id="groups-heading" className="meta mb-5">
               your goal groups

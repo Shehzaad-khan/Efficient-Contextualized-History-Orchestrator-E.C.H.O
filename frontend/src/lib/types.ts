@@ -69,6 +69,11 @@ export interface MemoryItem {
   is_short?: boolean | null
 }
 
+/** An item behind one category's time on a day; `total_seconds` is the time it adds to that category. */
+export interface CategoryItem extends MemoryItem {
+  total_seconds: number
+}
+
 /** One page of the newest-first item list; `next_cursor` is null on the last page. */
 export interface RecentPage {
   items: MemoryItem[]

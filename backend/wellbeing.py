@@ -10,6 +10,7 @@ Endpoints (prefix /wellbeing):
     Analytics:
         GET  /analytics/daily                  — daily summary (time, categories, regret, focus)
         GET  /analytics/heatmap                — hour × day activity matrix with regret markers (days, end_day)
+        GET  /analytics/category-items         — the items behind one category's time on a day (group, day)
         GET  /recent                           — last N items across all sources; `before` = cursor for older pages
     Sessions:
         POST /sessions/rebuild                 — (re)compute sessions for a day
@@ -83,7 +84,7 @@ from wba.regret_system import (
     snooze_reminders_today,
     toggle_regret,
 )
-from wba.time_aggregator import activity_heatmap, recent_items
+from wba.time_aggregator import activity_heatmap, items_in_system_group, recent_items
 from wba.wellbeing_analytics import (
     daily_summary,
     ensure_sessions_for_day,
@@ -97,6 +98,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/wellbeing", tags=["Wellbeing Analytics"])
 
 ReminderSourceType = Literal["gmail", "chrome", "youtube"]
+SystemGroupName = Literal["work", "study", "entertainment", "personal", "misc"]
 
 
 def _server_error(route: str) -> HTTPException:
@@ -167,6 +169,19 @@ def analytics_heatmap(
         }
     except Exception:
         raise _server_error("analytics/heatmap")
+
+
+@router.get("/analytics/category-items")
+def analytics_category_items(
+    group: SystemGroupName = Query(..., description="One of the five system groups"),
+    day: Optional[date] = Query(None, description="Defaults to today"),
+):
+    # The items behind one bar of 'time by category' (Patterns page dropdown).
+    try:
+        target = day or date.today()
+        return {"day": target.isoformat(), "group": group, "items": items_in_system_group(group, target)}
+    except Exception:
+        raise _server_error("analytics/category-items")
 
 
 def _encode_recent_cursor(sort_ts: datetime, memory_id: UUID) -> str:
