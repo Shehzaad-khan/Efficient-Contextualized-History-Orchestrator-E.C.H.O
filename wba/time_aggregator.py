@@ -282,6 +282,10 @@ def recent_items(limit: int = 10, before: tuple[datetime, str] | None = None) ->
     page starts right after it. Every row carries `sort_ts` (naive UTC, the value
     it is ordered by) so the caller can build the next cursor; the caller removes
     it before the row goes to the browser.
+
+    Every row also carries `regretted`: True when the item is currently marked as a
+    regret (an odd number of toggle events, see wba/regret_system.py), so the page can
+    offer "undo" instead of "mark regret" for items already marked.
     """
     params: dict[str, Any] = {"limit": limit}
     before_clause = ""
@@ -293,6 +297,7 @@ def recent_items(limit: int = 10, before: tuple[datetime, str] | None = None) ->
         SELECT m.memory_id, m.source_type, m.title, m.created_at,
                me.last_accessed_at,
                {RECENT_SORT_TS} AS sort_ts,
+               COALESCE(rg.marks, 0) % 2 = 1 AS regretted,
                cm.url, cm.domain,
                gm.sender, gm.thread_id, gm.email_id,
                ym.channel_name, ym.is_short, ym.video_id
@@ -301,6 +306,8 @@ def recent_items(limit: int = 10, before: tuple[datetime, str] | None = None) ->
         LEFT JOIN chrome_metadata  cm ON m.memory_id = cm.memory_id
         LEFT JOIN gmail_metadata   gm ON m.memory_id = gm.memory_id
         LEFT JOIN youtube_metadata ym ON m.memory_id = ym.memory_id
+        LEFT JOIN (SELECT memory_id, COUNT(*) AS marks FROM regret_events GROUP BY memory_id) rg
+               ON m.memory_id = rg.memory_id
         {before_clause}
         ORDER BY {RECENT_SORT_TS} DESC, m.memory_id DESC
         LIMIT :limit

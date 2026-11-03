@@ -99,7 +99,7 @@ The frontend runs without the backend too — it flips into a clearly-badged **d
 
 ```bash
 pip install -r requirements-dev.txt
-pytest --cov          # 575 tests (unit / integration / system), about 94 % line coverage, no live services needed
+pytest --cov          # 591 tests (unit / integration / system), about 94 % line coverage, no live services needed
 ```
 
 Every push runs the same checks on GitHub (`.github/workflows/ci.yml`): compile, lint, bandit security scan, tests with an

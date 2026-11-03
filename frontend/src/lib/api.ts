@@ -476,15 +476,35 @@ export function fetchRegretAnalytics(): Promise<RegretAnalytics> {
   return withFallback(() => request<RegretAnalytics>('/wellbeing/regret/analytics'), () => demoRegret)
 }
 
-export function toggleRegret(memoryId: string, note?: string): Promise<{ regretted: boolean }> {
-  return withFallback(
-    () =>
-      request<{ regretted: boolean }>(`/wellbeing/regret/${memoryId}`, {
-        method: 'POST',
-        body: JSON.stringify({ note: note ?? null }),
-      }),
-    () => ({ regretted: true }),
-  )
+/**
+ * Flip the regret mark on one item and return its new state (the same route marks and un-marks).
+ * `wasRegretted` only serves demo mode, which has no backend to ask. A failure is NOT hidden
+ * behind demo data: the caller keeps what it shows and says it could not update the mark.
+ */
+export async function toggleRegret(
+  memoryId: string,
+  note?: string,
+  wasRegretted = false,
+): Promise<{ regretted: boolean }> {
+  if (demoMode) return { regretted: !wasRegretted }
+  try {
+    return await request<{ regretted: boolean }>(`/wellbeing/regret/${encodeURIComponent(memoryId)}`, {
+      method: 'POST',
+      body: JSON.stringify({ note: note ?? null }),
+    })
+  } catch (error) {
+    void probeBackend()
+    throw error
+  }
+}
+
+/**
+ * The regret analytics again, after a mark changed. Unlike fetchRegretAnalytics, a failure is
+ * not replaced by demo numbers: the page keeps the real figures it already shows.
+ */
+export async function refreshRegretAnalytics(): Promise<RegretAnalytics> {
+  if (demoMode) return demoRegret
+  return request<RegretAnalytics>('/wellbeing/regret/analytics')
 }
 
 /**
