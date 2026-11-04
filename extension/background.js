@@ -111,6 +111,19 @@ async function postToBackend(endpoint, payload, method = "POST") {
   return response.json();
 }
 
+/**
+ * Log a failed send. A request that never connected (the backend is stopped or restarting) is expected and the
+ * page is retried, so it is a warning; fetch rejects with a TypeError then. Anything else, such as the backend
+ * answering 500 or 422, is a real problem and stays an error, which is what Chrome lists under the extension's Errors.
+ */
+function logSendFailure(message, error) {
+  if (error instanceof TypeError) {
+    console.warn(`${message} (backend not reachable):`, error.message);
+  } else {
+    console.error(message, error.message);
+  }
+}
+
 // ── Capture rules (A9.5) ─────────────────────────────────────────────────────
 // The app-domain and sensitive-word lists live only on the server. They are
 // fetched from GET /chrome/rules into chrome.storage.local (chrome_tracker.js
@@ -499,7 +512,7 @@ async function sendExtraDwellToBackend(tabState) {
     });
     tabState.sentDwellSeconds = tabState.dwellSeconds;
   } catch (error) {
-    console.error("[Echo background] Failed to send extra dwell on page close:", error.message);
+    logSendFailure("[Echo background] Failed to send extra dwell on page close:", error);
   } finally {
     tabState.sendInFlight = false;
   }
@@ -515,7 +528,7 @@ async function finalizeChromePage(tabState) {
       await sendChromePageToBackend(tabState);
     }
   } catch (error) {
-    console.error("[Echo background] Chrome ingest failed on page close:", error.message);
+    logSendFailure("[Echo background] Chrome ingest failed on page close:", error);
   }
 }
 
@@ -590,7 +603,7 @@ setInterval(async () => {
     try {
       await sendChromePageToBackend(tabState);
     } catch (error) {
-      console.error("[Echo background] Chrome ingest failed, retrying in 30 s:", error.message);
+      logSendFailure("[Echo background] Chrome ingest failed, retrying in 30 s:", error);
     }
   }
 }, 1000);
