@@ -209,6 +209,22 @@ def test_unrelated_items_get_no_suggestion_and_a_pair_is_never_suggested_twice(s
     assert db.fetchall("SELECT 1 FROM group_suggestions WHERE memory_id = 'unrelated'") == []
 
 
+def test_a_run_logs_the_closest_scores_and_what_became_of_each_item(sqlite_db, monkeypatch, caplog):
+    """Shows: an item that scored but joined nothing is still explained in the log (rule, KNN, the bar, result)."""
+    vectors = {}
+    make_ready_group(monkeypatch, vectors)
+    seed_item("lookalike", title="Lookalike page", domain="other.org")
+    vectors["lookalike"] = unit(1, 0.05, 0)       # high KNN -> suggested
+    seed_item("unrelated", title="Unrelated page", domain="other.org")
+    vectors["unrelated"] = unit(0, 1, 0)          # KNN 0 -> below the bar
+    with caplog.at_level("INFO", logger="wba.group_manager"):
+        gm.run_auto_assignment()
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("Auto-assignment score:")]
+    assert len(lines) == 2
+    assert "Lookalike page" in lines[0] and "result=suggested" in lines[0] and "(bar 0.85)" in lines[0]
+    assert "Unrelated page" in lines[1] and "knn=0.0000" in lines[1] and "result=below_bar" in lines[1]
+
+
 def test_auto_assignment_does_nothing_without_a_ready_group(sqlite_db):
     seed_item("m1")
     assert gm.run_auto_assignment() == {"scored": 0, "suggested": 0, "auto_accepted": 0}

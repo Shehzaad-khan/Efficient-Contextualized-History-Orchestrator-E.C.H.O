@@ -76,6 +76,11 @@ RULE_WEIGHT = 0.5
 KNN_WEIGHT = 0.5
 AUTO_ASSIGN_BATCH_LIMIT = 200
 RULE_SUGGESTION_MIN_MATCHES = 5
+# How many of a run's highest KNN scores are written to the log, with what became of each item.
+LOGGED_CLOSEST_SCORES = 5
+OUTCOME_AUTO_ACCEPTED = "auto_accepted"
+OUTCOME_SUGGESTED = "suggested"
+OUTCOME_BELOW_BAR = "below_bar"
 
 VALID_RULE_TYPES = {"keyword", "domain", "channel", "sender", "time_window"}
 
@@ -568,6 +573,7 @@ def _run_auto_assignment(limit: int) -> dict[str, Any]:
     scored = 0
     suggested = 0
     auto_accepted = 0
+    results: list[_ScoredPair] = []
     for item in items:
         item_id = str(item["memory_id"])
         item_vector = manager.get_vector(item_id) if manager is not None else None
@@ -576,10 +582,12 @@ def _run_auto_assignment(limit: int) -> dict[str, Any]:
                 continue
             scores = score_item_for_group(item, context, item_vector)
             scored += 1
+            outcome = OUTCOME_BELOW_BAR
             if scores["matched_rule_ids"] and scores["knn_score"] >= KNN_ONLY_THRESHOLD:
                 # A42.1: the rule you wrote AND the similarity to items you confirmed agree.
                 if _insert_auto_accepted(item_id, context.group_id, scores):
                     auto_accepted += 1
+                    outcome = OUTCOME_AUTO_ACCEPTED
             elif (
                 scores["final_score"] > AUTO_SUGGEST_THRESHOLD
                 or scores["rule_score"] > 0
@@ -587,10 +595,36 @@ def _run_auto_assignment(limit: int) -> dict[str, Any]:
             ):
                 if _insert_suggestion(item_id, context.group_id, scores):
                     suggested += 1
+                    outcome = OUTCOME_SUGGESTED
+            results.append(_ScoredPair(item["title"], context.group_id, scores, outcome))
 
+    _log_closest_scores(results, {g["group_id"]: g["group_name"] for g in groups})
     logger.info("Auto-assignment: %d groups, %d items, scored=%d suggested=%d auto_accepted=%d in %d ms",
                 len(contexts), len(items), scored, suggested, auto_accepted, (clock.perf_counter() - started) * 1000)
     return {"scored": scored, "suggested": suggested, "auto_accepted": auto_accepted}
+
+
+@dataclass
+class _ScoredPair:
+    """One (item, group) pair scored in a run, kept only to write the log lines."""
+    title: Optional[str]
+    group_id: str
+    scores: dict[str, Any]
+    outcome: str
+
+
+def _log_closest_scores(results: list[_ScoredPair], group_names: dict[str, str]) -> None:
+    """Log the pairs that scored highest on KNN this run, with their scores and what happened to them.
+
+    The run summary only has totals; without this, "why did my video not join the group?" cannot be
+    answered once the item is gone. Titles are already in this log (storage_engine logs them).
+    """
+    for pair in sorted(results, key=lambda p: p.scores["knn_score"], reverse=True)[:LOGGED_CLOSEST_SCORES]:
+        logger.info(
+            "Auto-assignment score: %r -> group %r rule=%.2f knn=%.4f (bar %.2f) result=%s",
+            (pair.title or "")[:70], group_names.get(pair.group_id, pair.group_id),
+            pair.scores["rule_score"], pair.scores["knn_score"], KNN_ONLY_THRESHOLD, pair.outcome,
+        )
 
 
 def review_queue(group_id: Optional[str] = None) -> list[dict[str, Any]]:
