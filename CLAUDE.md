@@ -164,7 +164,7 @@ history if Review 2 needs it:
 
 Tests and CI (2026-10-26): `pytest --cov` runs 600 tests (unit / integration / system, `tests/`) at about 94 % line coverage with no live
 service. `.github/workflows/ci.yml` runs compile, ruff, bandit (fails on HIGH), pytest (coverage gate 80 %) and the frontend type check
-and build on every push. Numbers, the replay of old commits and three findings (requirements.txt cannot be installed as written,
+and build on every push. Numbers, the replay of old commits and three findings (the old pydantic / uvicorn pins that stopped `pip install -r requirements.txt`, fixed 2026-11-03;
 package-lock.json lacks rollup's Linux binary, two `# nosec B613` comments): `docs/review/ci_cd_guide.md`. Keep the tests green; do not
 skip or delete a test to make a change pass.
 

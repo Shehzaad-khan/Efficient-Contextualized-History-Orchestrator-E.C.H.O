@@ -3,13 +3,11 @@
 # This is requirements.txt WITHOUT the machine-learning stack (torch, torchvision, sentence-transformers,
 # about 2 GB). The tests replace the embedding model and the cross-encoder with small fakes
 # (tests/conftest.py), so CI installs in about a minute instead of ten. Everything else is identical,
-# including every pinned version, with TWO exceptions (below). When you change requirements.txt, change this
-# file the same way.
+# including every pinned version. When you change requirements.txt, change this file the same way.
 #
-# Why two pins differ: requirements.txt cannot be installed as written. `mcp>=2.3` (the E1 MCP server) needs
-# pydantic>=2.12 and uvicorn>=0.31.1, but requirements.txt pins pydantic==2.8.2 and uvicorn==0.30.6, so
-# `pip install -r requirements.txt` stops with "ResolutionImpossible". Here those two are loosened to the
-# smallest range that works. Suggested fix for requirements.txt itself: the same two lines.
+# History: until 2026-11-03 requirements.txt pinned pydantic==2.8.2 and uvicorn==0.30.6, which `mcp>=2.3` (the E1
+# MCP server) cannot accept (it needs pydantic>=2.12 and uvicorn>=0.31.1), so that file stopped with
+# "ResolutionImpossible". Both files now carry the loosened pins `pydantic>=2.12` and `uvicorn[standard]>=0.31.1`.
 #
 fastapi==0.115.0
 uvicorn[standard]>=0.31.1

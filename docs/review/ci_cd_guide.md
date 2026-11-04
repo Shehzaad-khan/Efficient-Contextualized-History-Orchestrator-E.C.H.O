@@ -80,12 +80,12 @@ page. `pip-audit` and `npm audit` are report-only (a new advisory should not tur
 
 ### Three things found while building this
 
-1. **`requirements.txt` cannot be installed as written.** `mcp>=2.3` needs `pydantic>=2.12` and
-   `uvicorn>=0.31.1`, but the file pins `pydantic==2.8.2` and `uvicorn[standard]==0.30.6`, so
-   `pip install -r requirements.txt` ends in `ResolutionImpossible` (checked with `uv pip compile`). CI therefore uses
-   `requirements-ci.txt`, which is `requirements.txt` minus torch / torchvision / sentence-transformers with those two
-   pins loosened to `pydantic>=2.12` and `uvicorn[standard]>=0.31.1`. The same two lines should be changed in
-   `requirements.txt`; that file was not touched.
+1. **`requirements.txt` could not be installed as written (fixed 2026-11-03).** `mcp>=2.3` needs `pydantic>=2.12` and
+   `uvicorn>=0.31.1`, but the file pinned `pydantic==2.8.2` and `uvicorn[standard]==0.30.6`, so
+   `pip install -r requirements.txt` ended in `ResolutionImpossible` (checked with `uv pip compile`). Both files now use
+   `pydantic>=2.12` and `uvicorn[standard]>=0.31.1`; `requirements-ci.txt` is `requirements.txt` minus torch /
+   torchvision / sentence-transformers. After the change `uv pip compile requirements.txt` resolves (pydantic 2.14.2,
+   uvicorn 0.54.0, starlette 0.38.6 from FastAPI's own pin, sse-starlette 3.0.3), and the 600 tests pass on that set.
 2. **`frontend/package-lock.json` lists only the Windows build of rollup's native part**, so `npm ci` on Linux
    leaves `vite build` with "Cannot find module @rollup/rollup-linux-x64-gnu" (reproduced here). The workflow installs the matching
    Linux package for that run only (`--no-save`); the lock file is unchanged. Regenerating the lock on a machine with
