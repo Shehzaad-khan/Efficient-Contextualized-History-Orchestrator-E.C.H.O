@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
-import { AnimatePresence, motion } from 'framer-motion'
+import { motion } from 'framer-motion'
 import { Clock3, MessageCircle, Settings2, Target, Waves } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import Lenis from 'lenis'
@@ -165,18 +165,14 @@ export default function AppShell({ children }: { children: ReactNode }) {
 
       {/* ── Page ─────────────────────────────────────────────────────────── */}
       <div className="relative z-page pb-24 lg:pb-0 lg:pl-56">
-        <AnimatePresence mode="wait">
-          <motion.main
-            key={location.pathname}
-            initial={{ opacity: 0, y: 14, filter: 'blur(4px)' }}
-            animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
-            exit={{ opacity: 0, y: -8, filter: 'blur(3px)' }}
-            transition={{ duration: 0.32, ease: EASE_OUT }}
-            className="mx-auto min-h-screen w-full max-w-6xl px-5 py-8 sm:px-8 lg:px-12 lg:py-12"
-          >
-            {children}
-          </motion.main>
-        </AnimatePresence>
+        {/* A CSS fade, keyed by the address so each page plays it once. It used to be a framer-motion exit then
+            enter (AnimatePresence "wait"): when that animation stalled, the new page stayed invisible until a refresh. */}
+        <main
+          key={location.pathname}
+          className="page-enter mx-auto min-h-screen w-full max-w-6xl px-5 py-8 sm:px-8 lg:px-12 lg:py-12"
+        >
+          {children}
+        </main>
       </div>
     </div>
   )

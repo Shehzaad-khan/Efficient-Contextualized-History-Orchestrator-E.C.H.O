@@ -40,6 +40,7 @@ The reads are pooled, read-only queries.
 from __future__ import annotations
 
 import logging
+import uuid
 from datetime import date, datetime, timedelta
 from typing import Any
 
@@ -129,6 +130,16 @@ def _source_switch_count(items: list[dict[str, Any]]) -> int:
     return switches
 
 
+def _ids_for_sessions(existing: dict[datetime, str], starts: list[datetime]) -> list[str]:
+    """One id per rebuilt session: the id the session had before when one started at the same moment, else a new one.
+
+    Today's sessions are rebuilt on every read, so without this each read gave every session a new id and a
+    screen that asked for one session's items a moment later found it gone (404). A session keeps its id as
+    long as its first activity point is unchanged, which is true while a sitting only grows at its end.
+    """
+    return [existing.get(start) or str(uuid.uuid4()) for start in starts]
+
+
 def rebuild_sessions_for_day(day: date) -> dict[str, Any]:
     """
     (Re)compute sessions for one local day and persist them. Idempotent:
@@ -145,30 +156,37 @@ def rebuild_sessions_for_day(day: date) -> dict[str, Any]:
         items = _fetch_day_activity(connection, day)
         session_groups = _split_into_sessions(items)
 
+        existing = {
+            row["session_start"]: str(row["session_id"])
+            for row in connection.execute(
+                text("SELECT session_id, session_start FROM sessions WHERE session_start >= :start_utc AND session_start < :end_utc"),
+                day_range,
+            ).mappings()
+        }
         connection.execute(
             text("DELETE FROM sessions WHERE session_start >= :start_utc AND session_start < :end_utc"),
             day_range,
         )
-        for session_items in session_groups:
-            row = connection.execute(
+        session_ids = _ids_for_sessions(existing, [group[0]["activity_at"] for group in session_groups])
+        for session_id, session_items in zip(session_ids, session_groups):
+            connection.execute(
                 text(
                     """
                     INSERT INTO sessions
-                        (session_start, session_end, total_duration_seconds,
+                        (session_id, session_start, session_end, total_duration_seconds,
                          dominant_group_id, source_switch_count)
-                    VALUES (:start, :end, :duration, :dominant, :switches)
-                    RETURNING session_id
+                    VALUES (:session_id, :start, :end, :duration, :dominant, :switches)
                     """
                 ),
                 {
+                    "session_id": session_id,
                     "start": session_items[0]["activity_at"],
                     "end": session_items[-1]["activity_at"],
                     "duration": sum(int(i.get("time_seconds") or 0) for i in session_items),
                     "dominant": _dominant_group_id(session_items),
                     "switches": _source_switch_count(session_items),
                 },
-            ).mappings().first()
-            session_id = str(row["session_id"])
+            )
             # One executemany per session instead of one round trip per item.
             connection.execute(
                 text(

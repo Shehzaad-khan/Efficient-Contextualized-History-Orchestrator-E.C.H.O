@@ -185,8 +185,9 @@ export function demoSessions(day: string): SessionRow[] {
 
 /** The items of one demo session: its share of the demo items, spread over its minutes. */
 export function demoSessionItems(sessionId: string): SessionItem[] {
+  if (!/^demo-s\d+$/.test(sessionId)) return [] // a real session has no demo items
   const index = Number(sessionId.replace('demo-s', ''))
-  const plan = DEMO_SESSION_PLAN[Number.isInteger(index) ? index : 0]
+  const plan = DEMO_SESSION_PLAN[index]
   if (!plan) return []
   const [hour, minute, minutes, , count] = plan
   const today = new Date().toISOString().slice(0, 10)

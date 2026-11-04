@@ -27,8 +27,9 @@ const NEW_GROUP_CLASS =
 const CARD_BUTTON = 'btn-ghost inline-flex items-center gap-2 px-4 py-2 text-sm'
 
 /** Time spent, in words: "no time yet", "<1m" under half a minute, else "2h 15m". `undefined` is still loading. */
-function spentText(seconds: number | undefined): string {
+function spentText(seconds: number | null | undefined): string {
   if (seconds === undefined) return '…'
+  if (seconds === null) return '—' // could not be read
   if (seconds <= 0) return 'no time yet'
   return seconds < 30 ? '<1m' : formatDuration(seconds)
 }
@@ -110,8 +111,8 @@ function GroupCard({
   onDelete,
 }: {
   group: UserGroup
-  /** All-time seconds spent on the group's items; undefined while it loads. */
-  seconds: number | undefined
+  /** All-time seconds spent on the group's items; undefined while it loads, null when it could not be read. */
+  seconds: number | null | undefined
   /** Items of this group in the Sunday review (suggestions to answer, or automatic additions to look at). */
   waiting: number
   onDelete: (groupId: string) => Promise<void>
@@ -290,7 +291,7 @@ function GroupGrid({
   onDelete,
 }: {
   groups: UserGroup[] | null
-  times: Record<string, number> | null
+  times: Record<string, number> | 'failed' | null
   queue: GroupSuggestion[] | null
   onDelete: (groupId: string) => Promise<void>
 }) {
@@ -332,7 +333,7 @@ function GroupGrid({
         <GroupCard
           key={group.group_id}
           group={group}
-          seconds={times === null ? undefined : (times[group.group_id] ?? 0)}
+          seconds={times === null ? undefined : times === 'failed' ? null : (times[group.group_id] ?? 0)}
           waiting={(queue ?? []).filter((suggestion) => suggestion.group_id === group.group_id).length}
           onDelete={onDelete}
         />
@@ -417,7 +418,7 @@ export default function GroupsPage() {
   const [groups, setGroups] = useState<UserGroup[] | null>(null)
   const [reviewQueue, setReviewQueue] = useState<GroupSuggestion[] | null>(null)
   // Seconds spent per group (all time); a second request, so the cards do not wait for it.
-  const [times, setTimes] = useState<Record<string, number> | null>(null)
+  const [times, setTimes] = useState<Record<string, number> | 'failed' | null>(null)
   // "Check now" in the review section: nothing runs the check by itself, so this starts it.
   const [checking, setChecking] = useState(false)
   const [checkResult, setCheckResult] = useState<AutoAssignResult | null>(null)
@@ -428,7 +429,9 @@ export default function GroupsPage() {
     let cancelled = false
     void fetchGroups().then((data) => !cancelled && setGroups(data))
     void fetchReviewQueue().then((data) => !cancelled && setReviewQueue(data))
-    void fetchGroupTimes().then((data) => !cancelled && setTimes(data))
+    fetchGroupTimes()
+      .then((data) => !cancelled && setTimes(data))
+      .catch(() => !cancelled && setTimes('failed'))
     return () => {
       cancelled = true
     }

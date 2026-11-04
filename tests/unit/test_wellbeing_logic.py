@@ -382,6 +382,19 @@ def test_reminder_status_reports_redis_down_without_failing(monkeypatch):
     assert status["sources"][0]["ready"] is False
 
 
+def test_a_rebuilt_session_keeps_its_id_while_its_start_is_unchanged():
+    """Shows: today's sessions are rebuilt on every read, but a session that starts at the same moment keeps its id,
+    so a screen holding an id from an earlier read can still ask for that session's items."""
+    ten, eleven, noon = datetime(2026, 11, 4, 10, 0), datetime(2026, 11, 4, 11, 0), datetime(2026, 11, 4, 12, 0)
+    before = {ten: "id-ten", eleven: "id-eleven"}
+    ids = wa._ids_for_sessions(before, [ten, eleven, noon])
+    assert ids[:2] == ["id-ten", "id-eleven"]                 # unchanged starts keep their ids
+    assert ids[2] not in before.values() and len(ids[2]) == 36  # a new session gets a new id
+    again = wa._ids_for_sessions(dict(zip([ten, eleven, noon], ids)), [ten, eleven, noon])
+    assert again == ids                                        # a second rebuild changes nothing
+    assert wa._ids_for_sessions({}, [ten])[0] != wa._ids_for_sessions({}, [ten])[0]   # nothing to reuse: fresh ids
+
+
 def test_regret_time_patterns_name_the_weekday(monkeypatch):
     answers = iter([[{"hour": 22, "regret_count": 3}], [{"day_of_week": 0, "regret_count": 3}, {"day_of_week": None, "regret_count": 1}]])
     monkeypatch.setattr(pd.postgresql_manager, "fetchall", lambda q, p=None: next(answers))

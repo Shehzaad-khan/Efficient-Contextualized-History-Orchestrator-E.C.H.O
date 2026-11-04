@@ -155,6 +155,21 @@ async function withFallback<T>(live: () => Promise<T>, demo: () => T): Promise<T
   }
 }
 
+/**
+ * Like withFallback, but made-up rows appear only while the backend is known to be down. When a live backend
+ * refuses or fails, the caller gets the error and says so, so real rows are never mixed with demo ones.
+ * Used where a demo row under a real heading would be believed (items behind a number, a session, a group).
+ */
+async function liveOrDemo<T>(live: () => Promise<T>, demo: () => T): Promise<T> {
+  if (demoMode) return demo()
+  try {
+    return await live()
+  } catch (error) {
+    void probeBackend()
+    throw error
+  }
+}
+
 // ── Recall (RSE) ──────────────────────────────────────────────────────────────
 
 export function askEcho(query: string, sessionId: string | null): Promise<QueryResponse> {
@@ -321,7 +336,7 @@ export function fetchHeatmap(days = 7, endDay?: string): Promise<HeatmapCell[]> 
 
 /** The items behind one category's time on `day` (YYYY-MM-DD), longest time first. */
 export function fetchCategoryItems(day: string, group: string): Promise<CategoryItem[]> {
-  return withFallback(
+  return liveOrDemo(
     async () =>
       (await request<{ items: CategoryItem[] }>(`/wellbeing/analytics/category-items${queryString({ day, group })}`)).items,
     () => demoRecent.slice(0, 4).map((item, index) => ({ ...item, total_seconds: 600 - index * 150 })),
@@ -459,7 +474,7 @@ export function fetchRuleSuggestions(groupId: string): Promise<RuleSuggestion[]>
 /** The group's members, newest assignment first. None in demo mode. */
 /** All-time seconds spent on each goal group's items: {group_id: seconds}. Demo numbers when the backend is unreachable. */
 export function fetchGroupTimes(): Promise<Record<string, number>> {
-  return withFallback(
+  return liveOrDemo(
     async () => (await request<{ groups: Record<string, number> }>('/wellbeing/groups/time')).groups,
     () => Object.fromEntries(demoGroups.map((group, index) => [group.group_id, 5400 - index * 1500])),
   )
@@ -467,7 +482,7 @@ export function fetchGroupTimes(): Promise<Record<string, number>> {
 
 /** One goal group's items with the time spent on each (most first), and the group's total. */
 export function fetchGroupTime(groupId: string): Promise<{ total_seconds: number; items: GroupTimedItem[] }> {
-  return withFallback(
+  return liveOrDemo(
     async () =>
       request<{ total_seconds: number; items: GroupTimedItem[] }>(`/wellbeing/groups/${encodeURIComponent(groupId)}/time`),
     () => {
@@ -649,7 +664,7 @@ export function fetchTodaySessions(day?: string): Promise<SessionRow[]> {
 
 /** The sessions of a local day (YYYY-MM-DD) for the Patterns page. Demo data when the backend is unreachable. */
 export function fetchDaySessions(day: string): Promise<SessionRow[]> {
-  return withFallback(
+  return liveOrDemo(
     async () => (await request<{ sessions: SessionRow[] }>(`/wellbeing/sessions${queryString({ day })}`)).sessions,
     () => demoSessions(day),
   )
@@ -657,7 +672,7 @@ export function fetchDaySessions(day: string): Promise<SessionRow[]> {
 
 /** The items inside one session, in the order they were used. */
 export function fetchSessionItems(sessionId: string): Promise<SessionItem[]> {
-  return withFallback(
+  return liveOrDemo(
     async () => (await request<{ items: SessionItem[] }>(`/wellbeing/sessions/${encodeURIComponent(sessionId)}/items`)).items,
     () => demoSessionItems(sessionId),
   )
