@@ -35,18 +35,20 @@ Empty on purpose: the screenshot goes here. Plain light background, nothing unde
 ## Slide 3: Outline (template text, unchanged)
 
 ## Slide 4: Abstract and Scope
-**The problem.** A student gets an interview email, reads articles about operating systems and watches tutorials on the same topic. A week later the material is spread over Gmail, Chrome and YouTube. No tool searches all three, and none knows the articles came after the email.
+Rewritten 2026-11-04 for a panel that skims: an introduction, not a feature list. The detail moved to the speaker notes.
 
-**What E.C.H.O. is.** A local-first, single-user personal memory. It remembers what you engaged with across Gmail, Chrome and YouTube, lets you ask for it in plain language, and reflects on how you spend your time without judging.
+**The problem.** After an interview email you read articles and watch tutorials. A week later they sit in Gmail, Chrome and YouTube, and no tool searches all three.
 
-**Three things it does**
-1. **Capture** only what you paid attention to. Every email is kept. A page or video is kept only if you read, scrolled, clicked or watched.
-2. **Recall** in a chat. One question searches mail, pages and videos together. Answers link back to the original, and follow-up questions continue the same chat.
-3. **Reflect** on your time: time per category, sessions, regret you mark yourself, and goal groups that change only with your yes.
+**What it is, with one example.** E.C.H.O. is a private memory across all three. Ask it: "Find my TechCorp interview email and the articles I read after it." You get one answer, with links to the originals.
 
-**Scope.** One user, one laptop. Desktop Chrome, the Gmail API and YouTube. Not a cloud service, not a productivity score, not a blocker, not a mobile app.
+**Three verbs (one line each)**
+1. **Capture** Saves only what you actually read or watched.
+2. **Recall** Answers in plain language, with links to the original.
+3. **Reflect** Shows where your time went, without judging.
 
-**Local-first.** Storage and processing run on your laptop. Only the question and short snippets go to the language model, never whole mails, pages or transcripts. Gmail and YouTube APIs fetch your own data.
+**Scope.** One user, one laptop: desktop Chrome, Gmail and YouTube.
+
+**Private.** Data stays on your laptop. The language model sees only your question and limited excerpts.
 
 ## Slide 5: Suggestions from Review 1 and 2 (two rows, one neutral accent colour)
 | Review | Suggestion | Our response | Status |
@@ -135,7 +137,7 @@ if seconds_in_front >= 5:                       # phase 1: exposure
 4. **Language model:** title (200 characters) + 300-character snippet, constrained to the five group names. No model, an error or a bad reply → `misc`.
 Groups: work · study · entertainment · personal · misc. A row never has an empty group.
 
-**Example:** the interview email → Stage 1 (sender domain on the work list) → work. A GeeksforGeeks article → Stage 2 (domain list) → study. A blog nobody listed → Stage 3, or Stage 4 if the match is unclear.
+**On the slide (restructured 2026-11-04):** two headed sections. "A · What happens to every new item" = 5 numbered steps (Clean, Build text, Embed, Classify, Index), each with one plain sentence. "B · How Classify picks the group" = the 4 stages, with "the first sure stage wins" and the five group names. The worked example was removed on purpose. "Build text" now says why the order matters: the model reads only 512 tokens, so subject, sender or title go first and the long body last. Fetch, mark-processed and the crash-safe save stay in the speaker notes.
 
 ## Slide 10: Implementation, Module 2 (part A): Recall
 **Title:** Module 2: Retrieval and Synthesis Engine (RSE): how a question is answered

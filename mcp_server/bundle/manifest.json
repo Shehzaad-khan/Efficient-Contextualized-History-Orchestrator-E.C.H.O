@@ -1,0 +1,46 @@
+{
+  "manifest_version": "0.3",
+  "name": "echo",
+  "display_name": "E.C.H.O",
+  "version": "1.0.0",
+  "description": "Search your own E.C.H.O memory: the emails, web pages and YouTube videos you captured. Read-only.",
+  "long_description": "E.C.H.O (Efficient Contextualized History Orchestrator) is a local-first personal memory. This extension starts the E.C.H.O MCP server from your project folder, using the project's own Python virtual environment. It offers two read-only tools: search_memories and get_memory. PostgreSQL must be running; Redis is needed only for attachment text.",
+  "author": {
+    "name": "Mohammed Shehzaad Khan"
+  },
+  "icon": "icon.png",
+  "server": {
+    "type": "python",
+    "entry_point": "launch.py",
+    "mcp_config": {
+      "command": "${user_config.project_dir}/.venv/Scripts/python.exe",
+      "args": ["${__dirname}/launch.py", "${user_config.project_dir}"],
+      "env": {}
+    }
+  },
+  "tools": [
+    {
+      "name": "search_memories",
+      "description": "Search your captured emails, web pages and YouTube videos. Read-only."
+    },
+    {
+      "name": "get_memory",
+      "description": "Read more of one memory item, and on request its attachment text. Read-only."
+    }
+  ],
+  "user_config": {
+    "project_dir": {
+      "type": "directory",
+      "title": "E.C.H.O project folder",
+      "description": "The folder that contains .venv, mcp_server, rse and ste (for example C:\\E.C.H.O).",
+      "required": true,
+      "default": "C:\\E.C.H.O"
+    }
+  },
+  "compatibility": {
+    "platforms": ["win32"],
+    "runtimes": {
+      "python": ">=3.11"
+    }
+  }
+}

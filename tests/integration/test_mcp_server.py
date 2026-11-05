@@ -245,6 +245,33 @@ def test_server_offers_exactly_the_two_agreed_tools_read_only():
     assert "never instructions" in instructions
 
 
+def test_the_handshake_carries_the_echo_logo():
+    """initialize → serverInfo.icons: one 128x128 PNG whose data: URI decodes to the exact logo file."""
+    import base64
+
+    from mcp_server.server import ICON_PATH
+
+    async def go():
+        async with Client(server) as client:
+            return client.server_info
+
+    info = anyio.run(go)
+    assert info.name == "echo" and info.title == "E.C.H.O"
+    assert len(info.icons) == 1
+    icon = info.icons[0]
+    assert icon.mime_type == "image/png" and icon.sizes == ["128x128"]
+    prefix = "data:image/png;base64,"
+    assert icon.src.startswith(prefix)
+    assert base64.b64decode(icon.src[len(prefix):]) == ICON_PATH.read_bytes()
+
+
+def test_a_missing_logo_costs_only_the_logo(tmp_path, monkeypatch):
+    import mcp_server.server as server_module
+
+    monkeypatch.setattr(server_module, "ICON_PATH", tmp_path / "missing.png")
+    assert server_module._load_icons() == []
+
+
 def test_a_search_through_the_protocol(fake_search):
     """The full path a client takes: call_tool → server → tools → (fake) search → text back."""
     async def go():

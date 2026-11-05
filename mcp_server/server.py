@@ -31,9 +31,11 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:  # `python mcp_server/server.py` puts only mcp_server/ on the path
     sys.path.insert(0, str(ROOT))
 
+import base64  # noqa: E402
+
 import anyio.to_thread  # noqa: E402
 from mcp.server.mcpserver import MCPServer  # noqa: E402
-from mcp.types import ToolAnnotations  # noqa: E402
+from mcp.types import Icon, ToolAnnotations  # noqa: E402
 from pydantic import Field  # noqa: E402
 
 from mcp_server import tools  # noqa: E402
@@ -57,6 +59,19 @@ _SINCE_DESCRIPTION = (
     "items yourself when you answer."
 )
 
+# The Echo logo (same file as extension/icons/icon128.png), sent in the start-up handshake (serverInfo.icons) so a
+# client can show it next to the server. Inlined as a data: URI: a local stdio server has no web address to point to.
+ICON_PATH = Path(__file__).resolve().parent / "echo-icon.png"
+
+
+def _load_icons() -> list[Icon]:
+    """The logo as one 128x128 PNG icon. A missing or unreadable file only costs the logo, never the server."""
+    try:
+        encoded = base64.b64encode(ICON_PATH.read_bytes()).decode("ascii")
+    except OSError as exc:
+        logger.warning("Echo logo not loaded, the server runs without it — %s", type(exc).__name__)
+        return []
+    return [Icon(src=f"data:image/png;base64,{encoded}", mime_type="image/png", sizes=["128x128"])]
 
 
 def _warm_up() -> None:
@@ -81,7 +96,8 @@ async def _lifespan(_server: MCPServer):
     yield None
 
 
-server = MCPServer("echo", instructions=INSTRUCTIONS, lifespan=_lifespan)
+# "echo" is the server's id; "E.C.H.O" is the display name (serverInfo.title) a client may show instead.
+server = MCPServer("echo", title="E.C.H.O", instructions=INSTRUCTIONS, icons=_load_icons(), lifespan=_lifespan)
 
 _READ_ONLY = ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False)
 

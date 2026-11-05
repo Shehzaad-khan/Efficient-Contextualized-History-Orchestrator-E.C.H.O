@@ -72,3 +72,6 @@ docs/Research Paper/**/rewrite_list.txt
 docs/Research Paper/**/leftover_flagged_sentences.txt
 docs/Research Paper/**/dictation_briefs*.md
 docs/Research Paper/**/reference_paragraphs.md
+
+# Built Claude Desktop extension (scripts/build_mcpb.py)
+dist/

@@ -22,7 +22,22 @@ Not included, on purpose: a "recent activity" tool (a search with `since` set to
 a topic) and the wellbeing tools (read-only summaries were optional in the decision and are not built). No tool writes
 or deletes anything.
 
-## Install and connect (Windows)
+## Install as a Desktop Extension (Windows, shows the E.C.H.O name and logo)
+
+Claude Desktop shows a logo only for installed extensions, not for servers added to its config file by hand.
+
+1. Do steps 1 and 2 of the next section (the `mcp` package, PostgreSQL and Redis).
+2. Build the extension: `python scripts/build_mcpb.py` → `dist/echo.mcpb` (manifest, `bundle/launch.py`, the logo; the
+   server code stays in the project).
+3. Install it: double-click `dist/echo.mcpb`, or Claude Desktop → Settings → Extensions → install from file. When it
+   asks for **E.C.H.O project folder**, pick the folder that contains `.venv` and `mcp_server` (default `C:\E.C.H.O`).
+4. Remove any hand-added `E.C.H.O` / `echo` entry from `claude_desktop_config.json`, or two copies start.
+5. Fully quit and restart Claude Desktop, then try step 5 of the next section.
+
+After changing `bundle/manifest.json` or the logo, raise `version` in the manifest, rebuild and reinstall.
+Server code changes need no rebuild: the extension runs `mcp_server/server.py` from the project folder.
+
+## Install and connect by hand (Windows, config file)
 
 1. In the project's virtual environment: `pip install "mcp>=2.3,<3"` (it is also in `requirements.txt`).
 2. Make sure **PostgreSQL** is running, and **Redis** for attachment text (WSL: `wsl -d Ubuntu -u root -- sleep infinity`
@@ -33,7 +48,7 @@ or deletes anything.
 ```json
 {
   "mcpServers": {
-    "echo": {
+    "E.C.H.O": {
       "command": "<PROJECT>\\.venv\\Scripts\\python.exe",
       "args": ["<PROJECT>\\mcp_server\\server.py"]
     }
@@ -64,7 +79,8 @@ once it is up, so it answers Claude Desktop's start-up handshake immediately.
 ## When something is off
 
 - **Tools don't show up:** check the config path and JSON, then fully restart Claude Desktop. Logs are in
-  `%APPDATA%\Claude\logs\mcp-server-echo.log` (this server logs to stderr only, which Claude Desktop keeps there).
+  `%LOCALAPPDATA%\Claude\Logs\mcp-server-<name>.log`, where `<name>` is the key in the config (`E.C.H.O` above)
+  (this server logs to stderr only, which Claude Desktop keeps there).
 - **"Echo could not search just now":** PostgreSQL is probably not running.
 - **Results look old:** the server reloads the FAISS index whenever the backend saves a newer one, but only the running
   backend (its enrichment worker) indexes new captures.
@@ -75,5 +91,7 @@ once it is up, so it answers Claude Desktop's start-up handshake immediately.
 ## Files
 
 `server.py` registers the two tools and runs over stdio (warm-up of the models starts once it is serving).
+`echo-icon.png` is the Echo logo (a copy of `extension/icons/icon128.png`); `server.py` sends it in the start-up
+handshake (`serverInfo.icons`) so a client can show it next to the server.
 `tools.py` holds the logic as plain functions (search, get a memory, reload the index when the backend saved a new one).
 The search itself is `rse/search_tool.py` `run_search`, shared with the app.

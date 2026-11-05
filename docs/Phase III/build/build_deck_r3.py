@@ -54,6 +54,13 @@ EMBEDDING_FACTS = "384-d · reads 512 tokens"
 # The Review 3 template has no "Guide Approval Mail" slide; the Review 2 template had one and the owner
 # pasted the approval mail there. True = add an empty one after the title slide (owner can delete it).
 INCLUDE_GUIDE_APPROVAL_SLIDE = True
+# Slide 12: the recorded demo videos (Google Drive, uploaded 2026-11-04), in the order they are shown.
+DEMO_VIDEOS = [
+    ("RSE Python", "https://drive.google.com/file/d/15XJyMRuITsmqXa4EK2PQz8Ey3Y-DGhw-/view?usp=drivesdk"),
+    ("RSE Komprise", "https://drive.google.com/file/d/1fa5ufQqPAn5x3pbjYcN4v7j1kXxzbHgl/view?usp=drivesdk"),
+    ("Claude MCP", "https://drive.google.com/file/d/10iS5dPDNUxBf7Oq_3WegtTk4rNdi42fu/view?usp=drivesdk"),
+    ("Patterns and Groups", "https://drive.google.com/file/d/1AwvW28O64f3PH-M_05S7_kpQHxBknN_x/view?usp=drivesdk"),
+]
 # TV readability: the build fails if any text run on a slide is smaller than this.
 MIN_FONT_PT = 18.0
 TITLE_PT = 32.0
@@ -104,6 +111,7 @@ class Run:
     color: Optional[RGBColor] = None
     size: Optional[float] = None
     font: Optional[str] = None
+    link: Optional[str] = None    # hyperlink address (clickable in the slide show)
 
 
 @dataclass
@@ -167,6 +175,8 @@ def fill_text_frame(tf, paras: list[ParaLike], size: float, color: RGBColor, fon
             f.bold = run.bold
             f.italic = run.italic
             f.color.rgb = run.color or para.color or color
+            if run.link:
+                r.hyperlink.address = run.link
         # The empty end-of-paragraph mark gets the same size, so no hidden small text remains.
         end = p._p.get_or_add_endParaRPr()
         end.set("sz", str(int((para.size or size) * 100)))
@@ -586,38 +596,50 @@ def slide_outline(deck: Deck) -> None:
 def slide_abstract(deck: Deck) -> None:
     s = deck.keep(deck.find("Abstract and Scope"))
     set_background(s, bg("base"))
-    top_h = 1.05
+    # Introduction for a panel that skims: one problem, one worked example, three verbs, one scope line.
+    gap = 0.12
+    problem_h, example_h, pillar_h, foot_h = 1.1, 1.0, 1.32, 1.18
     ty = Y0 + 0.03
-    panel(s, X0, ty, W, top_h)
+    panel(s, X0, ty, W, problem_h)
     for i, name in enumerate(["gmail", "chrome", "youtube"]):
-        logo(s, name, X0 + 0.2 + i * 0.85, ty + (top_h - 0.7) / 2, 0.7)
-    arrow(s, X0 + 2.8, ty + top_h / 2, X0 + 3.3, ty + top_h / 2, color=BLUE, width=3)
-    text(s, X0 + 3.45, ty, W - 3.55, top_h, [
-        P(B("The problem. "), "A student gets an interview email, reads articles and watches tutorials. A week later "
-          "it is spread over Gmail, Chrome and YouTube, and no tool searches all three.", space_after=0)],
+        logo(s, name, X0 + 0.2 + i * 0.85, ty + (problem_h - 0.7) / 2, 0.7)
+    arrow(s, X0 + 2.8, ty + problem_h / 2, X0 + 3.3, ty + problem_h / 2, color=BLUE, width=3)
+    text(s, X0 + 3.45, ty, W - 3.55, problem_h, [
+        P(B("The problem. "), "After an interview email you read articles and watch tutorials. A week later they sit in "
+          "Gmail, Chrome and YouTube, and no tool searches all three.", space_after=0)],
         size=19, anchor=MSO_ANCHOR.MIDDLE)
+    ey = ty + problem_h + gap
+    text(s, X0, ey, W, example_h, [
+        P(B("E.C.H.O. is a private memory across all three. "), "Ask it: ", B("“Find my TechCorp interview email and "
+          "the articles I read after it.”"), " You get one answer, with links to the originals.", space_after=0)],
+        size=20, fill=PRIMARY.tint, line=PRIMARY.main, shape=MSO_SHAPE.ROUNDED_RECTANGLE, radius=0.12,
+        anchor=MSO_ANCHOR.MIDDLE, margin=0.2)
     pillars = [
-        ("Capture", ["Every email is kept", "Pages and videos only if you engaged", "Sensitive pages never stored"]),
-        ("Recall", ["One question, all sources", "Links to the original", "Follow-ups keep context"]),
-        ("Reflect", ["Time per category", "Sessions and regret you mark", "Groups change only with your yes"]),
+        ("Capture", "Saves only what you actually read or watched."),
+        ("Recall", "Answers in plain language, with links to the original."),
+        ("Reflect", "Shows where your time went, without judging."),
     ]
-    top, ph = ty + top_h + 0.12, 2.55
+    py = ey + example_h + gap
     pw = (W - 2 * 0.25) / 3
-    for i, (name, points) in enumerate(pillars):
-        card(s, X0 + i * (pw + 0.25), top, pw, ph, name, [P(p, bullet=True, space_after=5) for p in points],
+    for i, (name, line) in enumerate(pillars):
+        card(s, X0 + i * (pw + 0.25), py, pw, pillar_h, name, [P(line, space_after=0)],
              accent=PRIMARY, size=19, heading_size=24)
-    by = top + ph + 0.12
+    by = py + pillar_h + gap
     half = (W - 0.25) / 2
-    white_pill(s, X0, by, half, Y1 - by, [P(B("Scope. "), "One user, one laptop: desktop Chrome, Gmail and YouTube. "
-                                           "Not a cloud service, a score or a blocker.", space_after=0)], size=19)
-    white_pill(s, X0 + half + 0.25, by, half, Y1 - by, [
-        P(B("Local-first. "), "Storage and processing run on your laptop. The language model gets your question and "
-          "limited excerpts of the best matches, never database rows.", space_after=0)], size=19)
-    notes(s, "~45 s. The problem in one line (interview email, articles, tutorials, spread over three places). Then "
-             "the three things E.C.H.O. does. Scope: one user, one laptop, desktop Chrome plus the Gmail API and "
-             "YouTube. Privacy: storage and processing are local; the language model gets the question and "
-             "limited excerpts (the first 8,000 characters of the top 3 results, 2,000 of the others), never database rows or "
-             "the whole store; the Gmail and YouTube APIs fetch your own data.")
+    white_pill(s, X0, by, half, foot_h, [P(B("Scope. "), "One user, one laptop: desktop Chrome, Gmail and YouTube.",
+                                           space_after=0)], size=19)
+    white_pill(s, X0 + half + 0.25, by, half, foot_h, [
+        P(B("Private. "), "Data stays on your laptop. The language model sees only your question and limited excerpts.",
+          space_after=0)], size=19)
+    notes(s, "~45 s. Start with the problem: after an interview email you read articles and watch tutorials, and a week "
+             "later they are in three places. E.C.H.O. is one private memory across them. Read the example question aloud "
+             "and say the answer links back to the originals. Then the three verbs: Capture (only what you engaged with: "
+             "every email, and pages or videos you read, scrolled, clicked or watched), Recall (a chat; follow-up questions "
+             "keep context), Reflect (time per category, sessions, regret you mark yourself; goal groups change only with "
+             "your yes). Scope: one user, one laptop, desktop Chrome plus the Gmail API and YouTube; not a cloud service, "
+             "not a productivity score, not a blocker, not a mobile app. Privacy: storage and processing are local; the "
+             "language model gets the question and limited excerpts (the first 8,000 characters of the top 3 results, "
+             "2,000 of the others), never database rows or the whole store; the Gmail and YouTube APIs fetch your own data.")
 
 
 def slide_suggestions(deck: Deck) -> None:
@@ -796,39 +818,59 @@ def _chevron_row(s, x: float, y: float, w: float, h: float, steps: list[tuple[st
 def slide_impl_enrich(deck: Deck) -> None:
     s = deck.clone(deck.find("Implementation Details"), "Implementation – Module 1: Enrichment (2/2)")
     set_background(s, bg("base"))
-    hs_y, hs_h = Y0 + 0.03, 0.95
+    hs_y, hs_h = Y0 + 0.03, 0.85
     header_strip(s, hs_y, hs_h, MODULE_1 + " — Part B: Enrichment",
                  "Python worker thread · sentence-transformers · FAISS · PostgreSQL · OpenAI")
     cy = hs_y + hs_h + 0.1
-    _chevron_row(s, X0, cy, W, 0.9, [
-        ("Clean", "mail HTML → text"), ("Build text", "hints first"), ("Embed", "384-d vector"),
-        ("Classify", "5 groups"), ("Index", "into FAISS"),
-    ], PRIMARY)
-    top = cy + 0.9 + 0.12
-    stages = [
-        "1 · Structural signals: labels, .edu",
-        "2 · Curated domain list (Chrome)",
-        "3 · Nearest centroid: meaning",
-        "4 · Language model: unclear items",
+    # Two labelled sections: A = the five steps every new item goes through, B = how step 4 picks the group.
+    left_w, gap = 6.0, 0.25
+    right_x = X0 + left_w + gap
+    right_w = X1 - right_x
+    head_h, row_h, row_gap = 0.4, 0.68, 0.04
+
+    def heading(x: float, w: float, label: str) -> None:
+        text(s, x, cy, w, head_h, [P(B(label), space_after=0)], size=21, color=PRIMARY.dark,
+             anchor=MSO_ANCHOR.MIDDLE, margin=0.04)
+
+    def badge(x: float, y: float, label: str) -> None:
+        text(s, x, y + (row_h - 0.42) / 2, 0.42, 0.42, [P(B(label), align=PP_ALIGN.CENTER, space_after=0)], size=18,
+             color=WHITE, fill=PRIMARY.main, shape=MSO_SHAPE.OVAL, anchor=MSO_ANCHOR.MIDDLE, margin=0.0)
+
+    heading(X0, left_w, "A · What happens to every new item")
+    steps = [
+        ("Clean. ", "Mail HTML becomes plain text."),
+        ("Build text. ", "Subject, sender or title first, long body last. The model reads only 512 tokens."),
+        ("Embed. ", EMBEDDING_MODEL + " turns the text into a 384-number vector."),
+        ("Classify. ", "Picks one of five groups (see B)."),
+        ("Index. ", "Saves the vector in FAISS so the item can be searched."),
     ]
-    fh, fgap, full = 0.5, 0.07, 6.5
-    for i, label in enumerate(stages):
-        inset = i * 0.25
-        text(s, X0 + inset, top + i * (fh + fgap), full - 2 * inset, fh,
-             [P(B(label), align=PP_ALIGN.CENTER, space_after=0)], size=19, color=PRIMARY.dark, fill=PRIMARY.tint,
-             line=PRIMARY.main, shape=MSO_SHAPE.ROUNDED_RECTANGLE, radius=0.25, anchor=MSO_ANCHOR.MIDDLE,
-             margin=0.05, line_w=2)
-    fun_h = 4 * fh + 3 * fgap
-    rx = X0 + full + 0.25
-    card(s, rx, top, X1 - rx, fun_h, "Example", [
-        P("Interview mail → work-list sender → ", B("work"), space_after=3),
-        P("geeksforgeeks.org → domain list → ", B("study"), space_after=3),
-        P("Unlisted blog → centroid, else the model", space_after=0)], accent=PRIMARY, size=18, heading_size=20)
-    y = top + fun_h + 0.1
-    white_pill(s, X0, y, W, Y1 - y, [
-        P(B("The first stage that is sure wins. "), "Output: work · study · entertainment · personal · misc.", size=19,
-          space_after=2),
-        P(B("Embedding model: "), EMBEDDING_MODEL + " · " + EMBEDDING_FACTS, size=19, space_after=0)], size=19)
+    ry = cy + head_h + 0.1
+    for i, (name, desc) in enumerate(steps):
+        y = ry + i * (row_h + row_gap)
+        panel(s, X0, y, left_w, row_h)
+        badge(X0 + 0.1, y, str(i + 1))
+        text(s, X0 + 0.62, y, left_w - 0.7, row_h, [P(B(name, PRIMARY.dark), desc, space_after=0)], size=18,
+             anchor=MSO_ANCHOR.MIDDLE, margin=0.03)
+
+    heading(right_x, right_w, "B · How Classify picks the group")
+    stages = [
+        ("Structural signals", "Labels, .edu sites, video category"),
+        ("Domain list (Chrome)", "Hand-made list of known sites"),
+        ("Nearest centroid", "Closest to a group's average vector"),
+        ("Language model", "Asked only if stages 1–3 are unsure"),
+    ]
+    for i, (name, desc) in enumerate(stages):
+        y = ry + i * (row_h + row_gap)
+        panel(s, right_x, y, right_w, row_h)
+        badge(right_x + 0.1, y, str(i + 1))
+        text(s, right_x + 0.62, y, right_w - 0.7, row_h, [P(B(name), color=PRIMARY.dark, space_after=0),
+                                                         P(desc, space_after=0)], size=18,
+             anchor=MSO_ANCHOR.MIDDLE, margin=0.03)
+    py = ry + 4 * (row_h + row_gap)
+    text(s, right_x, py, right_w, Y1 - py, [
+        P(B("The first sure stage wins. "), "Groups: work, study, entertainment, personal, misc.", space_after=0)],
+        size=18, fill=PRIMARY.tint, line=PRIMARY.main, shape=MSO_SHAPE.ROUNDED_RECTANGLE, radius=0.12,
+        anchor=MSO_ANCHOR.MIDDLE, margin=0.12)
     notes(s, "~45 s. The worker runs as a background thread in the backend: every 10 s it picks up to 10 new rows, "
              "oldest first, and never blocks capture. Clean: mail HTML to text and quoted replies cut (signatures are "
              "kept on purpose: removing them cut real text in 6 of 8 test mails); page text arrives already extracted "
@@ -844,7 +886,7 @@ def slide_impl_enrich(deck: Deck) -> None:
 
 
 def slide_impl_recall(deck: Deck) -> None:
-    s = deck.clone(deck.find("Implementation Details"), "Implementation – Module 2: Recall (1/2)")
+    s = deck.clone(deck.find("Implementation Details"), "Implementation – Module 2: Recall")
     set_background(s, bg("base"))
     hs_y, hs_h = Y0 + 0.03, 1.1
     header_strip(s, hs_y, hs_h, MODULE_2 + " — how a question is answered",
@@ -888,73 +930,17 @@ def slide_impl_recall(deck: Deck) -> None:
              "model is down, a deterministic search runs on the raw question.")
 
 
-def slide_impl_recall_example(deck: Deck) -> None:
-    s = deck.clone(deck.find("Implementation Details"), "Implementation – Module 2: Recall in action (2/2)")
-    set_background(s, bg("base"))
-    lw = 6.5
-    ty = Y0 + 0.03
-    white_pill(s, X0, ty, lw, 0.62, [P(B("Example: "), "“OS material after the interview email”",
-                                       space_after=0)], size=19)
-    steps = [
-        "Model: query = operating systems, time phrase = after the interview email",
-        "Python finds the interview email; its time is the filter",
-        "Keyword and meaning search run on later items only",
-        "Rank fusion merges; the cross-encoder re-orders",
-        "Answer cites the two best items as pills",
-    ]
-    sy = ty + 0.62 + 0.1
-    rh, rg = 0.66, 0.05
-    for i, label in enumerate(steps):
-        step_row(s, X0, sy + i * (rh + rg), lw, rh, i + 1, label, size=18)
-    list_bottom = sy + 5 * rh + 4 * rg
-    # Right: chat illustration.
-    rx = X0 + lw + 0.25
-    rw = X1 - rx
-    ph = list_bottom - ty
-    panel(s, rx, ty, rw, ph)
-    text(s, rx + 0.15, ty + 0.05, rw - 0.3, 0.42, [P(B("Answer format "), I("(illustration)", GREY), space_after=0)],
-         size=19, color=PRIMARY.dark, margin=0.02)
-    text(s, rx + 0.5, ty + 0.55, rw - 0.65, 0.62, [P("Did Priya send the checklist?", space_after=0)], size=19,
-         color=WHITE, fill=PRIMARY.main, shape=MSO_SHAPE.ROUNDED_RECTANGLE, radius=0.3, anchor=MSO_ANCHOR.MIDDLE,
-         margin=0.14)
-    text(s, rx + 0.15, ty + 1.3, rw - 0.45, 1.0, [P("Yes — ", B("Priya"), " emailed it on ", B("Tue 14 Oct"),
-                                                    ", PDF attached.", space_after=0)],
-         size=19, fill=PRIMARY.tint, shape=MSO_SHAPE.ROUNDED_RECTANGLE, radius=0.15, anchor=MSO_ANCHOR.MIDDLE,
-         margin=0.14)
-    for j, (lbl, solid) in enumerate([("Priya · 14 Oct", True), ("HR · 15 Oct", False)]):
-        py = ty + 2.45 + j * 0.58
-        box(s, rx + 0.15, py, 2.65, 0.46, fill=WHITE, line=PRIMARY.main, shape=MSO_SHAPE.ROUNDED_RECTANGLE,
-            radius=0.5, line_w=1.75, dash=not solid)
-        logo(s, "gmail", rx + 0.28, py + 0.09, 0.28)
-        text(s, rx + 0.65, py, 2.1, 0.46, [P(lbl, space_after=0)], size=18, color=PRIMARY.dark,
-             anchor=MSO_ANCHOR.MIDDLE, margin=0.02)
-    text(s, rx + 0.15, ty + 3.65, rw - 0.3, ph - 3.7, [P(B("Click a pill"), " → the original mail", space_after=0)],
-         size=18, anchor=MSO_ANCHOR.MIDDLE, margin=0.04)
-    by = list_bottom + 0.12
-    white_pill(s, X0, by, W, Y1 - by, [
-        P(B("What the model sees: "), "your question and limited excerpts of the best matches (first 8,000 characters of the top 3), never database rows.", space_after=0)], size=19)
-    notes(s, "~45 s. The example question is traced from the design; it is not a recorded run, and the chat on the "
-             "right is an illustration of the answer format, not a screenshot. Answers are short chat replies; each "
-             "citation becomes a memory pill (source logo, sender or site, date). Solid = the item says it, dashed = "
-             "related context. Clicking a pill opens the original mail or page. Live progress ('Searching Gmail...') "
-             "streams while it works. Follow-ups: each chat has its own session, so the next question continues from "
-             "the earlier turns. An attachment question adds the attachment text (up to 40,000 characters). "
-             "The MCP server lets Claude Desktop call the same read-only tools: search_memories, get_memory, "
-             "recent_activity.")
-
-
 def slide_impl_wellbeing(deck: Deck) -> None:
     s = deck.clone(deck.find("Implementation Details"), "Implementation – Module 3: Wellbeing (1/2)")
     set_background(s, bg("base"))
-    hs_y, hs_h = Y0 + 0.03, 1.1
+    hs_y, hs_h = Y0 + 0.03, 0.95
     header_strip(s, hs_y, hs_h, MODULE_3 + " — Part A: what it measures",
-                 "FastAPI router · PostgreSQL (SQLAlchemy) · Redis · OpenAI (weekly numbers only) · React + "
-                 "TypeScript + Vite + Tailwind")
+                 "FastAPI · PostgreSQL · Redis · OpenAI (weekly totals only) · React + TypeScript")
     tiles = [
-        ("Time", "Per category and source, added up per visit, by day"),
-        ("Sessions", "Items under 20 minutes apart form one sitting"),
-        ("Regret", "You mark an item yourself. Never scored, never judged"),
-        ("Weekly insight", "The model sees only totals and hours. Judging words are rejected"),
+        ("Time", "Per category and source, by day"),
+        ("Sessions", "Items within 20 minutes of each other form one sitting"),
+        ("Regret", "You mark items yourself. No scores, no judging"),
+        ("Weekly insight", "The model sees only totals and hours"),
     ]
     lw = 6.3
     top = hs_y + hs_h + 0.12
@@ -963,23 +949,19 @@ def slide_impl_wellbeing(deck: Deck) -> None:
     th = (avail - 0.15) / 2
     for i, (head, body) in enumerate(tiles):
         card(s, X0 + (i % 2) * (tw + 0.2), top + (i // 2) * (th + 0.15), tw, th, head, [P(body, space_after=0)],
-             accent=PRIMARY, size=19, heading_size=22)
+             accent=PRIMARY, size=18, heading_size=21)
     rx = X0 + lw + 0.25
     rw = X1 - rx
-    ch = 1.9
-    code_block(s, rx, top, rw, ch, "Session rule (wba/wellbeing_analytics.py)", [
+    code_block(s, rx, top, rw, avail, "Session rule (wba/wellbeing_analytics.py)", [
         "for item in items_in_time_order:",
-        "    if gap_to_previous > 20 min:",
+        "    if first item or gap > 20 min:",
         "        start a new session",
-        "    else: add to current session"])
-    card(s, rx, top + ch + 0.15, rw, avail - ch - 0.15, "Example", [
-        P("09:00 · 09:12 · 09:25 · 09:40 → session 1", space_after=3),
-        P("50-minute gap", I("", GREY), space_after=3),
-        P("10:30 · 10:45 → session 2", space_after=0)], accent=PRIMARY, size=19, heading_size=21)
+        "    else:",
+        "        add to current session"])
     notes(s, "~45 s. Time is computed on request from the source tables and never stored as a total: mails count "
              "only if you opened them, pages count when stored, videos count their watch time, and each visit is "
-             "added on the day it happened. Sessions: items less than 20 minutes apart belong to one sitting; the "
-             "example uses made-up times run through the real function. Regret: you mark or unmark an item yourself; "
+             "added on the day it happened. Sessions: a gap of more than 20 minutes starts a new session (exactly 20 minutes stays "
+             "in the same one); the first item always opens a session. Regret: you mark or unmark an item yourself; "
              "each mark is a new event (odd count = currently regretted); optional reminders (at most 2 a day, only "
              "for a habit) quote your own earlier note. Weekly insight: the model receives only totals, counts and "
              "hours, never titles or URLs; a reply containing judging words is replaced by a plain summary.")
@@ -991,17 +973,18 @@ def slide_impl_groups(deck: Deck) -> None:
     ty = Y0 + 0.03
     white_pill(s, X0, ty, W, 0.6, [P(B(MODULE_3 + " — Part B: your goal groups"), space_after=0)], size=21)
     top = ty + 0.6 + 0.12
-    lw = 6.4
+    lw = W
     panel(s, X0, top, lw, Y1 - top)
-    nx, nw = X0 + 0.25, lw - 0.5
+    nw = 8.6
+    nx = X0 + (lw - nw) / 2
     half = (nw - 0.2) / 2
     lx_, rx_ = nx + half / 2, nx + half + 0.2 + half / 2
     node(s, nx, top + 0.1, nw, 0.58, "New item", "", STORE, size=20)
     node(s, nx, top + 0.93, nw, 0.58, "Scored: rules + similarity", "", STORE, size=19)
     arrow(s, nx + nw / 2, top + 0.7, nx + nw / 2, top + 0.91)
-    text(s, nx, top + 1.55, 1.3, 0.36, [P("confident", align=PP_ALIGN.LEFT, space_after=0)], size=18,
+    text(s, lx_ - 1.0, top + 1.55, 1.3, 0.36, [P("confident", align=PP_ALIGN.LEFT, space_after=0)], size=18,
          color=PRIMARY.dark, margin=0.0)
-    text(s, nx + nw - 1.0, top + 1.55, 1.0, 0.36, [P("unsure", align=PP_ALIGN.RIGHT, space_after=0)], size=18,
+    text(s, rx_ - 0.3, top + 1.55, 1.3, 0.36, [P("unsure", align=PP_ALIGN.RIGHT, space_after=0)], size=18,
          color=STORE.dark, margin=0.0)
     node(s, nx, top + 2.0, half, 0.75, "Added automatically", "", PRIMARY, size=19)
     node(s, nx + half + 0.2, top + 2.0, half, 0.75, "Waits for you", "", STORE, size=19)
@@ -1014,17 +997,9 @@ def slide_impl_groups(deck: Deck) -> None:
     text(s, nx, top + 3.9, nw, Y1 - top - 3.95, [P(I("Echo never decides alone when it is unsure"),
                                                     align=PP_ALIGN.CENTER, space_after=0)],
          size=19, color=PRIMARY.dark, anchor=MSO_ANCHOR.MIDDLE, margin=0.04)
-    rx = X0 + lw + 0.25
-    card(s, rx, top, X1 - rx, Y1 - top, "How a suggestion is made", [
-        P("Rules you write: keyword, domain, channel, sender, dates", bullet=True, space_after=6),
-        P("Similarity: mean of the 3 nearest confirmed items", bullet=True, space_after=6),
-        P("Suggestions start after 5 confirmed items", bullet=True, space_after=6),
-        P("Confident = a rule matches and similarity is above 0.85", bullet=True, space_after=6),
-        P("Only items you confirmed teach the similarity", bullet=True, space_after=0)],
-        accent=PRIMARY, size=19, heading_size=22)
     notes(s, "~45 s. You create a goal group ('Capstone project'), add a few items, and write rules. Every new item "
              "is scored by rules (do any match?) and similarity (mean cosine to its 3 nearest confirmed members). "
-             "Confident means a rule matches AND similarity is above the bar: the item is added at once, marked "
+             "Confident means a rule matches AND similarity is at or above the bar (0.85): the item is added at once, marked "
              "'added automatically', and shown in the Sunday review where one click undoes it (human-on-the-loop). "
              "Anything less certain waits as pending for your yes or no (human-in-the-loop). Only items you confirmed "
              "teach the similarity. User groups are independent of the five system groups. Panel line: 'Echo never "
@@ -1044,19 +1019,31 @@ def slide_demo(deck: Deck) -> None:
         ("4", "Wellbeing", "Time and patterns, a regret marked, a group suggestion reviewed"),
     ]
     top = ty + 0.62 + 0.15
-    sh = Y1 - top
+    sh = 3.0
     cw = (W - 3 * 0.35) / 4
     for i, (n, name, body) in enumerate(stages):
         x = X0 + i * (cw + 0.35)
         panel(s, x, top, cw, sh)
         box(s, x, top, cw, 0.08, fill=PRIMARY.main)
-        text(s, x + 0.2, top + 0.3, 0.65, 0.65, [P(B(n), align=PP_ALIGN.CENTER, space_after=0)], size=24,
+        text(s, x + 0.2, top + 0.22, 0.6, 0.6, [P(B(n), align=PP_ALIGN.CENTER, space_after=0)], size=22,
              color=WHITE, fill=PRIMARY.main, shape=MSO_SHAPE.OVAL, anchor=MSO_ANCHOR.MIDDLE, margin=0.0)
-        text(s, x + 0.95, top + 0.3, cw - 1.0, 0.65, [P(B(name), size=21, color=PRIMARY.dark, space_after=0)],
+        text(s, x + 0.9, top + 0.22, cw - 0.95, 0.6, [P(B(name), size=21, color=PRIMARY.dark, space_after=0)],
              anchor=MSO_ANCHOR.MIDDLE, margin=0.02)
-        text(s, x + 0.15, top + 1.2, cw - 0.3, sh - 1.3, [P(body, space_after=0)], size=21, margin=0.06)
+        text(s, x + 0.15, top + 0.95, cw - 0.3, sh - 1.0, [P(body, space_after=0)], size=18, margin=0.06)
         if i < 3:
-            arrow(s, x + cw + 0.03, top + 0.68, x + cw + 0.32, top + 0.68, color=BLUE, width=3)
+            arrow(s, x + cw + 0.03, top + 0.52, x + cw + 0.32, top + 0.52, color=BLUE, width=3)
+    # Lower part: the four recorded demo videos (Google Drive links), in the order they are shown.
+    vy = top + sh + 0.15
+    text(s, X0, vy, W, 0.42, [P(B("Demo videos"), space_after=0)], size=21, color=PRIMARY.dark,
+         anchor=MSO_ANCHOR.MIDDLE, margin=0.04)
+    gap_v = 0.3
+    vw = (W - 3 * gap_v) / 4
+    vby = vy + 0.47
+    for i, (label, url) in enumerate(DEMO_VIDEOS):
+        text(s, X0 + i * (vw + gap_v), vby, vw, Y1 - vby, [P(Run(label, bold=True, link=url), align=PP_ALIGN.CENTER,
+                                                            space_after=0)],
+             size=19, fill=WHITE, line=PRIMARY.main, shape=MSO_SHAPE.ROUNDED_RECTANGLE, radius=0.12, line_w=1.5,
+             anchor=MSO_ANCHOR.MIDDLE, margin=0.12)
     notes(s, "Hand over to the demo (8 min). 1 Ingestion: read a fresh article and scroll past 15 %; play a video "
              "for 20 s; show the new rows in Timeline. 2 Enrichment: one worker cycle (about 10 s); the item turns "
              "processed and gets a group. 3 Recall: ask about the article, then 'Did anyone email me about it?' in "
@@ -1070,93 +1057,81 @@ def slide_demo(deck: Deck) -> None:
 def slide_test_plan(deck: Deck) -> None:
     s = deck.keep(deck.find("Test Plan and Strategy"), "Test Plan and Strategy (1/2) – Activities")
     set_background(s, bg("base"))
-    lw = 5.3
     entries = [
         ("6 – 19 Oct", "Done", PRIMARY, True,
-         "Every file reviewed, with 30 backend and 56 extension offline checks"),
+         "Every file reviewed, with 56 extension and 30 backend start-up offline checks"),
         ("22 – 25 Oct", "Done", PRIMARY, True, "Final build and code freeze on 25 Oct"),
         ("26 – 27 Oct", "Done", PRIMARY, True,
-         "563 tests; 38 questions, 15 capture sessions and 3 thresholds measured"),
+         "Test suite built; 38 questions, 15 capture sessions and 3 thresholds measured"),
     ]
-    eh = (Y1 - Y0 - 0.03 - 2 * 0.15) / 3
+    # Three activity cards side by side, then the test environment as one wide strip below.
+    gap = 0.25
+    cw = (W - 2 * gap) / 3
+    eh = 2.45
     y = Y0 + 0.03
-    for when, status, acc, solid, what in entries:
-        panel(s, X0, y, lw, eh)
-        box(s, X0, y + 0.1, 0.08, eh - 0.2, fill=PRIMARY.main)
-        text(s, X0 + 0.25, y + 0.1, 2.4, 0.5, [P(B(when), space_after=0)], size=22, color=PRIMARY.dark,
+    for i, (when, status, acc, solid, what) in enumerate(entries):
+        x = X0 + i * (cw + gap)
+        panel(s, x, y, cw, eh)
+        box(s, x, y + 0.1, 0.08, eh - 0.2, fill=PRIMARY.main)
+        text(s, x + 0.25, y + 0.12, 2.0, 0.5, [P(B(when), space_after=0)], size=22, color=PRIMARY.dark,
              anchor=MSO_ANCHOR.MIDDLE, margin=0.02)
-        chip(s, X0 + lw - 1.65, y + 0.14, 1.5, 0.42, status, acc, solid=solid)
-        text(s, X0 + 0.25, y + 0.68, lw - 0.4, eh - 0.74, [P(what, space_after=0)], size=20, margin=0.02)
-        y += eh + 0.15
-    rx = X0 + lw + 0.3
-    rw = X1 - rx
-    card(s, rx, Y0 + 0.03, rw, 1.75, "Test environment", [
+        chip(s, x + cw - 1.3, y + 0.16, 1.15, 0.42, status, acc, solid=solid)
+        text(s, x + 0.25, y + 0.8, cw - 0.4, eh - 0.9, [P(what, space_after=0)], size=20, margin=0.02)
+    ey = y + eh + 0.15
+    card(s, X0, ey, W, Y1 - ey, "Test environment", [
         P("Windows 11 laptop, local PostgreSQL 16 + Redis", bullet=True, space_after=2),
         P("Chrome with the extension; test Gmail and YouTube accounts", bullet=True, space_after=0)],
-        accent=STORE, size=18, heading_size=20)
-    ty = Y0 + 0.03 + 1.75 + 0.12
-    cols = [2.1, 2.4, rw - 4.5]
-    cx = [rx]
-    for c in cols[:-1]:
-        cx.append(cx[-1] + c)
-    for x, c, label in zip(cx, cols, ["Member", "Owns", "Cross-checks"]):
-        text(s, x, ty, c, 0.46, [P(B(label))], size=18, color=WHITE, fill=BLUE, anchor=MSO_ANCHOR.MIDDLE, margin=0.1)
-    team = [
-        ("Mrigank Jain", "Capture gates and privacy rules", "Enrichment"),
-        ("Mohammed Mir Fazlai Ali", "Enrichment and classification", "Recall"),
-        ("Mohammed Shehzaad Khan", "Recall quality and citations", "Wellbeing"),
-        ("Arjun Sai N", "Wellbeing, groups, dashboard", "Capture"),
-    ]
-    ry = ty + 0.5
-    rh = (Y1 - ry - 3 * 0.05) / 4
-    for row in team:
-        panel(s, rx, ry, rw, rh)
-        for x, c, val, bold in zip(cx, cols, row, (True, False, False)):
-            text(s, x, ry, c, rh, [P(B(val) if bold else val, space_after=0)], size=18, anchor=MSO_ANCHOR.MIDDLE,
-                 margin=0.1)
-        ry += rh + 0.05
+        accent=STORE, size=20, heading_size=22, anchor=MSO_ANCHOR.MIDDLE)
     notes(s, "~30 s. 6-19 Oct: every file reviewed with offline simulation tests (fake database, fake Redis, FastAPI "
-             "test client; a Node harness with a fake browser for the extension): 30 and 56 checks, recorded in the "
-             "commit messages. 22-25 Oct: final build and code freeze on 25 Oct. 26 Oct: 563 pytest tests (333 unit, 220 integration, 10 "
-             "system, about 94 % line coverage, docs/review/ci_cd_guide.md; a re-run on a laptop without the mcp 2.x "
-             "package ran 547 of them) and the live evaluation on the test account: 119 items, 38 questions, 15 scripted "
+             "test client; a Node harness with a fake browser for the extension): 56 extension checks and 30 backend "
+             "start-up checks (stubbed sign-in and lifespan), recorded in the commit messages of 19 Oct. 22-25 Oct: final build and code freeze on 25 Oct. 26 Oct: the pytest suite and CI (on 4 Nov: 614 tests, "
+             "351 unit, 253 integration, 10 system, 94 % line coverage; the CI guide recorded 563 on 26 Oct) and the live evaluation on the test account: 119 items, 38 questions, 15 scripted "
              "capture sessions, thresholds measured (docs/review/eval/RESULTS_2026-10-26.md). 27 Oct: rehearsal. Team: four equal shares; each member owns one area and "
-             "cross-checks one area of another member (four equal shares).")
+             "cross-checks one area of another member (Mrigank Jain: capture gates and privacy, checks enrichment; "
+             "Mohammed Mir Fazlai Ali: enrichment and classification, checks recall; Mohammed Shehzaad Khan: recall "
+             "quality and citations, checks wellbeing; Arjun Sai N: wellbeing, groups and dashboard, checks capture).")
 
 
 def slide_test_methods(deck: Deck) -> None:
     s = deck.clone(deck.find("Test Plan and Strategy"), "Test Plan and Strategy (2/2) – Methods")
     set_background(s, bg("base"))
+    # Plain structure: what we test (two kinds), the result in three numbers, why this way, its drawback, the tools.
     half = (W - 0.25) / 2
-    h1 = 2.1
-    card(s, X0, Y0 + 0.03, half, h1, "Functional", [
-        P(B("Unit: "), "gates, session gap, rank fusion", bullet=True, space_after=5),
-        P(B("Integration: "), "routes via the test client", bullet=True, space_after=5),
-        P(B("End to end: "), "mail → browse → ask → citation", bullet=True, space_after=0),
-    ], accent=PRIMARY, size=19, heading_size=22)
-    card(s, X0 + half + 0.25, Y0 + 0.03, half, h1, "Non-functional", [
-        P(B("Performance: "), "time, model calls", bullet=True, space_after=5),
-        P(B("Privacy: "), "inspect model payloads", bullet=True, space_after=5),
-        P(B("Reliability: "), "Redis or model down", bullet=True, space_after=0),
-    ], accent=STORE, size=19, heading_size=22)
-    y2 = Y0 + 0.03 + h1 + 0.12
-    mid_h = 1.5
-    card(s, X0, y2, W, mid_h, "", [
-        P(B("Test cases: "), "563 automated tests (333 unit · 220 integration · 10 system), 94 % line coverage, run on "
-          "every push · 38 recall questions · 15 capture sessions", space_after=4),
-        P(B("Tools: "), "Python test scripts (pytest) · FastAPI test client · Node harness (fake browser) · "
-          "TypeScript compiler + Vite build · DevTools", space_after=0)],
-        accent=STORE, size=19, anchor=MSO_ANCHOR.MIDDLE)
-    y3 = y2 + mid_h + 0.12
-    card(s, X0, y3, half, Y1 - y3, "Why", [P("Fast, repeatable, no personal data", space_after=0)],
-         accent=PRIMARY, size=19, heading_size=21, anchor=MSO_ANCHOR.MIDDLE)
-    card(s, X0 + half + 0.25, y3, half, Y1 - y3, "Drawback", [P("Simulated services can miss API changes",
-                                                                   space_after=0)],
-         accent=STORE, size=19, heading_size=21, anchor=MSO_ANCHOR.MIDDLE)
+    h1, h2, h3, gap = 2.4, 0.95, 1.4, 0.12
+    y1 = Y0 + 0.03
+    card(s, X0, y1, half, h1, "Functional: does it work?", [
+        P(B("Unit: "), "one rule alone, e.g. the session gap", bullet=True, space_after=5),
+        P(B("Integration: "), "parts together (API routes)", bullet=True, space_after=5),
+        P(B("End to end: "), "save a page, ask, get a cited answer", bullet=True, space_after=0),
+    ], accent=PRIMARY, size=18, heading_size=21)
+    card(s, X0 + half + 0.25, y1, half, h1, "Non-functional: how does it behave?", [
+        P(B("Speed: "), "time and model calls per question", bullet=True, space_after=5),
+        P(B("Privacy: "), "what is sent to the model", bullet=True, space_after=5),
+        P(B("Failure: "), "Redis down, a model breaks", bullet=True, space_after=0),
+    ], accent=STORE, size=18, heading_size=21)
+    y2 = y1 + h1 + gap
+    sw = (W - 2 * 0.25) / 3
+    for i, (big, small) in enumerate([("614 tests", "all pass"), ("94 %", "of code lines covered"),
+                                      ("Every push", "runs all tests on GitHub")]):
+        text(s, X0 + i * (sw + 0.25), y2, sw, h2, [
+            P(B(big), size=24, color=PRIMARY.main, align=PP_ALIGN.CENTER, space_after=0),
+            P(small, size=18, align=PP_ALIGN.CENTER, space_after=0, color=GREY)],
+            fill=WHITE, line=LINE_SOFT, shape=MSO_SHAPE.ROUNDED_RECTANGLE, radius=0.12, anchor=MSO_ANCHOR.MIDDLE,
+            margin=0.06, line_w=0.75)
+    y3 = y2 + h2 + gap
+    h3 = Y1 - y3
+    card(s, X0, y3, sw, h3, "Why", [P("Fast, repeatable, no personal data", space_after=0)],
+         accent=PRIMARY, size=18, heading_size=21)
+    card(s, X0 + sw + 0.25, y3, sw, h3, "Drawback", [P("Fake services can miss real API changes", space_after=0)],
+         accent=STORE, size=18, heading_size=21)
+    card(s, X0 + 2 * (sw + 0.25), y3, sw, h3, "Tools", [P("pytest · FastAPI test client · TypeScript + Vite build",
+                                                          space_after=0)],
+         accent=STORE, size=18, heading_size=21)
     notes(s, "~30 s. Unit: intent gates at every boundary (3 s, 6 s, 8 s with 20 % scroll, a login page), the 20-minute "
              "session gap (exactly 20 min vs 20 min 1 s), rank fusion on a small fixed list. Integration: routes "
              "through the FastAPI test client with a fake database; capture -> stored row -> enriched -> searchable. "
-             "End to end: live capture, enrichment and recall on the test account. Performance: query time, model "
+             "End to end: an automated test saves a page, enriches it, searches it and checks the cited answer; "
+             "a live run on the test account covers capture, enrichment and recall. Performance: query time, model "
              "calls per question, enrichment speed. Privacy: inspect every model payload; sensitive-page probe URLs; "
              "check that incognito, Spam and Trash never create a row. Reliability: each failure and its fallback "
              "(design document section 23). Drawback example: YouTube's caption endpoint was found empty only by a "
@@ -1176,7 +1151,7 @@ def slide_results(deck: Deck) -> None:
           "was sent to the model.", space_after=0)], size=18)
     metrics = [
         ("Retrieval quality", "Recall@5 0.91 · MRR 0.90", "full agent loop; Recall@10 0.93"),
-        ("Search methods", "Recall@10: 0.70 · 0.96 · 0.96", "keyword · meaning · hybrid (rank fusion)"),
+        ("Search methods", "Recall@10: 0.70 · 0.95 · 0.95", "keyword · meaning · hybrid (rank fusion)"),
         ("Embedding model", "Right item first: 37 vs 31 of 39", "new model vs MiniLM, earlier 39-question test"),
         ("Time per question", "8.1 s median · 23.8 s p95", "44 turns, a memory-starved laptop"),
         ("Model calls and cost", "2.3 calls · about $0.002", "per question; the price is an assumption"),
@@ -1198,7 +1173,7 @@ def slide_results(deck: Deck) -> None:
     notes(s, "~60 s. Everything here was measured on 26 Oct on the test account (docs/review/eval/RESULTS_2026-10-26.md). "
              "Questions and gold items were written by the team's assistant and are still to be checked by the owner; "
              "say 'first test set' if asked. Retrieval, 38 questions, 81 gold items: keyword only Recall@10 0.70, "
-             "meaning only 0.96, rank fusion 0.96 (the keyword branch changed no top-10), full pipeline 0.93, MRR 0.99 "
+             "meaning only 0.95, rank fusion 0.95 (the keyword branch changed no top-10), full pipeline 0.93, MRR 0.99 "
              "for meaning only against 0.90 for the full pipeline. Cause found in q28 and q30: the cross-encoder scores "
              "are close to 0 for every candidate on these short questions, so the effort score decides the order. "
              "Answers contained the right fact in 11 of 11 questions that have one. Time: median 8.1 s, 95th percentile "
@@ -1273,20 +1248,18 @@ def slide_conclusion(deck: Deck) -> None:
     text(s, rx, Y0 + 0.03, rw, 0.6, [P(B("Future work"), space_after=0)], size=24, color=PRIMARY.dark, fill=WHITE,
          line=LINE_SOFT, shape=MSO_SHAPE.ROUNDED_RECTANGLE, radius=0.3, anchor=MSO_ANCHOR.MIDDLE, margin=0.18)
     future = [
-        ("Import and export your data", "Past history from Gmail, Chrome and YouTube in; your memories out as JSON or CSV"),
         ("Publish the Chrome extension", "A public release on the Chrome Web Store"),
         ("More apps", "Google Calendar, Google Drive and others"),
     ]
     y = Y0 + 0.78
-    fh = (Y1 - y - 2 * 0.12) / 3
+    fh = (Y1 - y - 0.12) / len(future)
     for head, body in future:
         card(s, rx, y, rw, fh, head, [P(body, space_after=0)], accent=PRIMARY, size=19, heading_size=21,
              anchor=MSO_ANCHOR.MIDDLE)
         y += fh + 0.12
     notes(s, "~30 s. Four points: one private memory; ask, don't search; reflect without judging; privacy by design. "
-             "Future work: import past history (Google Takeout for YouTube, the Chrome History file) and export "
-             "your memories (an export route for JSON and CSV already exists); publish the extension on the Chrome "
-             "Web Store; extend to more apps such as Google Calendar and Google Drive. Other ideas kept in reserve: "
+             "Future work: publish the extension on the Chrome Web Store; extend to more apps such as Google "
+             "Calendar and Google Drive. Other ideas kept in reserve: "
              "several vectors per long document, and a self-learning domain list.")
 
 
@@ -1320,8 +1293,6 @@ def slide_thanks(deck: Deck) -> None:
     for sh in s.shapes:                                   # the template's "Thank You" box sits left of centre
         if sh.has_text_frame and sh.text_frame.text.strip() == "Thank You":
             sh.left = int((deck.prs.slide_width - sh.width) / 2)
-    text(s, 2.4, 4.62, 8.5, 0.75, [P("We would be glad to take your questions and feedback.", align=PP_ALIGN.CENTER,
-                                     space_after=0)], size=24, color=NAVY, anchor=MSO_ANCHOR.MIDDLE)
     notes(s, "Thank you. Questions (4 minutes).")
 
 
@@ -1338,7 +1309,6 @@ def build(output: pathlib.Path = OUTPUT) -> pathlib.Path:
     slide_impl_capture(deck)
     slide_impl_enrich(deck)
     slide_impl_recall(deck)
-    slide_impl_recall_example(deck)
     slide_impl_wellbeing(deck)
     slide_impl_groups(deck)
     slide_demo(deck)
