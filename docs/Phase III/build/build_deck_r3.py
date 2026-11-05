@@ -31,7 +31,9 @@ from typing import Optional, Union
 from lxml import etree
 from PIL import Image
 from pptx import Presentation
+from pptx.chart.data import CategoryChartData
 from pptx.dml.color import RGBColor
+from pptx.enum.chart import XL_CHART_TYPE, XL_LABEL_POSITION
 from pptx.enum.dml import MSO_LINE_DASH_STYLE
 from pptx.enum.shapes import MSO_CONNECTOR, MSO_SHAPE
 from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
@@ -1054,172 +1056,264 @@ def slide_demo(deck: Deck) -> None:
              "auto-assign run once. Revoke the Google token shown on screen after the demo.")
 
 
-def slide_test_plan(deck: Deck) -> None:
-    s = deck.keep(deck.find("Test Plan and Strategy"), "Test Plan and Strategy (1/2) – Activities")
-    set_background(s, bg("base"))
-    entries = [
-        ("6 – 19 Oct", "Done", PRIMARY, True,
-         "Every file reviewed, with 56 extension and 30 backend start-up offline checks"),
-        ("22 – 25 Oct", "Done", PRIMARY, True, "Final build and code freeze on 25 Oct"),
-        ("26 – 27 Oct", "Done", PRIMARY, True,
-         "Test suite built; 38 questions, 15 capture sessions and 3 thresholds measured"),
-    ]
-    # Three activity cards side by side, then the test environment as one wide strip below.
-    gap = 0.25
-    cw = (W - 2 * gap) / 3
-    eh = 2.45
-    y = Y0 + 0.03
-    for i, (when, status, acc, solid, what) in enumerate(entries):
-        x = X0 + i * (cw + gap)
-        panel(s, x, y, cw, eh)
-        box(s, x, y + 0.1, 0.08, eh - 0.2, fill=PRIMARY.main)
-        text(s, x + 0.25, y + 0.12, 2.0, 0.5, [P(B(when), space_after=0)], size=22, color=PRIMARY.dark,
+def _stat_tile(s, x: float, y: float, w: float, h: float, value: str, label: str) -> None:
+    """One headline number with its label under it."""
+    text(s, x, y, w, h, [P(B(value), size=30, color=PRIMARY.main, align=PP_ALIGN.CENTER, space_after=0),
+                         P(label, size=18, color=GREY, align=PP_ALIGN.CENTER, space_after=0)],
+         fill=WHITE, line=LINE_SOFT, shape=MSO_SHAPE.ROUNDED_RECTANGLE, radius=0.1, anchor=MSO_ANCHOR.MIDDLE,
+         margin=0.06, line_w=0.75)
+
+
+def _flow_band(s, x: float, y: float, w: float, h: float, labels: list[str]) -> None:
+    """A solid arrow band: one segment per label, touching tip to notch so it reads as a single flow."""
+    tip = 0.3 * h
+    gap = 0.05
+    count = len(labels)
+    segment = (w + (count - 1) * (tip - gap)) / count
+    for i, label in enumerate(labels):
+        shape = MSO_SHAPE.PENTAGON if i == 0 else MSO_SHAPE.CHEVRON
+        text(s, x + i * (segment - tip + gap), y, segment, h, [P(B(label), align=PP_ALIGN.CENTER, space_after=0)],
+             size=19, color=WHITE, fill=PRIMARY.main, shape=shape, radius=0.3, anchor=MSO_ANCHOR.MIDDLE, margin=0.0)
+
+
+def _result_column(s, x: float, y: float, w: float, h: float, heading: str) -> float:
+    """A results card with its heading. Returns the y where the card's content starts."""
+    panel(s, x, y, w, h)
+    box(s, x, y + 0.12, 0.08, h - 0.24, fill=PRIMARY.main)
+    text(s, x + 0.2, y + 0.08, w - 0.3, 0.5, [P(B(heading), color=PRIMARY.main, space_after=0)], size=21,
+         anchor=MSO_ANCHOR.MIDDLE, margin=0.04)
+    return y + 0.62
+
+
+def _stat_rows(s, x: float, y: float, w: float, h: float, rows: list[tuple[str, str]], value_w: float) -> None:
+    """Value on the left, what it means on the right, one thin rule between rows."""
+    row_h = h / len(rows)
+    for i, (value, label) in enumerate(rows):
+        row_y = y + i * row_h
+        if i:
+            arrow(s, x, row_y, x + w, row_y, color=LINE_SOFT, width=0.75, head=False)
+        text(s, x, row_y, value_w, row_h, [P(B(value), space_after=0)], size=20, color=PRIMARY.dark,
              anchor=MSO_ANCHOR.MIDDLE, margin=0.02)
-        chip(s, x + cw - 1.3, y + 0.16, 1.15, 0.42, status, acc, solid=solid)
-        text(s, x + 0.25, y + 0.8, cw - 0.4, eh - 0.9, [P(what, space_after=0)], size=20, margin=0.02)
-    ey = y + eh + 0.15
-    card(s, X0, ey, W, Y1 - ey, "Test environment", [
-        P("Windows 11 laptop, local PostgreSQL 16 + Redis", bullet=True, space_after=2),
-        P("Chrome with the extension; test Gmail and YouTube accounts", bullet=True, space_after=0)],
-        accent=STORE, size=20, heading_size=22, anchor=MSO_ANCHOR.MIDDLE)
-    notes(s, "~30 s. 6-19 Oct: every file reviewed with offline simulation tests (fake database, fake Redis, FastAPI "
-             "test client; a Node harness with a fake browser for the extension): 56 extension checks and 30 backend "
-             "start-up checks (stubbed sign-in and lifespan), recorded in the commit messages of 19 Oct. 22-25 Oct: final build and code freeze on 25 Oct. 26 Oct: the pytest suite and CI (on 4 Nov: 614 tests, "
-             "351 unit, 253 integration, 10 system, 94 % line coverage; the CI guide recorded 563 on 26 Oct) and the live evaluation on the test account: 119 items, 38 questions, 15 scripted "
-             "capture sessions, thresholds measured (docs/review/eval/RESULTS_2026-10-26.md). 27 Oct: rehearsal. Team: four equal shares; each member owns one area and "
-             "cross-checks one area of another member (Mrigank Jain: capture gates and privacy, checks enrichment; "
-             "Mohammed Mir Fazlai Ali: enrichment and classification, checks recall; Mohammed Shehzaad Khan: recall "
-             "quality and citations, checks wellbeing; Arjun Sai N: wellbeing, groups and dashboard, checks capture).")
+        text(s, x + value_w, row_y, w - value_w, row_h, [P(label, space_after=0)], size=18, color=GREY,
+             anchor=MSO_ANCHOR.MIDDLE, margin=0.02)
+
+
+def _search_methods_chart(s, x: float, y: float, w: float, h: float) -> None:
+    """Native, editable column chart of Recall@10 for the three search methods (results_2026-10-26.json)."""
+    data = CategoryChartData(number_format="0.00")
+    data.categories = ["Keyword", "Meaning", "Hybrid"]
+    data.add_series("Recall@10", (0.6974, 0.9545, 0.9545))
+    frame = s.shapes.add_chart(XL_CHART_TYPE.COLUMN_CLUSTERED, Inches(x), Inches(y), Inches(w), Inches(h), data)
+    chart = frame.chart
+    chart.has_legend = False
+    chart.has_title = False
+    chart.font.name = FONT
+    chart.font.size = Pt(MIN_FONT_PT)
+    chart.font.color.rgb = NAVY
+    value_axis = chart.value_axis
+    value_axis.visible = False
+    value_axis.has_major_gridlines = False
+    value_axis.minimum_scale = 0
+    value_axis.maximum_scale = 1.2
+    chart.category_axis.format.line.color.rgb = LINE_SOFT
+    plot = chart.plots[0]
+    plot.gap_width = 55
+    plot.has_data_labels = True
+    labels = plot.data_labels
+    labels.show_value = True
+    labels.number_format = "0.00"
+    labels.number_format_is_linked = False
+    labels.position = XL_LABEL_POSITION.OUTSIDE_END
+    labels.font.size = Pt(MIN_FONT_PT)
+    labels.font.bold = True
+    series = plot.series[0]
+    series.format.fill.solid()
+    series.format.fill.fore_color.rgb = PRIMARY.main
+    keyword_bar = series.points[0]
+    keyword_bar.format.fill.solid()
+    keyword_bar.format.fill.fore_color.rgb = CLOUD.main
+
+
+def slide_test_plan(deck: Deck) -> None:
+    s = deck.keep(deck.find("Test Plan and Strategy"), "Test Plan and Strategy (1/2) – What We Tested")
+    set_background(s, bg("base"))
+    gap = 0.25
+    half = (W - gap) / 2
+    y = Y0 + 0.03
+    strip_h = 0.62
+    text(s, X0, y, W, strip_h, [
+        P(B("Approach: "), "tested alongside development; new code comes with its tests, every push re-runs all tests",
+          align=PP_ALIGN.CENTER, space_after=0)],
+        size=18, color=PRIMARY.dark, fill=PRIMARY.tint, line=None, shape=MSO_SHAPE.ROUNDED_RECTANGLE, radius=0.2,
+        anchor=MSO_ANCHOR.MIDDLE, margin=0.12)
+    y += strip_h + 0.15
+    list_h = 2.5
+    functional = [("Capture", "Gmail, Chrome and YouTube"), ("Enrichment", "cleaning and classification"),
+                  ("Recall", "search and cited answers"), ("Wellbeing", "time, regrets and groups"),
+                  ("End to end", "full user flows")]
+    non_functional = [("Performance", "speed and model calls"), ("Security", "code and dependency scans"),
+                      ("Privacy", "what the model can see"), ("Reliability", "safe when a service fails"),
+                      ("Code quality", "lint, types and coverage")]
+    for i, (heading, items) in enumerate([("Functional testing", functional),
+                                          ("Non-functional testing", non_functional)]):
+        card(s, X0 + i * (half + gap), y, half, list_h, heading,
+             [P(B(f"{name}: "), detail, bullet=True, space_after=3) for name, detail in items],
+             accent=PRIMARY, size=18, heading_size=21)
+    y += list_h + 0.15
+    bottom_h = Y1 - y
+    card(s, X0, y, half, bottom_h, "Why these methods", [
+        P("Layered tests show which stage broke", bullet=True, space_after=3),
+        P("Privacy, our main promise, is tested directly", bullet=True, space_after=0)],
+        accent=STORE, size=18, heading_size=21)
+    card(s, X0 + half + gap, y, half, bottom_h, "Test environment", [
+        P(B("Automated: "), "GitHub CI, simulated services", bullet=True, space_after=3),
+        P(B("Live: "), "local setup with test accounts", bullet=True, space_after=0)],
+        accent=STORE, size=18, heading_size=21)
+    notes(s, "~40 s. Say: testing was part of development, not a last step. Functional testing checks each feature: capture "
+             "from the three sources, enrichment, recall with cited answers, wellbeing and groups, and whole user flows. "
+             "Non-functional testing checks how it behaves: speed, security scans, privacy, safe fallback when a service "
+             "fails, and code quality. Automated tests use simulated services (stand-ins for PostgreSQL, Redis, Gmail and "
+             "the model), so they run anywhere and need no personal data. Live tests use a local PostgreSQL 16 and Redis "
+             "with the Chrome extension and test accounts. If asked about history: most of the suite was added in one "
+             "commit on 26 Oct, before that the work was checked by live runs and offline review checks; since then 11 of "
+             "12 backend code commits also changed tests. Do not say every commit had tests from day one.")
 
 
 def slide_test_methods(deck: Deck) -> None:
-    s = deck.clone(deck.find("Test Plan and Strategy"), "Test Plan and Strategy (2/2) – Methods")
+    s = deck.clone(deck.find("Test Plan and Strategy"), "Test Plan and Strategy (2/2) – Tools and CI")
     set_background(s, bg("base"))
-    # Plain structure: what we test (two kinds), the result in three numbers, why this way, its drawback, the tools.
-    half = (W - 0.25) / 2
-    h1, h2, h3, gap = 2.4, 0.95, 1.4, 0.12
-    y1 = Y0 + 0.03
-    card(s, X0, y1, half, h1, "Functional: does it work?", [
-        P(B("Unit: "), "one rule alone, e.g. the session gap", bullet=True, space_after=5),
-        P(B("Integration: "), "parts together (API routes)", bullet=True, space_after=5),
-        P(B("End to end: "), "save a page, ask, get a cited answer", bullet=True, space_after=0),
-    ], accent=PRIMARY, size=18, heading_size=21)
-    card(s, X0 + half + 0.25, y1, half, h1, "Non-functional: how does it behave?", [
-        P(B("Speed: "), "time and model calls per question", bullet=True, space_after=5),
-        P(B("Privacy: "), "what is sent to the model", bullet=True, space_after=5),
-        P(B("Failure: "), "Redis down, a model breaks", bullet=True, space_after=0),
-    ], accent=STORE, size=18, heading_size=21)
-    y2 = y1 + h1 + gap
-    sw = (W - 2 * 0.25) / 3
-    for i, (big, small) in enumerate([("614 tests", "all pass"), ("94 %", "of code lines covered"),
-                                      ("Every push", "runs all tests on GitHub")]):
-        text(s, X0 + i * (sw + 0.25), y2, sw, h2, [
-            P(B(big), size=24, color=PRIMARY.main, align=PP_ALIGN.CENTER, space_after=0),
-            P(small, size=18, align=PP_ALIGN.CENTER, space_after=0, color=GREY)],
-            fill=WHITE, line=LINE_SOFT, shape=MSO_SHAPE.ROUNDED_RECTANGLE, radius=0.12, anchor=MSO_ANCHOR.MIDDLE,
-            margin=0.06, line_w=0.75)
-    y3 = y2 + h2 + gap
-    h3 = Y1 - y3
-    card(s, X0, y3, sw, h3, "Why", [P("Fast, repeatable, no personal data", space_after=0)],
-         accent=PRIMARY, size=18, heading_size=21)
-    card(s, X0 + sw + 0.25, y3, sw, h3, "Drawback", [P("Fake services can miss real API changes", space_after=0)],
-         accent=STORE, size=18, heading_size=21)
-    card(s, X0 + 2 * (sw + 0.25), y3, sw, h3, "Tools", [P("pytest · FastAPI test client · TypeScript + Vite build",
-                                                          space_after=0)],
-         accent=STORE, size=18, heading_size=21)
-    notes(s, "~30 s. Unit: intent gates at every boundary (3 s, 6 s, 8 s with 20 % scroll, a login page), the 20-minute "
-             "session gap (exactly 20 min vs 20 min 1 s), rank fusion on a small fixed list. Integration: routes "
-             "through the FastAPI test client with a fake database; capture -> stored row -> enriched -> searchable. "
-             "End to end: an automated test saves a page, enriches it, searches it and checks the cited answer; "
-             "a live run on the test account covers capture, enrichment and recall. Performance: query time, model "
-             "calls per question, enrichment speed. Privacy: inspect every model payload; sensitive-page probe URLs; "
-             "check that incognito, Spam and Trash never create a row. Reliability: each failure and its fallback "
-             "(design document section 23). Drawback example: YouTube's caption endpoint was found empty only by a "
-             "live probe.")
+    gap = 0.25
+    third = (W - 2 * gap) / 3
+    y = Y0 + 0.03
+    tile_h = 1.3
+    tiles = [("614 tests", "all passing"), ("94 %", "backend line coverage"), ("0", "high-severity findings")]
+    for i, (value, label) in enumerate(tiles):
+        _stat_tile(s, X0 + i * (third + gap), y, third, tile_h, value, label)
+    y += tile_h + 0.12
+    text(s, X0, y, W, 0.42, [
+        P(B("GitHub Actions CI on every push: ", PRIMARY.main), "any failed check, or coverage under 80 %, fails the build",
+          align=PP_ALIGN.CENTER, space_after=0)], size=18, anchor=MSO_ANCHOR.MIDDLE, margin=0.02)
+    y += 0.44
+    band_h = 0.72
+    _flow_band(s, X0, y, W, band_h, ["Push", "Build", "Lint", "Security scan", "All tests"])
+    y += band_h + 0.14
+    card_h = Y1 - y
+    cards = [
+        ("Open-source tools", [(B("Testing: "), "pytest, pytest-cov"), (B("Lint: "), "Ruff"),
+                               (B("Build: "), "TypeScript, Vite"), (B("Security: "), "Bandit, pip-audit")]),
+        ("Benefits", [("Fast and repeatable",), ("Catches problems early",), ("Needs no personal data",),
+                      ("Same checks on every push",)]),
+        ("Drawbacks", [("Simulated services can differ; we also tested live",),
+                       ("Frontend and extension are checked by hand",)]),
+    ]
+    for i, (heading, lines) in enumerate(cards):
+        card(s, X0 + i * (third + gap), y, third, card_h, heading,
+             [P(*line, bullet=True, space_after=2) for line in lines], accent=PRIMARY, size=18, heading_size=21)
+    notes(s, "~45 s. 614 tests: 351 unit, 253 integration, 10 system; all pass (re-run 5 Nov, about 42 s on the laptop). 94 % "
+             "line coverage of the Python backend (5,960 of 6,314 statements); the frontend and extension are not in that "
+             "number. Security: Bandit finds 0 high-severity issues; it also lists 45 medium and 1 low, so say '0 high', "
+             "not 'no findings'. CI: two jobs on every push. Backend: compile, Ruff lint, Bandit, pytest with coverage "
+             "(fails under 80 %), pip-audit. Frontend: clean install, TypeScript check, Vite build, npm audit. There is no "
+             "CD step: Echo runs locally on the user's machine, so nothing is deployed. If asked about red runs on GitHub: "
+             "82 of them are deliberate replays of old commits against today's tests, expected to fail; normal pushes are "
+             "33 green out of 34. Drawbacks: a simulated service only does what we wrote, so live runs caught what it "
+             "cannot (YouTube's caption endpoint came back empty only in a live probe). SQLite stands in for PostgreSQL in "
+             "automated tests. No load test, because Echo is single-user.")
 
 
 def slide_results(deck: Deck) -> None:
     s = deck.keep(deck.find("Results and Discussion"), "Results and Discussion – Evaluation")
     set_background(s, bg("base"))
-    ty = Y0 + 0.03
-    bh = 1.5
-    white_pill(s, X0, ty, W, bh, [
-        P(B("Test set: "), "119 items, 38 questions, test account. ",
-          B("Finding: "), "meaning search alone ranked best (MRR 0.99); the cross-encoder step lowered it to 0.90 on "
-          "this small set.", space_after=3),
-        P(B("Also: "), "13 of 13 clean capture sessions matched the design; no text past the 8,000-character cap "
-          "was sent to the model.", space_after=0)], size=18)
-    metrics = [
-        ("Retrieval quality", "Recall@5 0.91 · MRR 0.90", "full agent loop; Recall@10 0.93"),
-        ("Search methods", "Recall@10: 0.70 · 0.95 · 0.95", "keyword · meaning · hybrid (rank fusion)"),
-        ("Embedding model", "Right item first: 37 vs 31 of 39", "new model vs MiniLM, earlier 39-question test"),
-        ("Time per question", "8.1 s median · 23.8 s p95", "44 turns, a memory-starved laptop"),
-        ("Model calls and cost", "2.3 calls · about $0.002", "per question; the price is an assumption"),
-        ("Enrichment", "19 items per minute", "71 % sorted by rules, 16 % by the model"),
-    ]
-    top = ty + bh + 0.12
-    cw = (W - 0.25) / 2
-    rh = (Y1 - top - 2 * 0.1) / 3
-    for i, (name, value, how) in enumerate(metrics):
-        col, row = i // 3, i % 3
-        x = X0 + col * (cw + 0.25)
-        y = top + row * (rh + 0.1)
-        panel(s, x, y, cw, rh)
-        box(s, x, y + 0.1, 0.08, rh - 0.2, fill=PRIMARY.main)
-        text(s, x + 0.2, y, cw - 0.3, rh, [P(B(name), size=19, color=GREY, space_after=0),
-                                           P(B(value), size=21, color=PRIMARY.dark, space_after=0),
-                                           P(how, size=18, color=GREY, space_after=0)],
-             anchor=MSO_ANCHOR.MIDDLE, margin=0.04)
+    gap = 0.25
+    third = (W - 2 * gap) / 3
+    y = Y0 + 0.03
+    text(s, X0, y, W, 0.46, [P("Measured on 119 items and 38 questions, on a test account", align=PP_ALIGN.CENTER,
+                               space_after=0)], size=18, color=GREY, anchor=MSO_ANCHOR.MIDDLE, margin=0.02)
+    y += 0.52
+    column_h = Y1 - y
+    inner = third - 0.42
+    columns = [X0 + i * (third + gap) for i in range(3)]
+
+    top = _result_column(s, columns[0], y, third, column_h, "Finding the right item")
+    _stat_rows(s, columns[0] + 0.24, top, inner, y + column_h - top - 0.1, [
+        ("31 of 38", "ranked first"), ("38 of 38", "in the top 3"), ("11 of 11", "facts correct"),
+        ("0.91 · 0.93", "Recall@5 · @10"), ("0.90", "MRR")], value_w=1.62)
+
+    top = _result_column(s, columns[1], y, third, column_h, "Search methods")
+    chart_h = 2.12
+    text(s, columns[1] + 0.2, top - 0.1, third - 0.3, 0.36, [P("Recall@10", space_after=0)], size=18, color=GREY,
+         anchor=MSO_ANCHOR.MIDDLE, margin=0.04)
+    _search_methods_chart(s, columns[1] + 0.16, top + 0.24, third - 0.28, chart_h)
+    text(s, columns[1] + 0.2, top + 0.24 + chart_h, third - 0.3, y + column_h - (top + 0.24 + chart_h) - 0.06, [
+        P(B("37 vs 31 of 39", PRIMARY.dark), size=20, space_after=0),
+        P("new vs old embedding model, right item first (separate test)", size=18, color=GREY, space_after=0)],
+        anchor=MSO_ANCHOR.MIDDLE, margin=0.04)
+
+    top = _result_column(s, columns[2], y, third, column_h, "Speed and cost")
+    _stat_rows(s, columns[2] + 0.24, top, inner, y + column_h - top - 0.1, [
+        ("8.1 s", "typical answer"), ("23.8 s", "95 % within"), ("2.3", "calls per question"),
+        ("$0.002", "cost (estimate)"), ("19 / min", "items enriched")], value_w=1.25)
     notes(s, "~60 s. Everything here was measured on 26 Oct on the test account (docs/review/eval/RESULTS_2026-10-26.md). "
              "Questions and gold items were written by the team's assistant and are still to be checked by the owner; "
-             "say 'first test set' if asked. Retrieval, 38 questions, 81 gold items: keyword only Recall@10 0.70, "
-             "meaning only 0.95, rank fusion 0.95 (the keyword branch changed no top-10), full pipeline 0.93, MRR 0.99 "
-             "for meaning only against 0.90 for the full pipeline. Cause found in q28 and q30: the cross-encoder scores "
-             "are close to 0 for every candidate on these short questions, so the effort score decides the order. "
-             "Answers contained the right fact in 11 of 11 questions that have one. Time: median 8.1 s, 95th percentile "
-             "23.8 s over 44 turns, on a laptop with about 1 GB free RAM, so likely pessimistic. Model calls 2.34 per "
-             "turn (33 turns used 2, none needed all 5 searches). Cost: about $0.0021 per turn at an ASSUMED $0.20 and "
-             "$1.20 per million input and output tokens (copied from an older model comment; gpt-6-luna's price is not "
-             "checked). Embedding model: the 37/39 against 31/39 is from the model-choice test of 21 Oct "
-             "(Echo_System_Design.md A40), a different 39-question set, not repeated on tonight's 38. Enrichment: 3.1 s "
-             "per item, 19.3 items per minute including PDF text extraction; stages over all 119 items: structural 84, "
-             "model 19, centroid 11, domain 5. Capture: 13 clean scripted sessions, all agree (Chrome 8 of 8, YouTube "
-             "5 of 5), run with a synthetic user in one tab. Privacy: the largest request was 38,469 characters; no "
-             "item text beyond the cap appeared (a probe over only 2 long items). Thresholds measured: KNN bar 0.65 "
+             "say 'first test set' if asked. Left: the first right item was at rank 1 in 31 of 38 questions and within the "
+             "top 3 in all 38 (full agent loop). Recall@5 0.91, Recall@10 0.93, MRR 0.90. Answers contained the right fact "
+             "in 11 of 11 questions that have one. Middle: keyword only Recall@10 0.70, meaning only 0.95, rank fusion 0.95 "
+             "(the keyword branch changed no top-10). If asked why the full system shows 0.93 against hybrid 0.95: the "
+             "re-ranking step reordered results and slightly lowered the score on this small test set. MRR was 0.99 "
+             "for meaning only against 0.90 for the full pipeline. Cause found in q28 and q30: the cross-encoder scores are "
+             "close to 0 for every candidate on these short questions, so the effort score decides the order. Embedding "
+             "model: 37/39 against 31/39 right item first is from the model-choice test of 21 Oct (Echo_System_Design.md "
+             "A40), a different 39-question set. Right: median 8.1 s, 95th percentile 23.8 s over 44 turns, on a laptop with "
+             "about 1 GB free RAM, so likely pessimistic. The old target of under 8 s was dropped and never formally "
+             "tested. Model calls 2.34 per turn (33 turns used 2, none needed all 5 searches). Cost: about $0.0021 per turn "
+             "at an ASSUMED $0.20 and $1.20 per million input and output tokens (gpt-6-luna's price is not checked). "
+             "Enrichment: 3.1 s per item, 19.3 items per minute including PDF text extraction. Capture: 13 of 13 clean "
+             "scripted sessions matched the design (Chrome 8 of 8, YouTube 5 of 5). Privacy: no item text beyond the "
+             "8,000-character cap reached the model (a probe over only 2 long items). Thresholds measured: KNN bar 0.65 "
              "-> 0.85, seed lead 0.08 -> 0.05, search quality gate 0.55 kept.")
 
 
 def slide_timeline(deck: Deck) -> None:
     s = deck.keep(deck.find("Timeline"))
     set_background(s, bg("base"))
-    rows = [
-        ("Apr – Jun 2026", "Capture, enrichment, retrieval and storage built", "Completed"),
-        ("Jul 2026", "Wellbeing, retrieval engine, first dashboard", "Completed"),
-        ("Aug 2026", "Review 1: scope focused on the core recall path", "Completed"),
-        ("Sep 2026", "Wellbeing and dashboard restored; Review 2", "Completed"),
-        ("1 – 21 Oct", "File-by-file review; all design decisions closed", "Completed"),
-        ("22 – 25 Oct", "Final build and freeze on 25 Oct", "Completed"),
-        ("26 – 27 Oct", "Evaluation, tests and thresholds measured; rehearsal", "Completed"),
-        ("Wed 28 Oct", "Review 3", "Review"),
+    phases = [
+        ("Feb – Mar", "Foundation", "Scope, architecture, database design, first connectors"),
+        ("Apr – Jun", "Core pipeline", "Capture, storage and enrichment built; retrieval started"),
+        ("Jul – Aug", "Recall engine", "Retrieval engine, wellbeing, first dashboard; Review 1"),
+        ("Sep", "Integration", "Modules integrated; Review 2"),
+        ("Oct", "Build and testing", "Code review, final build, tests, CI and evaluation"),
+        ("Nov", "Polish", "Frontend completed, final fixes"),
+        ("Review 3", "Project complete", "All modules built, tested and evaluated"),
     ]
-    y = Y0 + 0.03
-    rh = (Y1 - y - 7 * 0.07) / 8
-    for when, what, status in rows:
-        text(s, X0, y, 2.2, rh, [P(B(when), align=PP_ALIGN.CENTER, space_after=0)], size=19, color=WHITE,
-             fill=PRIMARY.main, shape=MSO_SHAPE.PENTAGON, radius=0.25,
-             anchor=MSO_ANCHOR.MIDDLE, margin=0.04)
-        panel(s, X0 + 2.3, y, W - 2.3, rh)
-        text(s, X0 + 2.45, y, W - 4.5, rh, [P(what, space_after=0)], size=19, anchor=MSO_ANCHOR.MIDDLE, margin=0.02)
-        chip(s, X1 - 1.95, y + (rh - 0.4) / 2, 1.8, 0.4, status, PRIMARY if status in ("Completed", "Review") else STORE,
-             solid=status in ("Completed", "Review"))
-        y += rh + 0.07
-    notes(s, "~30 s. Month-level, taken from the project's commit history. Apr-Jun: capture, enrichment, retrieval and "
-             "the storage engine merged and hardened. Jul: wellbeing module, finished retrieval engine, first "
-             "dashboard. Aug: Review 1, scope focused on recall. Sep: wellbeing and dashboard restored, Review 2. "
-             "1-21 Oct: every file reviewed (logging, thread safety, privacy fixes) and every design decision "
-             "closed. 22-25 Oct: final build (local stack, new embedding model, agent recall, memory pills, MCP "
-             "server, retention, auto-grouping) and code freeze. 26-27 Oct: end-to-end run and rehearsal. Wed 28 Oct: "
-             "Review 3.")
+    # Brick layout around one line: phases alternate above and below it, so each card is twice a step wide.
+    gap = 0.2
+    cw = (W - 3 * gap) / 4
+    step = (cw + gap) / 2
+    first_centre = X0 + cw / 2
+    pill_w, pill_h = 1.36, 0.56
+    link = 0.25
+    top_y = Y0 + 0.03
+    card_h = (Y1 - top_y - pill_h - 2 * link) / 2
+    pill_y = top_y + card_h + link
+    line_y = pill_y + pill_h / 2
+    bottom_y = pill_y + pill_h + link
+    arrow(s, X0, line_y, X1, line_y, color=PRIMARY.main, width=3.0)
+    for i, (when, heading, detail) in enumerate(phases):
+        centre = first_centre + i * step
+        above = i % 2 == 0
+        card_y = top_y if above else bottom_y
+        link_from = card_y + card_h if above else pill_y + pill_h
+        arrow(s, centre, link_from, centre, link_from + link, color=PRIMARY.main, width=1.5, head=False)
+        card(s, centre - cw / 2, card_y, cw, card_h, heading, [P(detail, space_after=0)], accent=PRIMARY, size=18,
+             heading_size=21)
+        text(s, centre - pill_w / 2, pill_y, pill_w, pill_h, [P(B(when), align=PP_ALIGN.CENTER, space_after=0)], size=18,
+             color=WHITE, fill=NAVY if i == len(phases) - 1 else PRIMARY.main, shape=MSO_SHAPE.ROUNDED_RECTANGLE,
+             radius=0.5, anchor=MSO_ANCHOR.MIDDLE, margin=0.02)
+    notes(s, "~30 s. Read it left to right as one journey. Feb-Mar: scope, architecture and database design, first connectors. "
+             "Apr-Jun: capture, storage and enrichment built, retrieval started. Jul-Aug: retrieval engine, wellbeing module, "
+             "first dashboard, Review 1. Sep: modules integrated, Review 2. Oct: every file reviewed, final build (local "
+             "stack, new embedding model, agent recall, MCP server), tests, CI and evaluation. Nov: frontend completed and "
+             "final fixes. Then Review 3.")
 
 
 def slide_conclusion(deck: Deck) -> None:

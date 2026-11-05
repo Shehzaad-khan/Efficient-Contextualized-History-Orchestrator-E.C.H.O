@@ -206,6 +206,8 @@ for item in items_in_time_order:
 3. **Recall:** a question is answered in chat with memory pills; a follow-up continues the same chat.
 4. **Wellbeing:** time and patterns, a regret marked, a group suggestion reviewed.
 
+> **2026-11-05:** the final slides 13 to 16 (test plan x2, results, timeline) were rewritten at owner request. Their current text is in `build_deck_r3.py` (`slide_test_plan`, `slide_test_methods`, `slide_results`, `slide_timeline`); the sections below are the older plan.
+
 ## Slide 13: Test Plan and Strategy (1/2): Activities, environment, team
 Everything below is a plan unless marked Done.
 
